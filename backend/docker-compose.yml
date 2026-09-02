@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: crosschecklab-postgres
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-crosschecklab}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-crosschecklab}
+      POSTGRES_DB: ${DB_NAME:-crosschecklab}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - crosschecklab:/var/lib/postgresql/data
+
+volumes:
+  crosschecklab:
