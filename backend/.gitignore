@@ -8,6 +8,9 @@ data/postgres/
 # build
 build/
 .gradle/
+**/build/
+**/out/
+**/bin/
 *.log
 
 HELP.md
@@ -45,3 +48,7 @@ out/
 
 ### VS Code ###
 .vscode/
+
+# OS
+.DS_Store
+Thumbs.db
