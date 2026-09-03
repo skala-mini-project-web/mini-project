@@ -1,6 +1,7 @@
 package com.crosschecklab.domain.dashboard;
 
 import com.crosschecklab.domain.product.Product;
+import java.time.OffsetDateTime;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
 import org.springframework.data.repository.query.Param;
@@ -33,4 +34,26 @@ public interface DashboardRepository extends Repository<Product, Long> {
                      WHERE p.owner_id = :ownerId AND r.status = 'APPROVED') AS approved
             """, nativeQuery = true)
     DashboardSummaryRow summarize(@Param("ownerId") Long ownerId);
+
+    // DASH-002 검토자 집계. 소유자가 아니라 검토 업무 전체가 대상이라 사용자 조건이 없다.
+    // DASH-001 과 같은 이유로 스칼라 서브쿼리 하나로 묶어 왕복을 한 번으로 줄인다.
+    // highFindings 는 "지금 검토가 걸려 있는 HIGH Finding" 이다.
+    // 이미 결정된 검토의 Finding 까지 세면 카드가 줄지 않아 남은 일감을 나타내지 못한다.
+    // decidedInRange 는 [fromAt, toAt) 반열림 구간이다. 경계는 서비스가 계산해 넘긴다.
+    @Query(value = """
+            SELECT (SELECT count(*) FROM reviews r
+                     WHERE r.status = 'PENDING')                          AS pendingReviews,
+                   (SELECT count(*) FROM findings f
+                             JOIN reviews r ON r.analysis_id = f.analysis_id
+                     WHERE f.severity = 'HIGH'
+                       AND r.status = 'PENDING')                          AS highFindings,
+                   (SELECT count(*) FROM risk_patterns rp
+                     WHERE rp.status = 'ACTIVE')                          AS activeRiskPatterns,
+                   (SELECT count(*) FROM reviews r
+                     WHERE r.status IN ('APPROVED', 'REJECTED')
+                       AND r.decided_at >= :fromAt
+                       AND r.decided_at < :toAt)                          AS decidedInRange
+            """, nativeQuery = true)
+    ComplianceSummaryRow summarizeCompliance(@Param("fromAt") OffsetDateTime fromAt,
+                                             @Param("toAt") OffsetDateTime toAt);
 }
