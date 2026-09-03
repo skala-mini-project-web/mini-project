@@ -142,6 +142,7 @@ export function ingestAnalysis(analysisId, result) {
     a.status = 'COMPLETED'
     a.riskScore = result.riskScore
     a.providerType = result.providerType || 'LOCAL_OLLAMA'
+    a.ragGrounding = result.grounding || [] // RAG로 검색된 근거(문서·유사도)
     a.findings = (result.findings || []).map((f, i) => ({
       findingId: `FND-L${i + 1}-${analysisId}`,
       ...f,
@@ -497,10 +498,13 @@ export const mockServer = {
     const v = viewAnalysis(a)
     if (v.status !== 'COMPLETED') throw new ApiError({ status: 409, errorCode: 'ANALYSIS_NOT_COMPLETED', message: '분석이 완료되지 않았습니다.' })
     const doc = store.documents.find((d) => d.documentId === a.productDocumentId)
-    const grounding = (a.evidenceDocumentIds || []).map((id) => {
-      const e = store.evidenceDocuments.find((x) => x.documentId === id)
-      return e ? { documentId: e.documentId, title: e.title } : { documentId: id, title: id }
-    })
+    // 로컬 AI(RAG) 경로는 실제 검색된 근거(유사도 포함), 그 외는 선택 근거 문서를 groundingDocuments로 반환
+    const grounding = (a.ragGrounding && a.ragGrounding.length)
+      ? a.ragGrounding.map((g) => ({ documentId: g.documentId, title: g.title, sourceType: g.sourceType, score: g.score }))
+      : (a.evidenceDocumentIds || []).map((id) => {
+          const e = store.evidenceDocuments.find((x) => x.documentId === id)
+          return e ? { documentId: e.documentId, title: e.title } : { documentId: id, title: id }
+        })
     return {
       analysisId, status: 'COMPLETED', riskScore: a.riskScore,
       sourceDocument: doc ? { documentId: doc.documentId, fileName: doc.fileName } : null,

@@ -25,7 +25,7 @@ async function runLocalAnalysis(analysisId, documentId, personaIds) {
       personaCodes = personaIds.map((id) => map[id] || id)
     } catch {}
     const r = await analyzeDocument({ sourceText: doc.verifiedText || doc.rawExtractedText || '', personaCodes, ruleCodes: AI_RULE_CODES })
-    ingestAnalysis(analysisId, { findings: r.findings, riskScore: r.riskScore, providerType: 'LOCAL_OLLAMA' })
+    ingestAnalysis(analysisId, { findings: r.findings, riskScore: r.riskScore, providerType: 'LOCAL_OLLAMA', grounding: r.grounding })
   } catch (e) {
     ingestAnalysis(analysisId, { failed: true, errorCode: 'PROVIDER_RESPONSE_INVALID', message: e?.message || '로컬 분석 오류', retryable: true })
   }

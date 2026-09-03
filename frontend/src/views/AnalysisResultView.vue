@@ -147,6 +147,18 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
         <p v-if="reviewInfo.decision === 'APPROVED' && reviewInfo.riskPatternIds?.length" class="t-xs mute mono">승격된 패턴: {{ reviewInfo.riskPatternIds.join(', ') }}</p>
       </div>
 
+      <section v-if="result.groundingDocuments?.length" class="grounding">
+        <div class="fh"><h2 class="d-h3">검색된 근거 (RAG)</h2><span class="mono mute">{{ result.groundingDocuments.length }}건</span></div>
+        <ul class="glist">
+          <li v-for="g in result.groundingDocuments" :key="g.documentId" class="grow">
+            <span class="mono gt">{{ g.sourceType || '근거' }}</span>
+            <span class="gtitle">{{ g.title }}</span>
+            <span class="mono gid">{{ g.documentId }}</span>
+            <span v-if="g.score != null" class="mono gscore">유사도 {{ g.score }}</span>
+          </li>
+        </ul>
+      </section>
+
       <div class="fh">
         <h2 class="d-h3">Finding</h2>
         <span class="mono mute">{{ result.findings.length }} 건 탐지</span>
@@ -248,6 +260,13 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .rr-i { flex: none; } .rev-result.rej .rr-i { color: var(--risk-high); } .rev-result.ok .rr-i { color: var(--ok); }
 .rr-meta { margin-left: auto; font-size: var(--text-xs); }
 .rr-comment { color: var(--ink); line-height: 1.6; }
+.grounding { margin-top: var(--s-32); }
+.glist { list-style: none; margin-top: var(--s-12); border-top: 1px solid var(--line); }
+.grow { display: flex; align-items: center; gap: var(--s-12); padding: var(--s-12) var(--s-8); border-bottom: 1px solid var(--line); }
+.gt { font-size: 10.5px; letter-spacing: 0.08em; color: var(--ink-mute); border: 1px solid var(--line-strong); border-radius: var(--r-xs); padding: 2px 6px; flex: none; }
+.gtitle { font-weight: var(--fw-medium); min-width: 0; }
+.gid { font-size: var(--text-xs); color: var(--ink-faint); }
+.gscore { margin-left: auto; font-size: var(--text-xs); color: var(--accent); flex: none; }
 .fmeta { display: grid; grid-template-columns: 1fr 1.4fr; gap: var(--s-28); margin-top: var(--s-20); }
 .fcol { display: flex; flex-direction: column; gap: var(--s-8); }
 .ml { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-mute); }

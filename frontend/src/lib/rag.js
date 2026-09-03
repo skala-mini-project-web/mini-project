@@ -3,6 +3,7 @@
 // - retrieveEvidence: 키워드 기반 오프라인 폴백(임베딩/네트워크 불필요)
 import { embed } from './llm.js'
 
+const RAG_MIN_SCORE = 0.4 // 유사도 임계값(저관련 근거 배제). 최소 1건은 항상 반환.
 const STOP = new Set(['그리고', '또는', '있습니다', '됩니다', '합니다', '수', '및', '이', '그', '저', '등', '더', '때', '의', '를', '을', '은', '는', '가'])
 
 function tokenize(s) {
@@ -56,8 +57,9 @@ export async function retrieveEvidenceEmbed(queryText, k = 3, corpus = EVIDENCE_
     _corpusVectors = await embed(corpus.map((d) => d.text))
   }
   const [qv] = await embed([queryText])
-  return corpus
+  const ranked = corpus
     .map((d, i) => ({ documentId: d.documentId, sourceType: d.sourceType, title: d.title, excerpt: bestSentence(d.text, queryText), score: Number(cosine(qv, _corpusVectors[i]).toFixed(4)) }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, k)
+  const relevant = ranked.filter((r) => r.score >= RAG_MIN_SCORE)
+  return (relevant.length ? relevant : ranked.slice(0, 1)).slice(0, k)
 }
