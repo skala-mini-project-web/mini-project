@@ -1,11 +1,14 @@
 package com.crosschecklab.domain.risk;
 
 import com.crosschecklab.domain.analysis.Finding;
+import com.crosschecklab.domain.review.Review;
+import com.crosschecklab.domain.review.ReviewRepository;
 import com.crosschecklab.domain.risk.dto.RiskPatternResponse;
 import com.crosschecklab.domain.risk.dto.RiskPatternUpdateRequest;
 import com.crosschecklab.global.common.PageResponse;
 import com.crosschecklab.global.common.enums.PersonaCode;
 import com.crosschecklab.global.common.enums.RedTeamRuleCode;
+import com.crosschecklab.global.common.enums.ReviewStatus;
 import com.crosschecklab.global.common.enums.RiskPatternStatus;
 import com.crosschecklab.global.common.enums.Severity;
 import com.crosschecklab.global.common.enums.UserRole;
@@ -29,7 +32,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class RiskPatternService {
 
     private final RiskPatternRepository riskPatternRepository;
+    private final ReviewRepository reviewRepository;
     private final OwnershipChecker ownershipChecker;
+
+    // Review 상세 조회가 소유자·검토자 권한을 확인한 뒤 provenance 로 사용하는 내부 조회다.
+    // 승인 직후의 DRAFT 도 이력에 포함해야 하므로 상태로 거르지 않는다.
+    @Transactional(readOnly = true)
+    public List<Long> findIdsByReviewId(Long reviewId) {
+        return riskPatternRepository.findIdsByReviewId(reviewId);
+    }
 
     // RISK-001. 검토자 전용 조회. 위험도 높은 순 → 최근 승격 순으로 내려준다.
     @Transactional(readOnly = true)
@@ -58,6 +69,15 @@ public class RiskPatternService {
     // 재사용 가능한 라이브러리 항목이 되려면 검토자가 이름을 다듬고 RISK-002 로 명시적으로 활성화해야 한다.
     @Transactional
     public List<Long> promote(Long reviewId, List<Finding> findings) {
+        Review review = reviewRepository.findById(reviewId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        if (review.getStatus() != ReviewStatus.APPROVED
+                || findings.stream().anyMatch(finding ->
+                        !review.getAnalysisId().equals(finding.getAnalysisId())
+                                || !review.getSelectedFindingIds().contains(finding.getId()))) {
+            throw new BusinessException(ErrorCode.INVALID_FINDING_SELECTION);
+        }
+
         List<RiskPattern> patterns = findings.stream()
                 .map(finding -> RiskPattern.draft(
                         finding.getId(), reviewId, finding.getStatement(), finding.getSeverity()))

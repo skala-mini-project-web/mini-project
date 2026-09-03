@@ -6,10 +6,12 @@ import com.crosschecklab.domain.analysis.Finding;
 import com.crosschecklab.domain.analysis.FindingRepository;
 import com.crosschecklab.domain.document.ProductDocument;
 import com.crosschecklab.domain.document.ProductDocumentRepository;
+import com.crosschecklab.domain.product.Product;
 import com.crosschecklab.domain.review.dto.ReviewCreateRequest;
 import com.crosschecklab.domain.review.dto.ReviewCreatedResponse;
 import com.crosschecklab.domain.review.dto.ReviewDecisionRequest;
 import com.crosschecklab.domain.review.dto.ReviewDecisionResponse;
+import com.crosschecklab.domain.review.dto.ReviewDetailResponse;
 import com.crosschecklab.domain.review.dto.ReviewListItemResponse;
 import com.crosschecklab.domain.review.dto.ReviewOutcomeResponse;
 import com.crosschecklab.domain.risk.RiskPatternService;
@@ -23,6 +25,7 @@ import com.crosschecklab.global.security.DemoUser;
 import com.crosschecklab.global.security.OwnershipChecker;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -64,7 +67,7 @@ public class ReviewService {
         }
         analysis.markInReview();
 
-        Review review = Review.create(analysis.getId());
+        Review review = Review.create(analysis.getId(), normalizeSubmissionComment(request.submissionComment()));
         try {
             // 같은 분석에 동시에 두 요청이 들어오면 analysis_id UNIQUE 가 잡아낸다.
             reviewRepository.saveAndFlush(review);
@@ -87,6 +90,26 @@ public class ReviewService {
                 // 정렬은 쿼리가 확정하므로 Pageable 에 별도 정렬을 얹지 않는다.
                 PageRequest.of(page, size));
         return PageResponse.of(rows, ReviewListItemResponse::from);
+    }
+
+    @Transactional(readOnly = true)
+    public ReviewDetailResponse detail(Long reviewId, DemoUser currentUser) {
+        Review review = reviewRepository.findById(reviewId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        Analysis analysis = analysisRepository.findById(review.getAnalysisId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        ProductDocument document = productDocumentRepository.findById(analysis.getProductDocumentId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        Product product = document.getProduct();
+
+        ownershipChecker.requireOwnerOrReviewer(product.getOwnerId(), currentUser);
+
+        Severity maxSeverity = findingRepository.findByAnalysisIdOrderByIdAsc(analysis.getId()).stream()
+                .map(Finding::getSeverity)
+                .max(Comparator.comparingInt(this::severityRank))
+                .orElse(null);
+        return ReviewDetailResponse.of(
+                review, analysis, product, maxSeverity, riskPatternService.findIdsByReviewId(review.getId()));
     }
 
     // REV-004. 분석 하나에 대한 검토 결과 조회.
@@ -117,7 +140,7 @@ public class ReviewService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
 
         Set<Long> selectedFindingIds = validateSelection(review, decision, request);
-        review.decide(decision, currentUser.id(), normalizeComment(request.comment()),
+        review.decide(decision, currentUser.id(), normalizeDecisionComment(request.comment()),
                 selectedFindingIds, OffsetDateTime.now(clock));
 
         // 승격 규칙(DRAFT 생성 → 검증 → ACTIVE)은 Risk 도메인이 소유한다.
@@ -158,7 +181,19 @@ public class ReviewService {
         return status;
     }
 
-    private String normalizeComment(String comment) {
+    private int severityRank(Severity severity) {
+        return switch (severity) {
+            case HIGH -> 3;
+            case MEDIUM -> 2;
+            case LOW -> 1;
+        };
+    }
+
+    private String normalizeSubmissionComment(String submissionComment) {
+        return StringUtils.hasText(submissionComment) ? submissionComment.strip() : null;
+    }
+
+    private String normalizeDecisionComment(String comment) {
         return StringUtils.hasText(comment) ? comment.strip() : null;
     }
 

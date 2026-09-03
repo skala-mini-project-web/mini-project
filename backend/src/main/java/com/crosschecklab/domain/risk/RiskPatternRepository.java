@@ -1,6 +1,7 @@
 package com.crosschecklab.domain.risk;
 
 import jakarta.persistence.LockModeType;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -10,6 +11,9 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface RiskPatternRepository extends JpaRepository<RiskPattern, Long> {
+
+    @Query("select p.id from RiskPattern p where p.reviewId = :reviewId order by p.id asc")
+    List<Long> findIdsByReviewId(@Param("reviewId") Long reviewId);
 
     // RISK-002. 활성화는 현재 상태를 보고 다음 상태를 정하므로, 동시 요청이 둘 다 통과하지 않게 행을 잠근다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
