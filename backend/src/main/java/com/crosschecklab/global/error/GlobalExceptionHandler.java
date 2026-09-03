@@ -21,6 +21,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 // 모든 예외를 ErrorResponse 한 형태로 변환
@@ -74,12 +76,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({
             MissingRequestHeaderException.class,
             MissingServletRequestParameterException.class,
+            MissingServletRequestPartException.class,
             MethodArgumentTypeMismatchException.class
     })
     public ResponseEntity<ErrorResponse> handleSingleFieldError(Exception e) {
         ErrorResponse.FieldError fieldError = switch (e) {
             case MissingRequestHeaderException ex -> new ErrorResponse.FieldError(ex.getHeaderName(), "필수 헤더입니다.");
             case MissingServletRequestParameterException ex -> new ErrorResponse.FieldError(ex.getParameterName(), "필수 파라미터입니다.");
+            case MissingServletRequestPartException ex -> new ErrorResponse.FieldError(ex.getRequestPartName(), "필수 파일 파트입니다.");
             case MethodArgumentTypeMismatchException ex -> new ErrorResponse.FieldError(ex.getName(), "형식이 올바르지 않습니다.");
             default -> throw new IllegalStateException("unreachable: " + e.getClass());
         };
@@ -92,6 +96,14 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleNotReadable(HttpMessageNotReadableException e) {
         log.warn("[{}] 요청 본문 파싱 실패 ({})", traceId(), e.getClass().getSimpleName());
         return build(ErrorCode.VALIDATION_ERROR, "요청 본문을 해석할 수 없습니다.", false, List.of());
+    }
+
+    // multipart 파서가 spring.servlet.multipart.max-file-size 를 넘긴 요청을 잘라낸 경우.
+    // 서비스에서도 같은 상한을 검사하지만, 실제 서버에서는 컨트롤러에 닿기 전에 여기로 온다.
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ErrorResponse> handleMaxUploadSize(MaxUploadSizeExceededException e) {
+        log.warn("[{}] 업로드 크기 초과 (최대 {} bytes)", traceId(), e.getMaxUploadSize());
+        return build(ErrorCode.FILE_TOO_LARGE, ErrorCode.FILE_TOO_LARGE.getDefaultMessage(), false, List.of());
     }
 
     // 권한 없음 / 리소스 없음 / 잘못된 메서드 / 지원하지 않는 Content-Type — 상태 코드만 되살리면 되는 경우들을 한데 묶음

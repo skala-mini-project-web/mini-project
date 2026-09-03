@@ -21,9 +21,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 // 상품 설명서 원본 문서와 추출 결과.
-// 이번 이슈(PROD-001/002)에서는 상세 응답의 latestDocument 를 채우기 위한 조회 전용이다.
-// 업로드·추출·상태 전이(DOC-001~004)는 다음 이슈에서 이 엔티티에 붙인다.
 // 파일 바이너리는 저장하지 않는다. storage_key 는 mock:// 참조이고 checksum 만 실제 값이다.
+// 상태 전이는 UPLOADED → EXTRACTING → READY 또는 FAILED 이며,
+// 조회(GET)는 어떤 경우에도 상태를 바꾸지 않는다.
 @Entity
 @Getter
 @Table(name = "product_documents")
@@ -71,7 +71,56 @@ public class ProductDocument extends BaseTimeEntity {
     @Column(name = "confirmed_at")
     private OffsetDateTime confirmedAt;
 
+    private ProductDocument(Product product, String fileName, String mediaType,
+                            Long fileSize, String checksum, String storageKey) {
+        this.product = product;
+        this.fileName = fileName;
+        this.mediaType = mediaType;
+        this.fileSize = fileSize;
+        this.checksum = checksum;
+        this.storageKey = storageKey;
+        this.extractStatus = ExtractStatus.UPLOADED;
+        this.confirmed = false;
+    }
+
+    // DOC-001. 업로드 직후에는 항상 UPLOADED 이고 추출 텍스트가 없다.
+    public static ProductDocument upload(Product product, String fileName, String mediaType,
+                                         Long fileSize, String checksum, String storageKey) {
+        return new ProductDocument(product, fileName, mediaType, fileSize, checksum, storageKey);
+    }
+
+    public void markExtracting() {
+        this.extractStatus = ExtractStatus.EXTRACTING;
+    }
+
+    // 재추출로 텍스트가 덮어써지면 이전에 확인한 내용이 아니므로 확인 상태를 되돌린다.
+    public void markReady(String extractedText) {
+        this.extractedText = extractedText;
+        this.extractStatus = ExtractStatus.READY;
+        this.confirmed = false;
+        this.confirmedBy = null;
+        this.confirmedAt = null;
+    }
+
+    public void markFailed() {
+        this.extractStatus = ExtractStatus.FAILED;
+    }
+
+    public boolean isExtractionFinished() {
+        return extractStatus == ExtractStatus.READY || extractStatus == ExtractStatus.FAILED;
+    }
+
     public Long getProductId() {
         return product.getId();
+    }
+
+    // 소유권 검증은 document → product → owner 로 파생한다.
+    public Long getOwnerId() {
+        return product.getOwnerId();
+    }
+
+    // 지연 로딩 프록시를 초기화하지 않고 식별자만 꺼낸다.
+    public Long getConfirmedById() {
+        return confirmedBy == null ? null : confirmedBy.getId();
     }
 }

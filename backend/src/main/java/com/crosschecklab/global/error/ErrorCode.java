@@ -15,6 +15,7 @@ public enum ErrorCode {
     INVALID_FINDING_SELECTION(HttpStatus.BAD_REQUEST, "승인 시 반영할 Finding 을 1건 이상 선택해야 합니다."),
     COMMENT_REQUIRED(HttpStatus.BAD_REQUEST, "반려 시 사유(comment)는 필수입니다."),
     INVALID_DATE_RANGE(HttpStatus.BAD_REQUEST, "조회 기간이 올바르지 않습니다."),
+    INVALID_FILE_TYPE(HttpStatus.BAD_REQUEST, "PDF 또는 PPTX 파일만 업로드할 수 있습니다."),
 
     // --- 401 Unauthorized ---
     // 데모 인증(X-Demo-User-Id / X-Demo-Role). 헤더의 role 은 신뢰하지 않고 DB 값으로 다시 검증한다.
@@ -30,8 +31,12 @@ public enum ErrorCode {
     // --- 404 / 405 / 415 ---
     NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 리소스를 찾을 수 없습니다."),
     PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 상품입니다."),
+    DOCUMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 문서입니다."),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "지원하지 않는 HTTP 메서드입니다."),
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "지원하지 않는 Content-Type 입니다."),
+
+    // --- 413 Payload Too Large ---
+    FILE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "파일 크기가 10MB 를 초과했습니다."),
 
     // --- 409 Conflict ---
     DOCUMENT_NOT_CONFIRMED(HttpStatus.CONFLICT, "추출 텍스트 확인 후 분석을 요청하세요."),
