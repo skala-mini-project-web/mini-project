@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 // V2 시드: 1 = pm_park(PRODUCT_MANAGER), 2 = reviewer_kim(COMPLIANCE_REVIEWER)
@@ -34,14 +35,37 @@ class ProductApiTest extends IntegrationTestSupport {
     private static final String REVIEWER_ID = "2";
 
     @Autowired
-    private ProductRepository productRepository;
+    private JdbcTemplate jdbc;
 
     // 컨테이너는 JVM 당 하나라 여기서 만든 상품이 다른 테스트로 새어 나간다.
     // 테스트마다 앞뒤로 비워 개수를 단언할 수 있게 하고 잔여 데이터도 남기지 않는다.
+    // 참조 순서대로 지운다 (analyses → product_documents → products).
     @BeforeEach
     @AfterEach
     void clearProducts() {
-        productRepository.deleteAll();
+        jdbc.update("DELETE FROM analyses");
+        jdbc.update("DELETE FROM product_documents");
+        jdbc.update("DELETE FROM products");
+    }
+
+    // 분석은 문서에 달리므로 latestAnalysis 를 만들려면 문서가 먼저 있어야 한다.
+    private long insertDocument(long productId) {
+        return jdbc.queryForObject("""
+                INSERT INTO product_documents
+                    (product_id, file_name, media_type, storage_key, extract_status, extracted_text,
+                     confirmed, created_at, updated_at)
+                VALUES (?, '상품설명서.pdf', 'application/pdf', 'mock://documents/clean',
+                        'READY', '확정된 추출 텍스트입니다.', TRUE, NOW(), NOW())
+                RETURNING id""", Long.class, productId);
+    }
+
+    // red_team_pack_id 1 은 V2 시드 값이다. input_hash 는 (문서, 해시) 부분 UNIQUE 를 피하려고 호출부가 정한다.
+    private long insertAnalysis(long documentId, String status, String inputHash) {
+        return jdbc.queryForObject("""
+                INSERT INTO analyses
+                    (product_document_id, red_team_pack_id, status, progress, input_hash, created_at, updated_at)
+                VALUES (?, 1, ?, 0, ?, NOW(), NOW())
+                RETURNING id""", Long.class, documentId, status, inputHash);
     }
 
     private MockHttpServletRequestBuilder asPm(MockHttpServletRequestBuilder builder) {
@@ -186,6 +210,34 @@ class ProductApiTest extends IntegrationTestSupport {
         }
 
         @Test
+        @DisplayName("분석 이력이 있으면 가장 최근 분석 하나가 latestAnalysis 로 나온다")
+        void includesLatestAnalysis() throws Exception {
+            long productId = createProduct("분석까지 마친 상품");
+            long documentId = insertDocument(productId);
+            insertAnalysis(documentId, "FAILED", "hash-old");
+            long latest = insertAnalysis(documentId, "COMPLETED", "hash-new");
+
+            mockMvc.perform(asPm(get("/api/products/{productId}", productId)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.latestDocument.documentId").value(documentId))
+                    .andExpect(jsonPath("$.latestAnalysis.analysisId").value(latest))
+                    .andExpect(jsonPath("$.latestAnalysis.status").value("COMPLETED"));
+        }
+
+        @Test
+        @DisplayName("문서를 여러 번 올렸어도 상품 단위로 최신 분석 하나만 나온다")
+        void picksLatestAnalysisAcrossDocuments() throws Exception {
+            long productId = createProduct("재업로드한 상품");
+            insertAnalysis(insertDocument(productId), "COMPLETED", "hash-first");
+            long latest = insertAnalysis(insertDocument(productId), "RUNNING", "hash-second");
+
+            mockMvc.perform(asPm(get("/api/products/{productId}", productId)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.latestAnalysis.analysisId").value(latest))
+                    .andExpect(jsonPath("$.latestAnalysis.status").value("RUNNING"));
+        }
+
+        @Test
         @DisplayName("검토자는 담당이 아닌 상품도 조회할 수 있다")
         void allowsReviewer() throws Exception {
             long productId = createProduct("검토자 조회용 상품");
@@ -233,6 +285,24 @@ class ProductApiTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.page").value(0))
                     .andExpect(jsonPath("$.size").value(20))
                     .andExpect(jsonPath("$.totalElements").value(2));
+        }
+
+        @Test
+        @DisplayName("목록에도 상품별 최신 분석이 채워지고, 분석이 없는 상품은 null 이다")
+        void listsLatestAnalysisPerProduct() throws Exception {
+            long analyzed = createProduct("분석한 상품");
+            long latest = insertAnalysis(insertDocument(analyzed), "IN_REVIEW", "hash-list");
+            long untouched = createProduct("아직 분석하지 않은 상품");
+
+            mockMvc.perform(asPm(get("/api/products")))
+                    .andExpect(status().isOk())
+                    // 최신순이라 나중에 만든 상품이 앞에 온다.
+                    .andExpect(jsonPath("$.items[0].productId").value(untouched))
+                    .andExpect(jsonPath("$.items[0]").value(hasKey("latestAnalysis")))
+                    .andExpect(jsonPath("$.items[0].latestAnalysis").value(nullValue()))
+                    .andExpect(jsonPath("$.items[1].productId").value(analyzed))
+                    .andExpect(jsonPath("$.items[1].latestAnalysis.analysisId").value(latest))
+                    .andExpect(jsonPath("$.items[1].latestAnalysis.status").value("IN_REVIEW"));
         }
 
         @Test
