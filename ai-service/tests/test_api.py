@@ -106,23 +106,42 @@ def test_rejects_duplicate_persona_codes() -> None:
     assert response.json()["retryable"] is False
 
 
-def test_detects_fixture_persona_not_selected_by_request() -> None:
+def test_adapts_fixture_to_single_selected_persona() -> None:
     request = deepcopy(guarantee_request())
     request["personaCodes"] = ["FINANCIAL_BEGINNER"]
 
     response = call_api("POST", "/internal/v1/risk-analyses", json=request)
 
-    assert response.status_code == 500
-    assert response.json()["errorCode"] == "FIXTURE_INVALID"
-    assert "SENIOR" in response.json()["message"]
+    assert response.status_code == 200
+    assert response.json()["findings"][0]["affectedPersonaCodes"] == [
+        "FINANCIAL_BEGINNER"
+    ]
 
 
-def test_detects_fixture_evidence_not_in_request() -> None:
+def test_adapts_fixture_to_arbitrary_positive_evidence_id() -> None:
     request = deepcopy(guarantee_request())
     request["evidenceDocuments"][0]["id"] = 99
 
     response = call_api("POST", "/internal/v1/risk-analyses", json=request)
 
-    assert response.status_code == 500
-    assert response.json()["errorCode"] == "FIXTURE_INVALID"
-    assert "1" in response.json()["message"]
+    assert response.status_code == 200
+    evidence_reference = response.json()["findings"][0][
+        "evidenceReferences"
+    ][0]
+    assert evidence_reference["evidenceDocumentId"] == 99
+    assert evidence_reference["excerpt"] == request["evidenceDocuments"][0][
+        "content"
+    ]
+
+
+def test_adapts_accessibility_fixture_when_senior_is_not_selected() -> None:
+    request = guarantee_request()
+    request["scenarioCode"] = "ACCESSIBILITY_LOW"
+    request["personaCodes"] = ["FINANCIAL_BEGINNER"]
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert response.status_code == 200
+    assert response.json()["findings"][0]["affectedPersonaCodes"] == [
+        "FINANCIAL_BEGINNER"
+    ]
