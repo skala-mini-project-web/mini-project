@@ -230,8 +230,8 @@ class DocumentApiTest extends IntegrationTestSupport {
         @DisplayName("같은 시나리오는 언제나 같은 텍스트를 추출한다")
         void producesDeterministicText() throws Exception {
             long productId = createProduct();
-            long first = upload(productId, pdf("a.pdf", "내용 A"), "CLEAN_LOW");
-            long second = upload(productId, pdf("b.pdf", "내용 B"), "CLEAN_LOW");
+            long first = upload(productId, pdf("a.pdf", "내용 A"), "ACCESSIBILITY_LOW");
+            long second = upload(productId, pdf("b.pdf", "내용 B"), "ACCESSIBILITY_LOW");
 
             awaitExtractionFinished(first);
             awaitExtractionFinished(second);
@@ -244,11 +244,11 @@ class DocumentApiTest extends IntegrationTestSupport {
         @DisplayName("X-Demo-Scenario 로 시나리오를 지정할 수 있다")
         void honoursScenarioHeader() throws Exception {
             long productId = createProduct();
-            long documentId = upload(productId, pdf("아무거나.pdf", "내용"), "CLEAN_LOW");
+            long documentId = upload(productId, pdf("아무거나.pdf", "내용"), "ACCESSIBILITY_LOW");
 
             assertThat(awaitExtractionFinished(documentId)).isEqualTo(ExtractStatus.READY);
             assertThat(fetchDocument(documentId).get("extractedText").asText())
-                    .contains("예금자보호법에 따라 예금보험공사가 보호");
+                    .contains("안심케어 파생결합사채");
         }
 
         @Test
@@ -280,10 +280,10 @@ class DocumentApiTest extends IntegrationTestSupport {
         @DisplayName("파일명이 시나리오 패턴과 맞으면 헤더 없이도 해당 시나리오로 추출한다")
         void matchesScenarioByFileName() throws Exception {
             long productId = createProduct();
-            long documentId = upload(productId, pdf("튼튼정기예금 설명서.pdf", "본문"), null);
+            long documentId = upload(productId, pdf("행복저축 정기적금 설명서.pdf", "본문"), null);
 
             assertThat(awaitExtractionFinished(documentId)).isEqualTo(ExtractStatus.READY);
-            assertThat(fetchDocument(documentId).get("extractedText").asText()).contains("튼튼정기예금");
+            assertThat(fetchDocument(documentId).get("extractedText").asText()).contains("행복저축 정기적금");
         }
 
         @Test
