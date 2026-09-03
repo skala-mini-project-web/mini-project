@@ -11,6 +11,7 @@ import com.crosschecklab.domain.review.dto.ReviewCreatedResponse;
 import com.crosschecklab.domain.review.dto.ReviewDecisionRequest;
 import com.crosschecklab.domain.review.dto.ReviewDecisionResponse;
 import com.crosschecklab.domain.review.dto.ReviewListItemResponse;
+import com.crosschecklab.domain.review.dto.ReviewOutcomeResponse;
 import com.crosschecklab.domain.risk.RiskPatternService;
 import com.crosschecklab.global.common.PageResponse;
 import com.crosschecklab.global.common.enums.ReviewStatus;
@@ -86,6 +87,24 @@ public class ReviewService {
                 // 정렬은 쿼리가 확정하므로 Pageable 에 별도 정렬을 얹지 않는다.
                 PageRequest.of(page, size));
         return PageResponse.of(rows, ReviewListItemResponse::from);
+    }
+
+    // REV-004. 분석 하나에 대한 검토 결과 조회.
+    //
+    // REV-002 검토함은 검토자 전용 대기열(위험도 정렬·페이징)이라 목적이 다르다.
+    // 여기는 분석 상세 화면이 쓰는 단건 조회이고, 상품 담당자가 반려 사유를 확인하는 유일한 경로다.
+    // 담당자는 이 결과를 보고 추출 텍스트를 고쳐 새 분석을 만든다 (같은 입력으로는 재분석되지 않는다).
+    @Transactional(readOnly = true)
+    public ReviewOutcomeResponse findByAnalysis(Long analysisId, DemoUser currentUser) {
+        Analysis analysis = analysisRepository.findById(analysisId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        // 검토 존재 여부(404)를 알려주기 전에 접근 권한부터 판정한다.
+        // 그래야 남의 분석에 검토가 붙었는지를 404/403 차이로 떠보지 못한다.
+        ownershipChecker.requireOwnerOrReviewer(ownerIdOf(analysis.getProductDocumentId()), currentUser);
+
+        return reviewRepository.findByAnalysisId(analysisId)
+                .map(ReviewOutcomeResponse::from)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REVIEW_NOT_FOUND));
     }
 
     // REV-003. 승인이면 선택한 Finding 만 RiskPattern 으로 승격한다. 결정은 1회뿐이다.

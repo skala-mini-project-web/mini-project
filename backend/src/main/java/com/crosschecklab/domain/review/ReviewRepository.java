@@ -13,6 +13,9 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
 
     boolean existsByAnalysisId(Long analysisId);
 
+    // REV-004. analysis_id 가 UNIQUE 라 분석 하나에 검토도 하나뿐이다.
+    Optional<Review> findByAnalysisId(Long analysisId);
+
     // 결정은 1회뿐이라 두 요청이 동시에 PENDING 을 읽으면 RiskPattern 이 중복 생성된다.
     // 행을 잠가 한 요청만 선점하게 하고 뒤따르는 요청은 갱신된 status 를 읽어 409 로 끊긴다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)

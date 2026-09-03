@@ -1,6 +1,7 @@
 package com.crosschecklab.domain.review;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -325,5 +326,85 @@ class ReviewApiTest extends IntegrationTestSupport {
                         "selectedFindingIds", List.of(highFindingId)))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.FORBIDDEN.name()));
+    }
+
+    @Test
+    @DisplayName("REV-004: 상품 담당자가 자기 분석의 반려 사유를 조회한다")
+    void ownerReadsRejectionReason() throws Exception {
+        Long reviewId = createReview(analysisId);
+        mockMvc.perform(asReviewer(decision(reviewId, Map.of(
+                        "status", "REJECTED",
+                        "comment", "원금 손실 가능성을 첫 문장에 명시하세요."))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}/review", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reviewId").value(reviewId))
+                .andExpect(jsonPath("$.analysisId").value(analysisId))
+                .andExpect(jsonPath("$.status").value("REJECTED"))
+                .andExpect(jsonPath("$.comment").value("원금 손실 가능성을 첫 문장에 명시하세요."))
+                .andExpect(jsonPath("$.reviewerId").value(REVIEWER_ID))
+                .andExpect(jsonPath("$.decidedAt").exists())
+                // 반려는 승격 대상이 없으므로 선택 목록이 비어 있다.
+                .andExpect(jsonPath("$.selectedFindingIds").isEmpty());
+    }
+
+    @Test
+    @DisplayName("REV-004: 승인 결과에는 승격된 Finding 이 함께 보인다")
+    void ownerReadsApprovedFindings() throws Exception {
+        Long reviewId = createReview(analysisId);
+        mockMvc.perform(asReviewer(decision(reviewId, Map.of(
+                        "status", "APPROVED",
+                        "selectedFindingIds", List.of(highFindingId)))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}/review", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.selectedFindingIds[0]").value(highFindingId));
+    }
+
+    @Test
+    @DisplayName("REV-004: 결정 전에는 PENDING 이고 결정 필드가 비어 있다")
+    void pendingReviewHasNoDecisionFields() throws Exception {
+        createReview(analysisId);
+
+        // 키 자체는 내려가고 값만 null 이다 (FE 가 필드 존재를 가정해도 깨지지 않는다).
+        mockMvc.perform(asPm(get("/api/analyses/{id}/review", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.reviewerId").value(nullValue()))
+                .andExpect(jsonPath("$.decidedAt").value(nullValue()))
+                .andExpect(jsonPath("$.comment").value(nullValue()))
+                .andExpect(jsonPath("$.selectedFindingIds").isEmpty());
+    }
+
+    @Test
+    @DisplayName("REV-004: 검토자도 조회할 수 있다")
+    void reviewerCanRead() throws Exception {
+        Long reviewId = createReview(analysisId);
+
+        mockMvc.perform(asReviewer(get("/api/analyses/{id}/review", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reviewId").value(reviewId));
+    }
+
+    @Test
+    @DisplayName("REV-004: 검토 요청 전이면 404 REVIEW_NOT_FOUND")
+    void missingReviewIsNotFound() throws Exception {
+        mockMvc.perform(asPm(get("/api/analyses/{id}/review", analysisId)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value(ErrorCode.REVIEW_NOT_FOUND.name()));
+    }
+
+    @Test
+    @DisplayName("REV-004: 남의 분석은 검토 존재 여부와 무관하게 403")
+    void otherOwnersAnalysisIsForbidden() throws Exception {
+        // 소유자가 검토자(2)인 상품이라 담당자(1)에게는 남의 분석이다.
+        Long othersAnalysisId = insertCompletedAnalysis(REVIEWER_ID, "타인 상품", "hash-other");
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}/review", othersAnalysisId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value(ErrorCode.FORBIDDEN_OWNERSHIP.name()));
     }
 }
