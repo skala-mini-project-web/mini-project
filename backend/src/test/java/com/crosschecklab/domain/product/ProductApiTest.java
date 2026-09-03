@@ -1,5 +1,9 @@
 package com.crosschecklab.domain.product;
 
+import static org.hamcrest.Matchers.allOf;
+import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.Matchers.nullValue;
+
 import static com.crosschecklab.global.security.DemoAuthenticationFilter.ROLE_HEADER;
 import static com.crosschecklab.global.security.DemoAuthenticationFilter.USER_ID_HEADER;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -81,8 +85,11 @@ class ProductApiTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.ownerId").value(1))
                     .andExpect(jsonPath("$.ownerName").value("박서준 대리"))
                     // 갓 만든 상품이라 문서도 분석도 없다.
-                    .andExpect(jsonPath("$.latestDocument").doesNotExist())
-                    .andExpect(jsonPath("$.latestAnalysis").doesNotExist())
+                    // 키를 빼는 게 아니라 명시적 null 로 내리는 것이 계약이므로 존재와 null 을 나눠 단언한다.
+                    // (doesNotExist() 는 값이 null 이어도 통과해 이 구분을 못 잡는다)
+                    .andExpect(jsonPath("$").value(allOf(hasKey("latestDocument"), hasKey("latestAnalysis"))))
+                    .andExpect(jsonPath("$.latestDocument").value(nullValue()))
+                    .andExpect(jsonPath("$.latestAnalysis").value(nullValue()))
                     .andExpect(jsonPath("$.createdAt").isNotEmpty());
         }
 
@@ -91,7 +98,8 @@ class ProductApiTest extends IntegrationTestSupport {
         void allowsMissingDescription() throws Exception {
             mockMvc.perform(asPm(createRequest(Map.of("name", "설명 없는 상품", "productType", "SAVINGS"))))
                     .andExpect(status().isCreated())
-                    .andExpect(jsonPath("$.description").doesNotExist());
+                    .andExpect(jsonPath("$").value(hasKey("description")))
+                    .andExpect(jsonPath("$.description").value(nullValue()));
         }
 
         @Test
@@ -172,8 +180,9 @@ class ProductApiTest extends IntegrationTestSupport {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.productId").value(productId))
                     .andExpect(jsonPath("$.name").value("소유자 조회용 상품"))
-                    .andExpect(jsonPath("$.latestDocument").doesNotExist())
-                    .andExpect(jsonPath("$.latestAnalysis").doesNotExist());
+                    .andExpect(jsonPath("$").value(allOf(hasKey("latestDocument"), hasKey("latestAnalysis"))))
+                    .andExpect(jsonPath("$.latestDocument").value(nullValue()))
+                    .andExpect(jsonPath("$.latestAnalysis").value(nullValue()));
         }
 
         @Test
