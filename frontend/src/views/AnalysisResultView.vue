@@ -27,6 +27,14 @@ const retrying = ref(false)
 const requesting = ref(false)
 const reviewRequested = ref(false)
 const reviewInfo = ref(null)
+const STAGE_LABEL = {
+  PREPARING: '분석 준비 중',
+  PERSONA_SIMULATION: 'Persona 반복 실험 중',
+  RED_TEAM_ANALYSIS: 'Red Team 독립 검증 중',
+  EVALUATING: 'Evaluator 종합 판정 중',
+  SCORING: '서버 점수 계산 중',
+  AGGREGATING: '취약 패턴 집계 중',
+}
 
 const isRunning = computed(() => ['CREATED', 'RUNNING'].includes(status.value?.status))
 const isFailed = computed(() => status.value?.status === 'FAILED')
@@ -91,7 +99,7 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
     <div v-else-if="isRunning" class="run">
       <div class="run-head">
         <GSpinner :size="20" />
-        <span class="t-base fw-medium">AI가 표현 리스크를 분석하고 있습니다</span>
+        <span class="t-base fw-medium">{{ status.stage ? (STAGE_LABEL[status.stage] || '분석 실행 중') : '분석 실행 중' }}</span>
         <span class="mono run-pct">{{ String(status.progress ?? 0).padStart(2, '0') }}%</span>
       </div>
       <GProgress :value="status.progress ?? 0" tone="neutral" />
@@ -132,20 +140,59 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
             <GButton variant="primary" :loading="requesting" @click="requestReview"><template #icon><PhClipboardText :size="15" /></template>검토 요청</GButton>
           </template>
           <span v-else-if="reviewInfo.status === 'PENDING'" class="requested" style="color:var(--ink-mute)"><PhClipboardText :size="16" /> 검토 대기 중</span>
-          <span v-else-if="reviewInfo.decision === 'APPROVED'" class="requested"><PhCheckCircle :size="16" weight="fill" /> 승인됨</span>
+          <span v-else-if="reviewInfo.status === 'APPROVED'" class="requested"><PhCheckCircle :size="16" weight="fill" /> 승인됨</span>
           <span v-else class="requested" style="color:var(--risk-high)"><PhXCircle :size="16" weight="fill" /> 반려됨</span>
         </div>
       </div>
 
-      <div v-if="reviewInfo && reviewInfo.status && reviewInfo.status !== 'PENDING'" class="rev-result" :class="reviewInfo.decision === 'APPROVED' ? 'ok' : 'rej'">
+      <div v-if="reviewInfo && reviewInfo.status && reviewInfo.status !== 'PENDING'" class="rev-result" :class="reviewInfo.status === 'APPROVED' ? 'ok' : 'rej'">
         <div class="rr-head">
-          <component :is="reviewInfo.decision === 'APPROVED' ? PhCheckCircle : PhXCircle" :size="18" weight="fill" class="rr-i" />
-          <span class="fw-semibold">{{ reviewInfo.decision === 'APPROVED' ? '검토 승인' : '검토 반려 · 수정 필요' }}</span>
+          <component :is="reviewInfo.status === 'APPROVED' ? PhCheckCircle : PhXCircle" :size="18" weight="fill" class="rr-i" />
+          <span class="fw-semibold">{{ reviewInfo.status === 'APPROVED' ? '검토 승인' : '검토 반려 · 수정 필요' }}</span>
           <span class="mono mute rr-meta">{{ reviewInfo.reviewerId }} · {{ formatDateTime(reviewInfo.decidedAt) }}</span>
         </div>
         <p v-if="reviewInfo.comment" class="rr-comment">{{ reviewInfo.comment }}</p>
-        <p v-if="reviewInfo.decision === 'APPROVED' && reviewInfo.riskPatternIds?.length" class="t-xs mute mono">승격된 패턴: {{ reviewInfo.riskPatternIds.join(', ') }}</p>
+        <p v-if="reviewInfo.status === 'APPROVED' && reviewInfo.riskPatternIds?.length" class="t-xs mute mono">승격된 패턴: {{ reviewInfo.riskPatternIds.join(', ') }}</p>
       </div>
+
+      <section v-if="result.scoreBreakdown" class="grounding">
+        <div class="fh"><h2 class="d-h3">점수 산출 근거</h2><span class="mono mute">{{ result.scoreBreakdown.scorePolicyVersion }}</span></div>
+        <div class="chips">
+          <GBadge tone="neutral">심각도 {{ result.scoreBreakdown.severityBase }}</GBadge>
+          <GBadge tone="neutral">Persona {{ result.scoreBreakdown.personaBonus }}</GBadge>
+          <GBadge tone="neutral">규칙 {{ result.scoreBreakdown.ruleBonus }}</GBadge>
+          <GBadge tone="neutral">근거 {{ result.scoreBreakdown.groundingBonus }}</GBadge>
+        </div>
+      </section>
+
+      <section v-if="result.personaSummaries?.length" class="grounding">
+        <div class="fh"><h2 class="d-h3">Persona 이해도</h2><span class="mono mute">각 {{ result.experimentSummary?.repetitionCountPerPersona }}회</span></div>
+        <ul class="glist">
+          <li v-for="persona in result.personaSummaries" :key="persona.personaCode" class="grow">
+            <span class="gtitle">{{ personaName(persona.personaCode) }}</span>
+            <span class="mono gid">평균 {{ persona.averageComprehensionScore }}점 · {{ persona.runCount }}회</span>
+            <span v-if="persona.topMisunderstandingCodes?.length" class="t-xs mute">{{ persona.topMisunderstandingCodes.join(', ') }}</span>
+          </li>
+        </ul>
+        <details v-if="result.personaRuns?.length" class="details">
+          <summary>상황 질문별 Run 상세</summary>
+          <article v-for="run in result.personaRuns" :key="run.runId" class="detail-card">
+            <p class="fw-semibold">{{ personaName(run.personaCode) }} · Run {{ run.repetitionNo }}</p>
+            <div v-for="question in run.questionResults" :key="question.questionCode" class="t-sm">
+              <p>{{ question.question }}</p><p class="soft">{{ question.answer }} · {{ question.understood ? '이해' : '오해' }} ({{ question.score }}점)</p>
+            </div>
+          </article>
+        </details>
+      </section>
+
+      <section v-if="result.redTeamResults?.length" class="grounding">
+        <div class="fh"><h2 class="d-h3">Red Team 독립 검증</h2><span class="mono mute">{{ result.redTeamSummary?.triggeredRuleCount }}건 적발</span></div>
+        <article v-for="item in result.redTeamResults" :key="item.redTeamResultId" class="detail-card">
+          <div class="frow"><GBadge tone="neutral">{{ RULE_LABEL[item.ruleCode] || item.ruleCode }}</GBadge><GBadge tone="neutral">{{ FINDING_TYPE_LABEL[item.findingType] || item.findingType }}</GBadge></div>
+          <p class="t-sm fw-semibold">{{ item.statement }}</p>
+          <blockquote v-for="(source, j) in item.sourceReferences || []" :key="j" class="quote"><span class="mono qp">p.{{ source.page ?? '-' }}</span>{{ source.excerpt }}</blockquote>
+        </article>
+      </section>
 
       <section v-if="result.groundingDocuments?.length" class="grounding">
         <div class="fh"><h2 class="d-h3">검색된 근거 (RAG)</h2><span class="mono mute">{{ result.groundingDocuments.length }}건</span></div>
@@ -175,14 +222,15 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
           <div class="fbody">
             <div class="frow">
               <GSeverityBadge :severity="f.severity" />
-              <GBadge tone="neutral">{{ FINDING_TYPE_LABEL[f.findingType] || f.findingType }}</GBadge>
-              <GBadge tone="neutral">{{ RULE_LABEL[f.ruleCode] || f.ruleCode }}</GBadge>
+              <GBadge tone="neutral">{{ FINDING_TYPE_LABEL[f.findingType || f.aiDetail?.findingType] || f.findingType || f.aiDetail?.findingType }}</GBadge>
+              <GBadge v-if="f.categoryCode || f.aiDetail?.categoryCode" tone="neutral">{{ f.categoryCode || f.aiDetail?.categoryCode }}</GBadge>
+              <GBadge tone="neutral">{{ RULE_LABEL[f.ruleCode || f.aiDetail?.ruleCode] || f.ruleCode || f.aiDetail?.ruleCode }}</GBadge>
               <span class="mono fid">{{ f.findingId }}</span>
             </div>
             <p class="t-lg fmsg">{{ f.statement }}</p>
 
-            <blockquote class="quote">
-              <span class="mono qp">p.{{ f.sourceReference.page ?? '-' }}</span>{{ f.sourceReference.excerpt }}
+            <blockquote v-for="(source, j) in (f.sourceReferences || f.aiDetail?.sourceReferences || [])" :key="j" class="quote">
+              <span class="mono qp">p.{{ source.page ?? '-' }}</span>{{ source.excerpt }}
             </blockquote>
 
             <div class="fmeta">
@@ -201,6 +249,34 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
           </div>
         </li>
       </ol>
+
+      <section v-if="result.vulnerabilityPatterns?.length" class="grounding">
+        <div class="fh"><h2 class="d-h3">반복 재현 취약 패턴 후보</h2><span class="mono mute">AI 후보 · 미승인</span></div>
+        <article v-for="pattern in result.vulnerabilityPatterns" :key="pattern.patternId" class="detail-card">
+          <p class="fw-semibold">{{ pattern.title }}</p>
+          <p class="t-sm soft">{{ pattern.occurrenceCount }}/{{ pattern.totalRunCount }}회 · 재현율 {{ Math.round(pattern.consistencyRate * 100) }}% · {{ pattern.stable ? '안정 패턴' : '관찰 필요' }}</p>
+        </article>
+      </section>
+
+      <section v-if="result.guardFitSuggestions?.length" class="grounding">
+        <div class="fh"><h2 class="d-h3">GuardFit 제안 후보</h2><span class="mono mute">PROPOSED · 사람 승인 필요</span></div>
+        <article v-for="suggestion in result.guardFitSuggestions" :key="suggestion.suggestionId" class="detail-card">
+          <p class="fw-semibold">{{ suggestion.label }} · {{ suggestion.actionType }}</p>
+          <p class="t-sm mute">BEFORE</p><p class="t-sm">{{ suggestion.beforeText }}</p>
+          <p class="t-sm mute">AFTER</p><p class="t-sm">{{ suggestion.afterText }}</p>
+          <p class="t-xs soft">{{ suggestion.reason }}</p>
+        </article>
+      </section>
+
+      <section v-if="result.groundTruthFacts?.length" class="grounding">
+        <div class="fh"><h2 class="d-h3">공식 사실 추적</h2><span class="mono mute">VERIFIED</span></div>
+        <article v-for="fact in result.groundTruthFacts" :key="fact.factId" class="detail-card"><p class="fw-semibold">{{ fact.label }}</p><p class="t-sm">{{ fact.value }}</p></article>
+      </section>
+
+      <section v-if="result.provenance" class="grounding">
+        <div class="fh"><h2 class="d-h3">Provenance</h2></div>
+        <p class="mono t-xs soft"><template v-if="result.provenance.providerType !== 'MOCK'">{{ result.provenance.providerType }} · {{ result.provenance.modelVersion }} · </template>prompt {{ result.provenance.promptVersion }} · schema {{ result.provenance.outputSchemaVersion }} · score {{ result.provenance.scorePolicyVersion }} · taxonomy {{ result.provenance.taxonomyVersion }}</p>
+      </section>
     </template>
   </div>
 </template>
@@ -220,6 +296,9 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 
 .fail { margin-top: var(--s-40); padding: var(--s-24); border: 1px solid var(--risk-high-wash); background: var(--risk-high-wash); border-radius: var(--r-lg); display: flex; align-items: center; gap: var(--s-16); }
 .fail-i { color: var(--risk-high); flex: none; }
+.details { margin-top: var(--s-16); }
+.details summary { cursor: pointer; color: var(--accent); font-size: var(--text-sm); }
+.detail-card { display: flex; flex-direction: column; gap: var(--s-8); padding: var(--s-16) 0; border-bottom: 1px solid var(--line); }
 
 /* Score hero */
 .score { margin-top: var(--s-40); display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--s-40); padding: var(--s-32); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
@@ -235,8 +314,8 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .band { align-self: flex-start; color: var(--fg); background: var(--bg); font-size: var(--text-xs); font-weight: var(--fw-semibold); padding: 4px 9px; border-radius: var(--r-xs); }
 .score-src { display: flex; gap: var(--s-20); flex-wrap: wrap; }
 .score-src span { display: inline-flex; align-items: center; gap: 6px; }
-.score-act { display: flex; flex-direction: column; align-items: flex-end; gap: var(--s-8); flex: none; }
-.act-note { max-width: 18ch; text-align: right; }
+.score-act { display: flex; flex-direction: column; align-items: flex-end; gap: var(--s-8); min-width: max-content; flex: none; }
+.act-note { white-space: nowrap; text-align: right; }
 .requested { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); font-weight: var(--fw-semibold); font-size: var(--text-sm); }
 
 .fh { display: flex; align-items: baseline; justify-content: space-between; margin-top: var(--s-48); padding-bottom: var(--s-16); border-bottom: 1px solid var(--line-strong); }
@@ -261,7 +340,8 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .rr-meta { margin-left: auto; font-size: var(--text-xs); }
 .rr-comment { color: var(--ink); line-height: 1.6; }
 .grounding { margin-top: var(--s-32); }
-.glist { list-style: none; margin-top: var(--s-12); border-top: 1px solid var(--line); }
+.grounding > .fh { margin-top: 0; }
+.glist { list-style: none; margin-top: var(--s-12); }
 .grow { display: flex; align-items: center; gap: var(--s-12); padding: var(--s-12) var(--s-8); border-bottom: 1px solid var(--line); }
 .gt { font-size: 10.5px; letter-spacing: 0.08em; color: var(--ink-mute); border: 1px solid var(--line-strong); border-radius: var(--r-xs); padding: 2px 6px; flex: none; }
 .gtitle { font-weight: var(--fw-medium); min-width: 0; }
@@ -273,5 +353,5 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .ev { line-height: 1.55; } .evt { color: var(--ink-mute); margin-right: 5px; font-size: 11px; }
 .reco { margin-top: var(--s-20); display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); font-size: var(--text-sm); line-height: 1.6; }
-@media (max-width: 760px) { .score { grid-template-columns: 1fr; gap: var(--s-20); } .score-act { align-items: flex-start; } .act-note { text-align: left; } .fmeta { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .score { grid-template-columns: 1fr; gap: var(--s-20); } .score-act { align-items: flex-start; min-width: 0; } .act-note { white-space: normal; text-align: left; } .fmeta { grid-template-columns: 1fr; } }
 </style>

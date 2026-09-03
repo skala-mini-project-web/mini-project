@@ -16,7 +16,7 @@ const loading = ref(true)
 const items = ref([])
 const page = ref(0)
 const shown = computed(() => items.value.slice(page.value * PAGE, page.value * PAGE + PAGE))
-const tone = (a) => (/APPROVED/.test(a) ? 'ok' : /REJECTED|DISCARDED/.test(a) ? 'high' : /SUBMITTED|CREATED/.test(a) ? 'accent' : 'neutral')
+const tone = (a) => (/APPROVED/.test(a) ? 'ok' : /REJECTED/.test(a) ? 'high' : /SUBMITTED|CREATED/.test(a) ? 'accent' : 'neutral')
 onMounted(async () => { try { items.value = (await api.listAuditLogs({})).items } catch (e) { toast.fromError(e) } finally { loading.value = false } })
 </script>
 

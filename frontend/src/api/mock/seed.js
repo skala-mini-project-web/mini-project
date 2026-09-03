@@ -5,6 +5,23 @@
 // =============================================================================
 
 import { computeRiskScore } from './scenarios.js'
+import {
+  GOLDEN_ANALYSIS,
+  GOLDEN_AUDIT_LOG,
+  GOLDEN_DOCUMENT,
+  GOLDEN_EVIDENCE,
+  GOLDEN_FACTS,
+  GOLDEN_PERSONAS,
+  GOLDEN_PRODUCT,
+  GOLDEN_RED_TEAM_PACK,
+  GOLDEN_REVIEW,
+  buildGoldenOutcome,
+  validateGoldenFixture,
+} from './fixtures/v1/index.js'
+
+validateGoldenFixture()
+const GOLDEN_OUTCOME = buildGoldenOutcome()
+const INCLUDE_BULK_SEED = import.meta.env?.VITE_DEMO_BULK_SEED === 'true'
 
 export const USERS = [
   { id: 'USER-PM-001', name: '박서준 대리', role: 'PRODUCT_MANAGER', active: true },
@@ -12,15 +29,18 @@ export const USERS = [
 ]
 
 export const PERSONA_TEMPLATES = [
+  ...GOLDEN_PERSONAS,
   { personaId: 'PERSONA-FIN-BEGINNER', code: 'FINANCIAL_BEGINNER', name: '금융 초보자', riskFocus: '수익 보장 오해, 비용 누락', active: true },
   { personaId: 'PERSONA-SENIOR', code: 'SENIOR', name: '고령 금융소비자', riskFocus: '원금 보장 오해, 접근성', active: true },
   { personaId: 'PERSONA-LOW-LITERACY', code: 'LOW_LITERACY', name: '저문해 소비자', riskFocus: '전문용어, 인지 부담', active: true },
   { personaId: 'PERSONA-LOSS-SENSITIVE', code: 'LOSS_SENSITIVE', name: '손실 민감 소비자', riskFocus: '손실 완화 표현', active: true },
   { personaId: 'PERSONA-DIGITAL-NOVICE', code: 'DIGITAL_NOVICE', name: '디지털 초보자', riskFocus: 'CTA, 확인 흐름', active: true },
-]
+].filter((item) => INCLUDE_BULK_SEED || typeof item.personaId === 'number')
 
 export const RED_TEAM_PACKS = [
+  ...GOLDEN_RED_TEAM_PACK,
   {
+    redTeamPackId: 'LEGACY-CORE-FINANCIAL-RISK-V1',
     code: 'CORE_FINANCIAL_RISK_V1',
     name: '금융소비자 핵심 위험 Pack',
     rules: [
@@ -32,9 +52,10 @@ export const RED_TEAM_PACKS = [
       { ruleCode: 'COGNITIVE_ACCESSIBILITY', findingType: 'ACCESSIBILITY', purpose: '고령, 저문해 소비자에게 인지 부담이 큰지' },
     ],
   },
-]
+].filter((item) => INCLUDE_BULK_SEED || typeof item.redTeamPackId === 'number')
 
 export const EVIDENCE_DOCUMENTS = [
+  ...GOLDEN_EVIDENCE,
   {
     documentId: 'POLICY-003',
     title: '금융상품 중요정보 표시 내부준칙 (데모)',
@@ -65,33 +86,35 @@ export const EVIDENCE_DOCUMENTS = [
     synthetic: true,
     disclaimer: '발표용 합성 데이터이며 실제 법률 해석이 아닙니다.',
   },
-]
+].filter((item) => INCLUDE_BULK_SEED || typeof item.documentId === 'number')
 
 // Golden-path findings for the seeded completed analysis (score 82).
 const DEMO_FINDINGS = [
   {
     findingId: 'FND-001',
     findingType: 'FRAMING',
+    categoryCode: 'PRINCIPAL_PROTECTION_MISUNDERSTANDING',
     ruleCode: 'STABILITY_KEYWORD',
     statement: '안정성 표현이 원금보장으로 오인될 가능성이 있습니다.',
     severity: 'HIGH',
-    sourceReference: { documentId: 'PDOC-001', page: 1, excerpt: '최근 안정적인 수익률을 기록한 투자상품입니다.' },
+    sourceReferences: [{ documentId: 'PDOC-001', page: 1, excerpt: '최근 안정적인 수익률을 기록한 투자상품입니다.' }],
     affectedPersonaCodes: ['FINANCIAL_BEGINNER', 'SENIOR'],
     evidenceReferences: [
-      { documentId: 'POLICY-003', excerpt: '원금손실 가능성은 안정성 표현과 인접해 표시해야 합니다.', sourceType: 'INTERNAL_POLICY' },
+      { evidenceDocumentId: 'POLICY-003', excerpt: '원금손실 가능성은 안정성 표현과 인접해 표시해야 합니다.', sourceType: 'INTERNAL_POLICY' },
     ],
     recommendation: '같은 영역에 원금 손실 가능성을 명시하세요.',
   },
   {
     findingId: 'FND-002',
     findingType: 'OMISSION',
+    categoryCode: 'COST_OMISSION',
     ruleCode: 'COST_OMISSION',
     statement: '총비용 및 운용 보수가 인접 위치에 표시되지 않았습니다.',
     severity: 'MEDIUM',
-    sourceReference: { documentId: 'PDOC-001', page: 2, excerpt: '운용 보수' },
+    sourceReferences: [{ documentId: 'PDOC-001', page: 2, excerpt: '운용 보수' }],
     affectedPersonaCodes: ['FINANCIAL_BEGINNER'],
     evidenceReferences: [
-      { documentId: 'POLICY-003', excerpt: '비용 정보는 수익 표현과 함께 제시해야 합니다.', sourceType: 'INTERNAL_POLICY' },
+      { evidenceDocumentId: 'POLICY-003', excerpt: '비용 정보는 수익 표현과 인접해 표시해야 합니다.', sourceType: 'INTERNAL_POLICY' },
     ],
     recommendation: '총비용 예시를 수익 표현 인접 위치에 표시하세요.',
   },
@@ -129,7 +152,7 @@ const EXTRA_PRODUCTS = Array.from({ length: 22 }, (_, i) => {
   }
 })
 
-export const PRODUCTS = [...CORE_PRODUCTS, ...EXTRA_PRODUCTS]
+export const PRODUCTS = [GOLDEN_PRODUCT, ...(INCLUDE_BULK_SEED ? [...CORE_PRODUCTS, ...EXTRA_PRODUCTS] : [])]
 
 // ---- Coherent children for bulk products (so none are hollow shells) --------
 const SEV_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1 }
@@ -177,20 +200,20 @@ let _fseq = 0
 function mkFinding(docId, t) {
   _fseq += 1
   return {
-    findingId: `FND-9${100 + _fseq}`, findingType: t.findingType, ruleCode: t.ruleCode,
+    findingId: `FND-9${100 + _fseq}`, findingType: t.findingType, categoryCode: t.ruleCode, ruleCode: t.ruleCode,
     statement: t.statement, severity: t.severity,
-    sourceReference: { documentId: docId, page: 1, excerpt: t.excerpt },
+    sourceReferences: [{ documentId: docId, page: 1, excerpt: t.excerpt }],
     affectedPersonaCodes: t.personas,
-    evidenceReferences: t.ev ? [{ documentId: t.ev, excerpt: '근거 준칙 발췌 (데모)', sourceType: 'INTERNAL_POLICY' }] : [],
+    evidenceReferences: t.ev ? [{ evidenceDocumentId: t.ev, excerpt: '근거 준칙 발췌 (데모)', sourceType: 'INTERNAL_POLICY' }] : [],
     recommendation: t.reco,
   }
 }
 const GF_TYPES = [
-  { actionType: 'WARNING_LABEL', label: '원금 손실 가능성 있음', placement: '상품 상세 상단' },
-  { actionType: 'INLINE_NOTE', label: '과거 수익은 미래 성과를 보장하지 않습니다', placement: '수익률 표기 옆' },
-  { actionType: 'CONFIRM_STEP', label: '위험 고지 확인 후 가입 진행', placement: '가입 마지막 단계' },
-  { actionType: 'DISCLOSURE', label: '총비용·수수료 상세 고지', placement: '비용 안내 섹션' },
-  { actionType: 'WARNING_LABEL', label: '예금자보호 한도(5천만원) 안내', placement: '금리 표기 하단' },
+  { actionType: 'WARNING', label: '원금 손실 가능성 있음', placement: '상품 상세 상단' },
+  { actionType: 'LABEL', label: '과거 수익은 미래 성과를 보장하지 않습니다', placement: '수익률 표기 옆' },
+  { actionType: 'QUESTION', label: '위험 고지 확인 후 가입 진행', placement: '가입 마지막 단계' },
+  { actionType: 'COMPARISON', label: '총비용·수수료 상세 고지', placement: '비용 안내 섹션' },
+  { actionType: 'WARNING', label: '예금자보호 한도(5천만원) 안내', placement: '금리 표기 하단' },
 ]
 function buildBulk() {
   const docs = [], analyses = [], reviews = [], risk = [], guardfit = []
@@ -216,29 +239,30 @@ function buildBulk() {
       analysisId, productDocumentId: docId, productId: p.productId,
       status: 'COMPLETED', riskScore: computeRiskScore(findings), providerType: 'MOCK',
       scenarioCode: 'GUARANTEE_MISUNDERSTANDING_HIGH', evidenceDocumentIds: ['POLICY-003'],
-      personaIds: ['PERSONA-FIN-BEGINNER', 'PERSONA-SENIOR'], redTeamPackCode: 'CORE_FINANCIAL_RISK_V1',
+      personaIds: ['PERSONA-FIN-BEGINNER', 'PERSONA-SENIOR'], redTeamPackId: 51,
       findings, attemptCount: 1, error: null, clockDriven: false, createdAt: p.createdAt,
     })
     const maxSev = findings.reduce((a, f) => (SEV_RANK[f.severity] > SEV_RANK[a] ? f.severity : a), 'LOW')
     const reviewId = `REV-9${idn}`
     if (p.status === 'IN_REVIEW') {
-      reviews.push({ reviewId, analysisId, productId: p.productId, productName: p.name, maxSeverity: maxSev, status: 'PENDING', decision: null, submittedBy: 'USER-PM-001', ownerName: '박서준 대리', submittedAt: p.createdAt, submissionComment: '검토 요청', reviewerId: null, decidedAt: null, comment: null, selectedFindingIds: [] })
+      reviews.push({ reviewId, analysisId, productId: p.productId, productName: p.name, maxSeverity: maxSev, status: 'PENDING', submittedBy: 'USER-PM-001', ownerName: '박서준 대리', submittedAt: p.createdAt, submissionComment: '검토 요청', reviewerId: null, decidedAt: null, comment: null, selectedFindingIds: [] })
     } else if (p.status === 'APPROVED') {
       const hi = findings.find((f) => f.severity === 'HIGH') || findings[0]
       const rpId = `RISK-9${idn}`
-      reviews.push({ reviewId, analysisId, productId: p.productId, productName: p.name, maxSeverity: maxSev, status: 'APPROVED', decision: 'APPROVED', submittedBy: 'USER-PM-001', ownerName: '박서준 대리', submittedAt: p.createdAt, submissionComment: '검토 요청', reviewerId: 'USER-CR-001', decidedAt: p.createdAt, comment: '승인 처리', selectedFindingIds: [hi.findingId], riskPatternIds: [rpId] })
-      risk.push({ riskPatternId: rpId, name: hi.statement.slice(0, 20), severity: hi.severity, ruleCode: hi.ruleCode, affectedPersonaCodes: hi.affectedPersonaCodes, sourceFindingId: hi.findingId, sourceReviewId: reviewId, status: 'ACTIVE', createdAt: p.createdAt, sourceExcerpt: hi.sourceReference.excerpt, recommendation: hi.recommendation })
+      reviews.push({ reviewId, analysisId, productId: p.productId, productName: p.name, maxSeverity: maxSev, status: 'APPROVED', submittedBy: 'USER-PM-001', ownerName: '박서준 대리', submittedAt: p.createdAt, submissionComment: '검토 요청', reviewerId: 'USER-CR-001', decidedAt: p.createdAt, comment: '승인 처리', selectedFindingIds: [hi.findingId], riskPatternIds: [rpId] })
+      risk.push({ riskPatternId: rpId, name: hi.statement.slice(0, 20), severity: hi.severity, ruleCode: hi.ruleCode, affectedPersonaCodes: hi.affectedPersonaCodes, sourceFindingId: hi.findingId, sourceReviewId: reviewId, status: 'ACTIVE', createdAt: p.createdAt, sourceExcerpt: hi.sourceReferences[0]?.excerpt || '', recommendation: hi.recommendation })
       const at = GF_TYPES[i % GF_TYPES.length]
       guardfit.push({ actionId: `GFA-9${idn}`, riskPatternId: rpId, actionType: at.actionType, label: at.label, placement: at.placement, required: i % 3 !== 0, status: 'APPROVED', createdBy: 'USER-CR-001', updatedBy: 'USER-CR-001', updatedAt: p.createdAt })
     } else if (p.status === 'NEEDS_FIX') {
-      reviews.push({ reviewId, analysisId, productId: p.productId, productName: p.name, maxSeverity: maxSev, status: 'REJECTED', decision: 'REJECTED', submittedBy: 'USER-PM-001', ownerName: '박서준 대리', submittedAt: p.createdAt, submissionComment: '검토 요청', reviewerId: 'USER-CR-001', decidedAt: p.createdAt, comment: '원금 손실 가능성 문구 보완이 필요합니다.', selectedFindingIds: [] })
+      reviews.push({ reviewId, analysisId, productId: p.productId, productName: p.name, maxSeverity: maxSev, status: 'REJECTED', submittedBy: 'USER-PM-001', ownerName: '박서준 대리', submittedAt: p.createdAt, submissionComment: '검토 요청', reviewerId: 'USER-CR-001', decidedAt: p.createdAt, comment: '원금 손실 가능성 문구 보완이 필요합니다.', selectedFindingIds: [] })
     }
   })
   return { docs, analyses, reviews, risk, guardfit }
 }
-const BULK = buildBulk()
+const BULK = INCLUDE_BULK_SEED ? buildBulk() : { docs: [], analyses: [], reviews: [], risk: [], guardfit: [] }
 
 export const PRODUCT_DOCUMENTS = [
+  GOLDEN_DOCUMENT,
   {
     documentId: 'PDOC-001', productId: 'PROD-001', fileName: '스마트인컴_상품설명서.pdf',
     mediaType: 'application/pdf', fileSize: 2516582,
@@ -260,16 +284,17 @@ export const PRODUCT_DOCUMENTS = [
     attemptCount: 1, error: null, clockDriven: false,
   },
   ...BULK.docs,
-]
+].filter((item) => INCLUDE_BULK_SEED || typeof item.documentId === 'number')
 
 export const ANALYSES = [
+  { ...GOLDEN_ANALYSIS, ...GOLDEN_OUTCOME },
   {
     analysisId: 'ANL-001', productDocumentId: 'PDOC-001', productId: 'PROD-001',
     status: 'COMPLETED', riskScore: 82, providerType: 'MOCK',
     scenarioCode: 'GUARANTEE_MISUNDERSTANDING_HIGH',
     evidenceDocumentIds: ['POLICY-003'],
     personaIds: ['PERSONA-FIN-BEGINNER', 'PERSONA-SENIOR'],
-    redTeamPackCode: 'CORE_FINANCIAL_RISK_V1',
+    redTeamPackId: 51,
     findings: DEMO_FINDINGS, attemptCount: 1, error: null, clockDriven: false,
     createdAt: '2026-09-02T09:03:00+09:00',
   },
@@ -278,23 +303,26 @@ export const ANALYSES = [
     status: 'RUNNING', riskScore: null, providerType: 'MOCK',
     scenarioCode: 'COST_OMISSION_MEDIUM', progress: 65,
     evidenceDocumentIds: ['POLICY-003'], personaIds: ['PERSONA-FIN-BEGINNER'],
-    redTeamPackCode: 'CORE_FINANCIAL_RISK_V1',
+    redTeamPackId: 51,
     findings: [], attemptCount: 1, error: null, clockDriven: false,
     createdAt: '2026-09-02T09:20:00+09:00',
   },
   ...BULK.analyses,
-]
+].filter((item) => INCLUDE_BULK_SEED || typeof item.analysisId === 'number')
 
 export const REVIEWS = [
+  GOLDEN_REVIEW,
   {
     reviewId: 'REV-001', analysisId: 'ANL-001', productId: 'PROD-001', productName: '스마트 인컴 투자상품',
-    maxSeverity: 'HIGH', status: 'PENDING', decision: null,
+    maxSeverity: 'HIGH', status: 'PENDING',
     submittedBy: 'USER-PM-001', ownerName: '박서준 대리',
     submittedAt: '2026-09-02T09:10:00+09:00', submissionComment: '고위험 Finding 검토 요청',
     reviewerId: null, decidedAt: null, comment: null, selectedFindingIds: [],
   },
   ...BULK.reviews,
-]
+].filter((item) => INCLUDE_BULK_SEED || typeof item.reviewId === 'number')
+
+export const GROUND_TRUTH_FACTS = GOLDEN_FACTS
 
 // Pre-approved pattern history so the reviewer library and PM guardfit view
 // are populated on first load.
@@ -312,32 +340,32 @@ export const RISK_PATTERNS = [
     sourceExcerpt: '수수료 안내', recommendation: '총비용 예시를 수익 표현과 함께 제시하세요.',
   },
   ...BULK.risk,
-]
+].filter((item) => INCLUDE_BULK_SEED || typeof item.riskPatternId === 'number')
 
 export const GUARDFIT_ACTIONS = [
   {
-    actionId: 'GFA-900', riskPatternId: 'RISK-900', actionType: 'WARNING_LABEL',
+    actionId: 'GFA-900', riskPatternId: 'RISK-900', actionType: 'WARNING',
     label: '수익률은 미래 성과를 보장하지 않습니다', placement: '상품 상세 상단',
     required: true, status: 'APPROVED', createdBy: 'USER-CR-001', updatedBy: 'USER-CR-001',
     updatedAt: '2026-09-01T16:30:00+09:00',
   },
   {
-    actionId: 'GFA-901', riskPatternId: 'RISK-901', actionType: 'INLINE_NOTE',
+    actionId: 'GFA-901', riskPatternId: 'RISK-901', actionType: 'LABEL',
     label: '총비용 예시 표기', placement: '수익 표현 인접', required: false,
     status: 'DRAFT', createdBy: 'USER-CR-001', updatedBy: null, updatedAt: null,
   },
   {
-    actionId: 'GFA-902', riskPatternId: 'RISK-901', actionType: 'DISCLOSURE',
+    actionId: 'GFA-902', riskPatternId: 'RISK-901', actionType: 'COMPARISON',
     label: '총비용·수수료 예시를 수익 표현과 함께 고지', placement: '수익률 표기 하단', required: true,
     status: 'APPROVED', createdBy: 'USER-CR-001', updatedBy: 'USER-CR-001', updatedAt: '2026-09-01T16:40:00+09:00',
   },
   {
-    actionId: 'GFA-903', riskPatternId: 'RISK-900', actionType: 'CONFIRM_STEP',
+    actionId: 'GFA-903', riskPatternId: 'RISK-900', actionType: 'QUESTION',
     label: '원금 손실 가능성 확인 후 가입 진행', placement: '가입 마지막 단계', required: true,
     status: 'APPROVED', createdBy: 'USER-CR-001', updatedBy: 'USER-CR-001', updatedAt: '2026-09-01T16:45:00+09:00',
   },
   ...BULK.guardfit,
-]
+].filter((item) => INCLUDE_BULK_SEED || typeof item.actionId === 'number')
 
 const CORE_AUDIT = [
   { auditId: 'AUD-900', resourceType: 'REVIEW', resourceId: 'REV-900', action: 'REVIEW_APPROVED', actorId: 'USER-CR-001', traceId: 'trc-20260901-0015', createdAt: '2026-09-01T16:00:00+09:00' },
@@ -346,7 +374,7 @@ const CORE_AUDIT = [
 const AUDIT_EVENTS = [
   ['REVIEW', 'REVIEW_SUBMITTED', 'USER-PM-001'], ['REVIEW', 'REVIEW_APPROVED', 'USER-CR-001'],
   ['REVIEW', 'REVIEW_REJECTED', 'USER-CR-001'], ['GUARDFIT_ACTION', 'ACTION_CREATED', 'USER-CR-001'],
-  ['GUARDFIT_ACTION', 'ACTION_APPROVED', 'USER-CR-001'], ['GUARDFIT_ACTION', 'ACTION_DISCARDED', 'USER-CR-001'],
+  ['GUARDFIT_ACTION', 'ACTION_APPROVED', 'USER-CR-001'], ['GUARDFIT_ACTION', 'ACTION_CREATED', 'USER-CR-001'],
 ]
 const EXTRA_AUDIT = Array.from({ length: 20 }, (_, i) => {
   const [rt, act, actor] = AUDIT_EVENTS[i % AUDIT_EVENTS.length]
@@ -362,4 +390,4 @@ const EXTRA_AUDIT = Array.from({ length: 20 }, (_, i) => {
     createdAt: `2026-08-${day}T${mm}:12:00+09:00`,
   }
 })
-export const AUDIT_LOGS = [...CORE_AUDIT, ...EXTRA_AUDIT]
+export const AUDIT_LOGS = [GOLDEN_AUDIT_LOG, ...(INCLUDE_BULK_SEED ? [...CORE_AUDIT, ...EXTRA_AUDIT] : [])]

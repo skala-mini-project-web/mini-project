@@ -24,14 +24,22 @@ const severity = ref('')
 const submitting = ref(false)
 const showCreate = ref(false)
 const active = ref(null)
-const form = reactive({ actionType: 'WARNING_LABEL', label: '', placement: '', required: 'true' })
+const form = reactive({ actionType: 'WARNING', label: '', placement: '', required: 'true' })
 const actionTypeOptions = Object.entries(ACTION_TYPE_LABEL).map(([value, label]) => ({ value, label: `${label} · ${value}` }))
 const requiredOptions = [{ value: 'true', label: '필수' }, { value: 'false', label: '권장' }]
 const sevFilters = [{ v: '', l: 'ALL' }, { v: 'HIGH', l: 'HIGH' }, { v: 'MEDIUM', l: 'MED' }, { v: 'LOW', l: 'LOW' }]
 
 onMounted(load)
 async function load() { loading.value = true; try { items.value = (await api.listRiskPatterns(severity.value ? { severity: severity.value } : {})).items } catch (e) { toast.fromError(e) } finally { loading.value = false } }
-function openCreate(p) { active.value = p; form.actionType = 'WARNING_LABEL'; form.label = ''; form.placement = ''; form.required = 'true'; showCreate.value = true }
+function openCreate(p) {
+  const suggestion = p.guardFitSuggestion
+  active.value = p
+  form.actionType = suggestion?.actionType || 'WARNING'
+  form.label = suggestion?.label || ''
+  form.placement = suggestion?.placement || ''
+  form.required = suggestion?.required === false ? 'false' : 'true'
+  showCreate.value = true
+}
 async function submit() {
   submitting.value = true
   try { const res = await api.createGuardFitAction({ riskPatternId: active.value.riskPatternId, actionType: form.actionType, label: form.label, placement: form.placement, required: form.required === 'true' }); toast.success('GuardFit 후보 생성', `${res.actionId} · DRAFT`); showCreate.value = false; router.push('/guardfit') }
@@ -54,7 +62,7 @@ async function submit() {
         <div class="l">
           <div class="l-top"><GSeverityBadge :severity="rp.severity" /><span class="d-h3 name">{{ rp.name }}</span></div>
           <div class="tags"><GBadge tone="neutral">{{ RULE_LABEL[rp.ruleCode] || rp.ruleCode }}</GBadge><GBadge v-for="pc in rp.affectedPersonaCodes" :key="pc" tone="neutral" :mono="false">{{ personaName(pc) }}</GBadge></div>
-          <span class="mono trace">{{ rp.sourceFindingId }} · {{ rp.sourceReviewId }} · {{ rp.riskPatternId }}</span>
+          <span class="mono trace">{{ rp.sourceFindingId }} · {{ rp.sourceReviewId }} · {{ rp.sourceAnalysisId || '-' }} · {{ rp.riskPatternId }}</span>
         </div>
         <div class="r">
           <GStatusPill :status="rp.status" />

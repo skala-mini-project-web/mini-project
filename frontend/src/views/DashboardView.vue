@@ -21,7 +21,8 @@ const loading = ref(true)
 const data = ref(null)
 
 const pad = (n) => String(n ?? 0).padStart(2, '0')
-const notes = computed(() => [...jobs.notifications].sort((a, b) => b.at - a.at).slice(0, 12))
+// 안 읽은 알림만 표시 — “모두 읽음”/상품 진입 시 사라짐(영구 이력은 감사 로그)
+const notes = computed(() => jobs.notifications.filter((n) => !n.read).sort((a, b) => b.at - a.at).slice(0, 5))
 function openNote(n) { if (n.productId) { jobs.markProductRead(n.productId); router.push(`/products/${n.productId}`) } }
 function clearAll() { jobs.markAllRead() }
 function reltime(ts) {
@@ -85,13 +86,11 @@ async function load() {
     <div v-if="session.isPM" class="dash-cols">
       <section class="panel">
         <div class="q-head">
-          <h2 class="d-h3">알림</h2>
+          <h2 class="d-h3 notif-heading"><PhBell :size="18" />알림</h2>
           <button v-if="notes.length" class="linkish" @click="clearAll">모두 읽음</button>
         </div>
         <div v-if="loading" class="q-list"><div v-for="i in 3" :key="i" class="q-sk"><GSkeleton h="16px" w="70%" /></div></div>
-        <GEmptyState v-else-if="!notes.length" title="새 알림이 없습니다" description="추출·분석·검토가 끝나면 여기에 표시됩니다.">
-          <template #icon><PhBell :size="20" /></template>
-        </GEmptyState>
+        <div v-else-if="!notes.length" class="notif-empty"><span class="t-sm fw-medium">새 알림이 없습니다</span><span class="t-xs mute">추출·분석·검토가 끝나면 여기에 표시됩니다.</span></div>
         <ul v-else class="notif-list">
           <li v-for="n in notes" :key="n.id" class="notif-row" tabindex="0" @click="openNote(n)" @keyup.enter="openNote(n)">
             <span class="notif-dot" :class="{ on: !n.read }" aria-hidden="true"></span>
@@ -158,6 +157,8 @@ async function load() {
 .dash-cols { display: grid; grid-template-columns: 0.82fr 1.18fr; gap: var(--s-24); margin-top: var(--s-40); align-items: start; }
 .queue { margin-top: var(--s-40); }
 .notif-list { list-style: none; }
+.notif-heading { display: inline-flex; align-items: center; gap: var(--s-8); }
+.notif-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: var(--s-16) var(--s-8); }
 .notif-row { display: flex; gap: var(--s-12); align-items: flex-start; padding: var(--s-14, 14px) var(--s-8); border-bottom: 1px solid var(--line); cursor: pointer; transition: background var(--fast) var(--ease); }
 .notif-row:hover, .notif-row:focus-visible { background: var(--surface-2); }
 .notif-dot { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--line-strong); margin-top: 6px; flex: none; }

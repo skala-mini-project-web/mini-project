@@ -3,6 +3,7 @@
 import { retrieveEvidence, retrieveEvidenceEmbed } from './rag.js'
 import { chatJson, llmAvailable } from './llm.js'
 import { applyGuardrails } from './guardrails.js'
+import { buildGoldenOutcome } from '../api/mock/fixtures/v1/index.js'
 
 const SYSTEM = [
   '너는 금융소비자 보호 관점의 표현 리스크 분석가다. 입력 문서에서 소비자가 오인할 수 있는 표현을 찾아 JSON으로만 보고한다.',
@@ -21,7 +22,7 @@ function buildUserPrompt(sourceText, personaCodes, ruleCodes, grounding) {
     `[personaCodes]\n${personaCodes.join(', ')}`,
     `[evidence]\n${grounding.map((g) => `- ${g.documentId} (${g.sourceType}): ${g.excerpt}`).join('\n')}`,
     '[출력 스키마]',
-    '{"findings":[{"findingType":"FRAMING|OMISSION|MISUNDERSTANDING|ACCESSIBILITY","ruleCode":"<목록 중>","severity":"HIGH|MEDIUM|LOW","statement":"...","sourceReference":{"page":1,"excerpt":"<문서 원문 그대로>"},"affectedPersonaCodes":["..."],"evidenceReferences":[{"documentId":"<evidence 중>","excerpt":"...","sourceType":"INTERNAL_POLICY|LAW"}],"recommendation":"..."}]}',
+    '{"findings":[{"findingType":"FRAMING|OMISSION|MISUNDERSTANDING|ACCESSIBILITY","categoryCode":"SCREAMING_SNAKE_CASE|UNCLASSIFIED","ruleCode":"<목록 중>","severity":"HIGH|MEDIUM|LOW","statement":"...","sourceReferences":[{"page":1,"excerpt":"<문서 원문 그대로>"}],"affectedPersonaCodes":["..."],"evidenceReferences":[{"evidenceDocumentId":"<evidence 중>","excerpt":"...","sourceType":"INTERNAL_POLICY|REGULATION|PRODUCT_POLICY"}],"recommendation":"..."}]}',
   ].join('\n\n')
 }
 
@@ -41,6 +42,10 @@ export async function analyzeDocument({ sourceText, personaCodes = [], ruleCodes
     evidenceIds: grounding.map((g) => g.documentId),
   })
   return { ...result, grounding, provider: 'LOCAL_OLLAMA' }
+}
+
+export function orchestrateMockAnalysis({ analysisId, productDocumentId, personaIds, groundTruthFactIds, evidenceDocumentIds, sourceText }) {
+  return buildGoldenOutcome(analysisId, productDocumentId, personaIds, groundTruthFactIds, evidenceDocumentIds, sourceText)
 }
 
 export { llmAvailable }

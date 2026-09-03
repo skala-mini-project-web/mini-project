@@ -39,8 +39,7 @@ function leave() {
   <aside class="rail">
     <div class="rail-top">
       <RouterLink to="/" class="brand" title="메인으로">
-        <span class="mark" aria-hidden="true"></span>
-        <span class="word mono">GUARDLAB</span>
+        <img src="/argus-logo.png" alt="ARGUS" class="logo-img" />
       </RouterLink>
     </div>
 
@@ -79,12 +78,8 @@ function leave() {
 }
 .rail-top { padding: 0 var(--s-8) var(--s-8); }
 .brand { display: inline-flex; align-items: center; gap: var(--s-8); color: var(--ink); }
-.mark {
-  width: 18px; height: 18px; border-radius: var(--r-xs);
-  background: var(--ink);
-  box-shadow: inset 0 0 0 3px var(--surface), inset 0 0 0 4px var(--ink);
-}
-.word { font-size: var(--text-sm); font-weight: var(--fw-bold); letter-spacing: 0.14em; }
+/* 로고 이미지: 투명 PNG, 높이 고정·폭 자동 */
+.logo-img { height: 28px; width: auto; display: block; }
 .rail-tag { margin-top: var(--s-10); }
 
 .nav { display: flex; flex-direction: column; gap: 1px; margin-top: var(--s-28); }

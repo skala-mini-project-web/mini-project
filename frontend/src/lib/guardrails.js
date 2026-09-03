@@ -18,7 +18,8 @@ export function applyGuardrails(rawFindings, ctx) {
 
   for (const f of Array.isArray(rawFindings) ? rawFindings : []) {
     if (!f || typeof f !== 'object') { violations.push('finding 형식 오류'); continue }
-    const excerpt = f.sourceReference?.excerpt || ''
+    const sourceReferences = Array.isArray(f.sourceReferences) ? f.sourceReferences : []
+    const excerpt = sourceReferences[0]?.excerpt || ''
     // 근거 실재성: 발췌는 원문의 실제 부분 문자열이어야 한다(환각 차단)
     if (!excerpt || !src.includes(norm(excerpt))) { violations.push(`근거 실재성 위반: "${excerpt}"`); continue }
     if (!ruleSet.has(f.ruleCode)) { violations.push(`규칙 범위 밖: ${f.ruleCode}`); continue }
@@ -26,17 +27,22 @@ export function applyGuardrails(rawFindings, ctx) {
     if (!personas.length) { violations.push('영향 persona 없음/범위 밖'); continue }
     const severity = SEVERITIES.includes(f.severity) ? f.severity : 'LOW'
     const evidenceReferences = (f.evidenceReferences || [])
-      .filter((e) => e && evidenceSet.has(e.documentId))
-      .map((e) => ({ documentId: e.documentId, excerpt: String(e.excerpt || '').slice(0, 500), sourceType: e.sourceType || 'INTERNAL_POLICY' }))
+      .filter((e) => e && evidenceSet.has(e.evidenceDocumentId))
+      .map((e) => ({ evidenceDocumentId: e.evidenceDocumentId, excerpt: String(e.excerpt || '').slice(0, 500), sourceType: e.sourceType || 'INTERNAL_POLICY' }))
     // HIGH는 근거 1건 이상 필수
     if (severity === 'HIGH' && !evidenceReferences.length) { violations.push('HIGH 근거 누락'); continue }
 
     findings.push({
       findingType: FINDING_TYPES.includes(f.findingType) ? f.findingType : 'FRAMING',
+      categoryCode: /^[A-Z][A-Z0-9_]*$/.test(f.categoryCode || '') ? f.categoryCode : 'UNCLASSIFIED',
       ruleCode: f.ruleCode,
       severity,
       statement: String(f.statement || '').slice(0, 1000),
-      sourceReference: { page: Number.isInteger(f.sourceReference?.page) ? f.sourceReference.page : 1, excerpt },
+      sourceReferences: sourceReferences.map((reference) => ({
+        page: Number.isInteger(reference?.page) ? reference.page : 1,
+        slide: Number.isInteger(reference?.slide) ? reference.slide : null,
+        excerpt: String(reference?.excerpt || '').slice(0, 500),
+      })),
       affectedPersonaCodes: personas,
       evidenceReferences,
       recommendation: String(f.recommendation || '').slice(0, 1000),

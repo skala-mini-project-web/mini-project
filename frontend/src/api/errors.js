@@ -1,12 +1,13 @@
 // Shared API error shape (matches API 명세서 §1.3 error contract).
 export class ApiError extends Error {
-  constructor({ status, errorCode, message, retryable = false, fieldErrors = [], traceId }) {
+  constructor({ status, errorCode, message, retryable = false, fieldErrors = [], traceId, existingAnalysisId = null }) {
     super(message || errorCode)
     this.name = 'ApiError'
     this.status = status
     this.errorCode = errorCode
     this.retryable = retryable
     this.fieldErrors = fieldErrors
+    this.existingAnalysisId = existingAnalysisId
     this.traceId = traceId || `trc-${Date.now()}`
     this.timestamp = new Date().toISOString()
   }

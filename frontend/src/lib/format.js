@@ -32,10 +32,10 @@ export const PERSONA_LABEL = {
 }
 
 export const ACTION_TYPE_LABEL = {
-  WARNING_LABEL: '경고 라벨',
-  INLINE_NOTE: '인라인 주석',
-  BLOCKING_CONFIRM: '확인 강제',
-  DISCLOSURE: '고지 추가',
+  LABEL: '라벨',
+  WARNING: '경고',
+  QUESTION: '확인 질문',
+  COMPARISON: '비교',
 }
 
 const STATUS = {
@@ -59,7 +59,6 @@ const STATUS = {
   NEEDS_FIX: { label: '수정 필요', tone: 'high' },
   // risk pattern / guardfit
   ACTIVE: { label: '활성', tone: 'ok' },
-  DISCARDED: { label: '폐기', tone: 'neutral' },
 }
 
 export function statusMeta(status) {

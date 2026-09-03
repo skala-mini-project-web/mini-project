@@ -1,0 +1,206 @@
+{
+  "product": {
+    "productId": 1,
+    "name": "스마트 인컴 투자상품",
+    "productType": "INVESTMENT",
+    "description": "월 지급식 인컴형 투자상품",
+    "ownerId": 10,
+    "createdAt": "2026-09-03T10:00:00+09:00"
+  },
+  "salesMaterial": {
+    "documentId": 11,
+    "productId": 1,
+    "fileName": "스마트인컴_판매자료.pdf",
+    "mediaType": "application/pdf",
+    "confirmedExtractedText": "최근 안정적인 수익률을 기대할 수 있는 투자상품입니다. 운용 보수가 부과됩니다. 시장 상황에 따라 원금 전액 손실이 발생할 수 있습니다."
+  },
+  "analysisRequest": {
+    "productDocumentId": 11,
+    "evidenceDocumentIds": [21, 22],
+    "personaIds": [41, 42],
+    "redTeamPackId": 51
+  },
+  "personaRuns": [
+    {
+      "runId": 1001,
+      "analysisId": 61,
+      "personaId": 41,
+      "personaCode": "FINANCIAL_BEGINNER",
+      "repetitionNo": 1,
+      "summary": "안정적인 수익을 제공하고 원금손실 가능성이 낮은 상품으로 이해했습니다.",
+      "questionResults": [
+        {
+          "questionCode": "Q_PRINCIPAL_LOSS_01",
+          "dimension": "PRINCIPAL_LOSS",
+          "question": "시장 하락 시 원금은 어떻게 된다고 이해하셨나요?",
+          "answer": "일부 손실은 있어도 대부분 보호되는 것으로 이해했습니다.",
+          "understood": false,
+          "score": 25,
+          "rationale": "안정성 표현을 원금 보호로 해석했습니다."
+        }
+      ],
+      "misunderstandingCandidates": [
+        {
+          "categoryCode": "PRINCIPAL_PROTECTION_MISUNDERSTANDING",
+          "statement": "원금이 대부분 보호된다고 인식함"
+        }
+      ]
+    }
+  ],
+  "redTeamResults": [
+    {
+      "redTeamResultId": 3001,
+      "analysisId": 61,
+      "ruleId": 511,
+      "ruleCode": "STABILITY_KEYWORD",
+      "triggered": true,
+      "findingType": "FRAMING",
+      "statement": "안정성 표현이 손실 고지보다 먼저 강조되었습니다.",
+      "sourceReferences": [
+        {
+          "documentId": 11,
+          "page": 1,
+          "slide": null,
+          "excerpt": "최근 안정적인 수익률을 기대할 수 있는 투자상품입니다."
+        }
+      ],
+      "evidenceReferences": [
+        {
+          "evidenceDocumentId": 22,
+          "sourceType": "INTERNAL_POLICY",
+          "title": "금융상품 중요정보 표시 내부준칙",
+          "version": "DEMO-2026.1",
+          "page": 12,
+          "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다."
+        }
+      ]
+    },
+    {
+      "redTeamResultId": 3002,
+      "analysisId": 61,
+      "ruleId": 512,
+      "ruleCode": "COST_OMISSION",
+      "triggered": true,
+      "findingType": "OMISSION",
+      "statement": "비용의 구체적인 수준이 누락되었습니다.",
+      "sourceReferences": [
+        {
+          "documentId": 11,
+          "page": 1,
+          "slide": null,
+          "excerpt": "운용 보수가 부과됩니다."
+        }
+      ],
+      "evidenceReferences": [
+        {
+          "evidenceDocumentId": 22,
+          "sourceType": "INTERNAL_POLICY",
+          "title": "금융상품 중요정보 표시 내부준칙",
+          "version": "DEMO-2026.1",
+          "page": 13,
+          "excerpt": "비용 정보는 수익 표현과 함께 제시해야 합니다."
+        }
+      ]
+    }
+  ],
+  "evaluatorFindings": [
+    {
+      "findingId": 401,
+      "statement": "안정성 표현이 원금보장으로 오인될 가능성이 있습니다.",
+      "severity": "HIGH",
+      "affectedPersonaCodes": ["FINANCIAL_BEGINNER", "SENIOR"],
+      "evidenceReferences": [
+        {
+          "evidenceDocumentId": 22,
+          "sourceType": "INTERNAL_POLICY",
+          "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다."
+        }
+      ],
+      "recommendation": "안정성 표현과 같은 영역에 원금손실 가능성을 명시하세요.",
+      "aiDetail": {
+        "findingType": "MISUNDERSTANDING",
+        "categoryCode": "PRINCIPAL_PROTECTION_MISUNDERSTANDING",
+        "ruleCode": "STABILITY_KEYWORD",
+        "confidence": 0.94,
+        "taxonomyVersion": "1.0",
+        "sourceReferences": [
+          {
+            "documentId": 11,
+            "page": 1,
+            "slide": null,
+            "excerpt": "최근 안정적인 수익률을 기대할 수 있는 투자상품입니다."
+          }
+        ],
+        "groundTruthFactIds": [201],
+        "sourceRunIds": [1001],
+        "redTeamResultIds": [3001],
+        "caseReferences": []
+      }
+    },
+    {
+      "findingId": 402,
+      "statement": "총비용 수준이 명확히 표시되지 않았습니다.",
+      "severity": "MEDIUM",
+      "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+      "evidenceReferences": [
+        {
+          "evidenceDocumentId": 22,
+          "sourceType": "INTERNAL_POLICY",
+          "excerpt": "비용 정보는 수익 표현과 함께 제시해야 합니다."
+        }
+      ],
+      "recommendation": "총비용 예시를 수익 표현 인접 위치에 표시하세요.",
+      "aiDetail": {
+        "findingType": "OMISSION",
+        "categoryCode": "COST_OMISSION",
+        "ruleCode": "COST_OMISSION",
+        "confidence": 0.9,
+        "taxonomyVersion": "1.0",
+        "sourceReferences": [
+          {
+            "documentId": 11,
+            "page": 1,
+            "slide": null,
+            "excerpt": "운용 보수가 부과됩니다."
+          }
+        ],
+        "groundTruthFactIds": [202],
+        "sourceRunIds": [1001],
+        "redTeamResultIds": [3002],
+        "caseReferences": []
+      }
+    }
+  ],
+  "vulnerabilityPatterns": [
+    {
+      "patternId": 501,
+      "analysisId": 61,
+      "patternKey": "PRINCIPAL_PROTECTION_MISUNDERSTANDING",
+      "title": "안정성 표현에 따른 원금보장 오해",
+      "severity": "HIGH",
+      "occurrenceCount": 5,
+      "totalRunCount": 6,
+      "consistencyRate": 0.8333,
+      "stabilityThreshold": 0.67,
+      "stable": true,
+      "affectedPersonaCodes": ["FINANCIAL_BEGINNER", "SENIOR"],
+      "findingIds": [401]
+    }
+  ],
+  "guardFitSuggestions": [
+    {
+      "suggestionId": 601,
+      "patternId": 501,
+      "actionType": "WARNING",
+      "priority": "HIGH",
+      "label": "원금손실 가능성 고지",
+      "placement": "상품 소개 문구 바로 아래",
+      "required": true,
+      "reason": "6회 중 5회에서 원금보장 오해가 재현되었습니다.",
+      "beforeText": "최근 안정적인 수익률을 기대할 수 있는 투자상품입니다.",
+      "afterText": "시장 상황에 따라 원금 전액 손실이 발생할 수 있는 고위험 투자상품입니다.",
+      "evidenceDocumentIds": [22],
+      "status": "PROPOSED"
+    }
+  ]
+}

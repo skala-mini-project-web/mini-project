@@ -13,6 +13,7 @@ import { analyzeDocument } from '../lib/analyze.js'
 // 로컬 AI(Ollama) 분석 사용 여부 (설정 토글, localStorage)
 const AI_RULE_CODES = ['STABILITY_KEYWORD', 'RETURN_FRAMING', 'COST_OMISSION', 'LOSS_SOFTENING', 'FORMAL_CONFIRMATION', 'COGNITIVE_ACCESSIBILITY']
 function localAiEnabled() {
+  if (import.meta.env.VITE_DEBUG_AI_CONTROLS !== 'true') return false
   try { return localStorage.getItem('guardlab.ai.local') === '1' } catch { return false }
 }
 async function runLocalAnalysis(analysisId, documentId, personaIds) {
@@ -37,6 +38,13 @@ const auth = () => getAuth()
 // Mock mode: keep the real File so extraction (and retry) can read its bytes.
 const fileCache = new Map()
 function runExtraction(documentId, file) {
+  if (import.meta.env.VITE_EXPERIMENTAL_CLIENT_EXTRACTION !== 'true') {
+    ingestExtraction(documentId, {
+      text: '최근 안정적인 수익률을 기대할 수 있는 투자상품입니다. 운용 보수가 부과됩니다. 시장 상황에 따라 원금 전액 손실이 발생할 수 있습니다.',
+      method: 'MOCK_FIXTURE',
+    })
+    return
+  }
   extractDocument(file)
     .then((r) => {
       const dense = (r.text || '').replace(/\s/g, '').length
@@ -102,6 +110,10 @@ export const api = {
   listPersonaTemplates: () =>
     USE_MOCK ? mockServer.listPersonaTemplates(auth()) : http.get('/persona-templates'),
   listRedTeamPacks: () => (USE_MOCK ? mockServer.listRedTeamPacks(auth()) : http.get('/red-team-packs')),
+  listGroundTruthFacts: (documentId) =>
+    USE_MOCK ? mockServer.listGroundTruthFacts(auth(), documentId) : http.get(`/product-documents/${documentId}/ground-truth-facts`),
+  verifyGroundTruthFact: (factId, body) =>
+    USE_MOCK ? mockServer.verifyGroundTruthFact(auth(), factId, body) : http.put(`/ground-truth-facts/${factId}/verification`, body),
 
   // ---- analyses ----
   createAnalysis: async (body, scenario) => {

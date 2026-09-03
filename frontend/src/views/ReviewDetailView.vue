@@ -28,7 +28,7 @@ const isPending = computed(() => review.value?.status === 'PENDING')
 onMounted(async () => {
   try {
     const res = await api.listReviews({})
-    review.value = res.items.find((r) => r.reviewId === props.reviewId)
+    review.value = res.items.find((r) => String(r.reviewId) === String(props.reviewId))
     if (!review.value) throw new Error('검토를 찾을 수 없습니다.')
     result.value = await api.getAnalysisResult(review.value.analysisId)
     selected.value = result.value.findings.filter((f) => f.severity === 'HIGH').map((f) => f.findingId)
@@ -36,13 +36,13 @@ onMounted(async () => {
 })
 
 function toggle(id) { const i = selected.value.indexOf(id); i >= 0 ? selected.value.splice(i, 1) : selected.value.push(id) }
-async function decide(decision) {
-  if (decision === 'APPROVED' && !selected.value.length) return toast.fromError({ status: 400, errorCode: 'INVALID_FINDING_SELECTION', message: '승격할 Finding을 1개 이상 선택하세요.' })
-  if (decision === 'REJECTED' && !comment.value.trim()) return toast.fromError({ status: 400, errorCode: 'COMMENT_REQUIRED', message: '반려 사유를 입력하세요.' })
-  deciding.value = decision
+async function decide(status) {
+  if (status === 'APPROVED' && !selected.value.length) return toast.fromError({ status: 400, errorCode: 'INVALID_FINDING_SELECTION', message: '승격할 Finding을 1개 이상 선택하세요.' })
+  if (status === 'REJECTED' && !comment.value.trim()) return toast.fromError({ status: 400, errorCode: 'COMMENT_REQUIRED', message: '반려 사유를 입력하세요.' })
+  deciding.value = status
   try {
-    const res = await api.decideReview(props.reviewId, { decision, comment: comment.value, selectedFindingIds: decision === 'APPROVED' ? selected.value : [] })
-    if (decision === 'APPROVED') toast.success('승인 완료', `RiskPattern ${res.riskPatternIds.length}건 승격`)
+    const res = await api.decideReview(props.reviewId, { status, comment: comment.value, selectedFindingIds: status === 'APPROVED' ? selected.value : [] })
+    if (status === 'APPROVED') toast.success('승인 완료', `RiskPattern ${res.riskPatternIds.length}건 승격`)
     else toast.success('반려 완료', '담당자 대시보드에 수정 필요로 표시됩니다')
     router.push('/reviews')
   } catch (e) { toast.fromError(e) } finally { deciding.value = null }
@@ -83,19 +83,36 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
           <div class="fbody">
             <div class="frow">
               <GSeverityBadge :severity="f.severity" />
-              <GBadge tone="neutral">{{ FINDING_TYPE_LABEL[f.findingType] || f.findingType }}</GBadge>
-              <GBadge tone="neutral">{{ RULE_LABEL[f.ruleCode] || f.ruleCode }}</GBadge>
+              <GBadge tone="neutral">{{ FINDING_TYPE_LABEL[f.findingType || f.aiDetail?.findingType] || f.findingType || f.aiDetail?.findingType }}</GBadge>
+              <GBadge v-if="f.categoryCode || f.aiDetail?.categoryCode" tone="neutral">{{ f.categoryCode || f.aiDetail?.categoryCode }}</GBadge>
+              <GBadge tone="neutral">{{ RULE_LABEL[f.ruleCode || f.aiDetail?.ruleCode] || f.ruleCode || f.aiDetail?.ruleCode }}</GBadge>
             </div>
             <p class="t-lg fmsg">{{ f.statement }}</p>
-            <blockquote class="quote"><span class="mono qp">p.{{ f.sourceReference.page ?? '-' }}</span>{{ f.sourceReference.excerpt }}</blockquote>
+            <blockquote v-for="(source, j) in (f.sourceReferences || f.aiDetail?.sourceReferences || [])" :key="j" class="quote"><span class="mono qp">p.{{ source.page ?? '-' }}</span>{{ source.excerpt }}</blockquote>
             <div class="mini">
               <span>{{ f.affectedPersonaCodes.map(personaName).join(', ') }}</span>
               <span class="mute">근거 {{ f.evidenceReferences?.length || 0 }}건</span>
+              <span v-if="result.vulnerabilityPatterns?.find((pattern) => pattern.findingIds?.includes(f.findingId))" class="mute">재현율 {{ Math.round(result.vulnerabilityPatterns.find((pattern) => pattern.findingIds?.includes(f.findingId)).consistencyRate * 100) }}%</span>
             </div>
+            <details v-if="f.aiDetail" class="trace-detail">
+              <summary>판단 근거와 실행 추적</summary>
+              <p v-for="evidenceItem in f.evidenceReferences || []" :key="evidenceItem.evidenceDocumentId" class="t-sm soft">근거 {{ evidenceItem.evidenceDocumentId }} · {{ evidenceItem.excerpt }}</p>
+              <p v-for="factId in f.aiDetail.groundTruthFactIds || []" :key="factId" class="t-sm soft">공식 사실 {{ factId }} · {{ result.groundTruthFacts?.find((fact) => fact.factId === factId)?.value || '-' }}</p>
+              <p v-for="runId in f.aiDetail.sourceRunIds || []" :key="runId" class="t-sm soft">Persona Run {{ runId }}</p>
+              <p v-for="caseItem in f.aiDetail.caseReferences || []" :key="caseItem.knowledgeSourceId" class="t-sm soft">민원/분쟁 사례 · {{ caseItem.excerpt }}</p>
+            </details>
             <p class="reco"><span class="mono ml">권고</span>{{ f.recommendation }}</p>
           </div>
         </li>
       </ol>
+
+      <section v-if="result.guardFitSuggestions?.length" class="suggestions">
+        <div class="fh"><h2 class="d-h3">GuardFit Suggestion 미리보기</h2><span class="mono mute">PROPOSED</span></div>
+        <div v-for="suggestion in result.guardFitSuggestions" :key="suggestion.suggestionId" class="suggestion">
+          <p class="fw-semibold">{{ suggestion.label }} · {{ suggestion.actionType }}</p>
+          <p class="t-sm soft">{{ suggestion.beforeText }} → {{ suggestion.afterText }}</p>
+        </div>
+      </section>
 
       <!-- Decision -->
       <div v-if="isPending" class="decide">
@@ -110,9 +127,9 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
       </div>
 
       <div v-else class="decided">
-        <PhCheckCircle v-if="review.decision === 'APPROVED'" :size="18" weight="fill" class="ok" />
+        <PhCheckCircle v-if="review.status === 'APPROVED'" :size="18" weight="fill" class="ok" />
         <PhXCircle v-else :size="18" weight="fill" class="no" />
-        <span class="t-base fw-semibold">{{ review.decision === 'APPROVED' ? '승인됨' : '반려됨' }}</span>
+        <span class="t-base fw-semibold">{{ review.status === 'APPROVED' ? '승인됨' : '반려됨' }}</span>
         <span class="mono mute dm">{{ review.reviewerId }} · {{ formatDateTime(review.decidedAt) }}</span>
         <p v-if="review.comment" class="t-sm soft dc">{{ review.comment }}</p>
       </div>
@@ -146,6 +163,11 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .qp { color: var(--accent); margin-right: 8px; font-size: var(--text-xs); }
 .mini { display: flex; gap: var(--s-16); margin-top: var(--s-12); font-size: var(--text-sm); color: var(--ink-soft); flex-wrap: wrap; }
 .reco { margin-top: var(--s-12); display: flex; flex-direction: column; gap: 5px; color: var(--ink-2); font-size: var(--text-sm); line-height: 1.6; }
+.trace-detail { margin-top: var(--s-12); font-size: var(--text-sm); }
+.trace-detail summary { cursor: pointer; color: var(--accent); }
+.suggestions { margin-top: var(--s-32); }
+.suggestions > .fh { margin-top: 0; }
+.suggestion { padding: var(--s-16) 0; border-bottom: 1px solid var(--line); }
 
 .decide { margin-top: var(--s-40); padding: var(--s-28); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); display: flex; flex-direction: column; gap: var(--s-20); }
 .dec-head { display: flex; align-items: baseline; justify-content: space-between; }

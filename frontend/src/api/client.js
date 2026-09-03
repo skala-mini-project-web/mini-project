@@ -26,6 +26,7 @@ async function parse(res) {
       retryable: data?.retryable ?? false,
       fieldErrors: data?.fieldErrors || [],
       traceId: data?.traceId,
+      existingAnalysisId: data?.existingAnalysisId,
     })
   }
   return data

@@ -13,6 +13,7 @@ import {
   computeRiskScore,
   isErrorScenario,
 } from './scenarios.js'
+import { orchestrateMockAnalysis } from '../../lib/analyze.js'
 
 const SEV_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1 }
 const clone = (v) => JSON.parse(JSON.stringify(v))
@@ -21,8 +22,21 @@ const iso = (ms = Date.now()) => new Date(ms).toISOString()
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
 let seq = 1000
-const nextId = (prefix) => `${prefix}-${++seq}`
+const nextId = () => ++seq
 const traceId = () => `trc-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(++seq).slice(-4)}`
+const sameId = (left, right) => String(left) === String(right)
+const normalizedText = (value) => String(value || '').trim().replace(/\s+/g, ' ')
+async function analysisInputHash(doc, body) {
+  const input = [
+    normalizedText(doc.verifiedText),
+    String(body.redTeamPackId),
+    [...(body.personaIds || [])].map(String).sort().join(','),
+    [...(body.evidenceDocumentIds || [])].map(String).sort().join(','),
+  ].join('\n')
+  const bytes = new TextEncoder().encode(input)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
 
 function createStore() {
   return {
@@ -30,6 +44,7 @@ function createStore() {
     personaTemplates: clone(seed.PERSONA_TEMPLATES),
     redTeamPacks: clone(seed.RED_TEAM_PACKS),
     evidenceDocuments: clone(seed.EVIDENCE_DOCUMENTS),
+    groundTruthFacts: clone(seed.GROUND_TRUTH_FACTS),
     products: clone(seed.PRODUCTS),
     documents: clone(seed.PRODUCT_DOCUMENTS),
     analyses: clone(seed.ANALYSES),
@@ -50,7 +65,7 @@ function persist() {
   if (!hasLS) return
   try {
     const { idempotency, ...rest } = store
-    localStorage.setItem(LS_KEY, JSON.stringify({ ...rest, __seq: seq }))
+    localStorage.setItem(LS_KEY, JSON.stringify({ ...rest, __seq: seq, __schemaVersion: 2 }))
   } catch {}
 }
 function loadStore() {
@@ -59,8 +74,9 @@ function loadStore() {
       const raw = localStorage.getItem(LS_KEY)
       if (raw) {
         const d = JSON.parse(raw)
+        if (d.__schemaVersion !== 2) return createStore()
         if (typeof d.__seq === 'number') seq = d.__seq
-        const { __seq, ...rest } = d
+        const { __seq, __schemaVersion, ...rest } = d
         return { ...rest, idempotency: new Map() }
       }
     } catch {}
@@ -101,16 +117,15 @@ function idempotent(key, produce) {
 }
 
 // ---- document extraction ----------------------------------------------------
-// Live-uploaded docs go UPLOADED -> EXTRACTING immediately; the client runs the
-// real pdf.js / JSZip / tesseract extraction and calls ingestExtraction() to
-// resolve READY (with text + method) or FAILED (with error). GET is read-only.
+// - Mock 기본 경로: 사전 제작 추출 텍스트 사용
+// - 실험 경로: 클라이언트 추출 결과를 READY/FAILED로 반영
 function viewDocument(doc) {
   const d = clone(doc)
   delete d._plan
   return d
 }
 export function ingestExtraction(documentId, result) {
-  const doc = store.documents.find((x) => x.documentId === documentId)
+  const doc = store.documents.find((x) => sameId(x.documentId, documentId))
   if (!doc) return
   if (result.failed) {
     doc.extractStatus = 'FAILED'
@@ -131,7 +146,7 @@ export function ingestExtraction(documentId, result) {
 
 // 로컬 LLM 분석 결과를 분석 레코드에 주입(클라이언트 analyze 파이프라인이 호출). GET은 read-only.
 export function ingestAnalysis(analysisId, result) {
-  const a = store.analyses.find((x) => x.analysisId === analysisId)
+  const a = store.analyses.find((x) => sameId(x.analysisId, analysisId))
   if (!a) return
   a.clockDriven = false
   delete a._plan
@@ -146,7 +161,10 @@ export function ingestAnalysis(analysisId, result) {
     a.findings = (result.findings || []).map((f, i) => ({
       findingId: `FND-L${i + 1}-${analysisId}`,
       ...f,
-      sourceReference: { documentId: a.productDocumentId, page: f.sourceReference?.page ?? 1, excerpt: f.sourceReference?.excerpt || '' },
+      sourceReferences: (f.sourceReferences || []).map((reference) => ({
+        ...reference,
+        documentId: a.productDocumentId,
+      })),
     }))
     a.error = null
   }
@@ -170,13 +188,26 @@ function planAnalysis(a, scenarioCode) {
     }
   } else {
     const s = NORMAL_SCENARIOS[scenarioCode] || NORMAL_SCENARIOS.GUARANTEE_MISUNDERSTANDING_HIGH
-    const findings = s.findings(a.productDocumentId)
+    const facts = store.groundTruthFacts.filter((fact) => sameId(fact.documentId, a.productDocumentId) && fact.verificationStatus === 'VERIFIED')
+    let outcome = orchestrateMockAnalysis({
+      analysisId: a.analysisId,
+      productDocumentId: a.productDocumentId,
+      personaIds: a.personaIds,
+      groundTruthFactIds: facts.map((fact) => fact.factId),
+      evidenceDocumentIds: a.evidenceDocumentIds,
+      sourceText: store.documents.find((document) => sameId(document.documentId, a.productDocumentId))?.verifiedText || '',
+    })
+    if (scenarioCode === 'NO_FINDING') {
+      outcome = { ...outcome, redTeamResults: [], findings: [], vulnerabilityPatterns: [], guardFitSuggestions: [] }
+    }
+    const findings = outcome.findings
     a._plan = {
       createdAt: start,
       runningAt: start + s.schedule.createdToRunningMs,
       doneAt: start + s.schedule.createdToRunningMs + s.schedule.runningToCompletedMs,
       terminal: 'COMPLETED',
       findings,
+      outcome,
       riskScore: computeRiskScore(findings),
       error: null,
     }
@@ -191,6 +222,7 @@ function settleAnalysis(a) {
   if (p.terminal === 'COMPLETED') {
     a.status = 'COMPLETED'
     a.findings = p.findings
+    Object.assign(a, p.outcome || {})
     a.riskScore = p.riskScore
     a.error = null
   } else {
@@ -207,11 +239,14 @@ function viewAnalysis(a) {
     const p = a._plan
     if (t < p.runningAt) {
       v.status = 'CREATED'
+      v.stage = 'PREPARING'
       v.progress = 0
     } else if (t < p.doneAt) {
       v.status = 'RUNNING'
       const frac = (t - p.runningAt) / (p.doneAt - p.runningAt)
       v.progress = Math.min(95, Math.max(10, Math.round(frac * 100)))
+      const stages = ['PERSONA_SIMULATION', 'RED_TEAM_ANALYSIS', 'EVALUATING', 'SCORING', 'AGGREGATING']
+      v.stage = stages[Math.min(stages.length - 1, Math.floor(frac * stages.length))]
       v.error = null
     } else {
       settleAnalysis(a)
@@ -219,6 +254,7 @@ function viewAnalysis(a) {
       v.riskScore = a.riskScore
       v.error = a.error
       v.progress = a.status === 'COMPLETED' ? 100 : v.progress
+      v.stage = a.status === 'COMPLETED' ? 'COMPLETED' : null
     }
   }
   delete v._plan
@@ -278,7 +314,7 @@ export const mockServer = {
       recentItems: myProducts
         .slice()
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .slice(0, 6)
+        .slice(0, 5)
         .map(productSummary),
     }
   },
@@ -287,9 +323,13 @@ export const mockServer = {
     const user = requireAuth(auth)
     requireRole(user, 'COMPLIANCE_REVIEWER')
     await wait(220)
+    const pendingAnalysisIds = store.reviews
+      .filter((review) => review.status === 'PENDING')
+      .map((review) => review.analysisId)
     const highFindings = store.analyses
-      .filter((a) => viewAnalysis(a).status === 'COMPLETED')
-      .flatMap((a) => a.findings || [])
+      .filter((analysis) => pendingAnalysisIds.some((analysisId) => sameId(analysis.analysisId, analysisId)))
+      .filter((analysis) => viewAnalysis(analysis).status === 'COMPLETED')
+      .flatMap((analysis) => analysis.findings || [])
       .filter((f) => f.severity === 'HIGH').length
     const today = new Date().toISOString().slice(0, 10)
     return {
@@ -338,21 +378,21 @@ export const mockServer = {
   async getProduct(auth, productId) {
     const user = requireAuth(auth)
     await wait(160)
-    const p = store.products.find((x) => x.productId === productId)
+    const p = store.products.find((x) => sameId(x.productId, productId))
     if (!p) throw new ApiError({ status: 404, errorCode: 'PRODUCT_NOT_FOUND', message: '상품을 찾을 수 없습니다.' })
     if (user.role === 'PRODUCT_MANAGER' && p.ownerId !== user.id) throw new ApiError({ status: 403, errorCode: 'FORBIDDEN', message: '소유한 상품만 조회할 수 있습니다.' })
     const summary = productSummary(p)
     return {
       ...summary,
-      documents: store.documents.filter((d) => d.productId === productId).map(viewDocument),
-      analyses: store.analyses.filter((a) => a.productId === productId).map(viewAnalysis),
+      documents: store.documents.filter((d) => sameId(d.productId, productId)).map(viewDocument),
+      analyses: store.analyses.filter((a) => sameId(a.productId, productId)).map(viewAnalysis),
     }
   },
 
   async uploadDocument(auth, productId, file, idemKey) {
     const user = requireAuth(auth)
     requireRole(user, 'PRODUCT_MANAGER')
-    const p = store.products.find((x) => x.productId === productId)
+    const p = store.products.find((x) => sameId(x.productId, productId))
     if (!p) throw new ApiError({ status: 404, errorCode: 'PRODUCT_NOT_FOUND', message: '상품을 찾을 수 없습니다.' })
     if (p.ownerId !== user.id) throw new ApiError({ status: 403, errorCode: 'FORBIDDEN', message: '소유한 상품에만 업로드할 수 있습니다.' })
     const okType = /\.(pdf|pptx)$/i.test(file?.name || '') || ['application/pdf', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'].includes(file?.type)
@@ -362,7 +402,7 @@ export const mockServer = {
     return idempotent(idemKey, () => {
       const documentId = nextId('PDOC')
       const doc = {
-        documentId, productId, fileName: file?.name || 'uploaded.pdf',
+        documentId, productId: p.productId, fileName: file?.name || 'uploaded.pdf',
         mediaType: file?.type || 'application/pdf', fileSize: file?.size || 0,
         storageKey: `local://uploads/${documentId}/${crypto.randomUUID?.() || 'x'}.pdf`,
         checksumSha256: Array.from({ length: 64 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join(''),
@@ -370,6 +410,12 @@ export const mockServer = {
         confirmed: false, attemptCount: 1, error: null,
       }
       store.documents.push(doc)
+      store.groundTruthFacts.push({
+        factId: nextId(), documentId, factType: 'PRINCIPAL_LOSS', label: '원금손실 가능성',
+        value: '시장 상황에 따라 원금 전액 손실 가능', importance: 'CRITICAL', verificationStatus: 'CANDIDATE',
+        sourceReferences: [{ evidenceDocumentId: 21, page: 1, excerpt: '투자자는 원금의 전부를 손실할 수 있습니다.' }],
+        extractionSource: 'MOCK_FIXTURE', verifiedBy: null, verifiedAt: null,
+      })
       return { documentId, status: 'UPLOADED', statusUrl: `/api/documents/${documentId}`, fileName: doc.fileName, fileSize: doc.fileSize, checksumSha256: doc.checksumSha256 }
     })
   },
@@ -377,7 +423,7 @@ export const mockServer = {
   async getDocument(auth, documentId) {
     requireAuth(auth)
     await wait(140)
-    const doc = store.documents.find((d) => d.documentId === documentId)
+    const doc = store.documents.find((d) => sameId(d.documentId, documentId))
     if (!doc) throw new ApiError({ status: 404, errorCode: 'DOCUMENT_NOT_FOUND', message: '문서를 찾을 수 없습니다.' })
     return viewDocument(doc)
   },
@@ -386,7 +432,7 @@ export const mockServer = {
     const user = requireAuth(auth)
     requireRole(user, 'PRODUCT_MANAGER')
     await wait(220)
-    const doc = store.documents.find((d) => d.documentId === documentId)
+    const doc = store.documents.find((d) => sameId(d.documentId, documentId))
     if (!doc) throw new ApiError({ status: 404, errorCode: 'DOCUMENT_NOT_FOUND', message: '문서를 찾을 수 없습니다.' })
     const view = viewDocument(doc)
     if (view.extractStatus !== 'READY') throw new ApiError({ status: 409, errorCode: 'DOCUMENT_NOT_READY', message: '추출이 완료된 문서만 확정할 수 있습니다.' })
@@ -404,7 +450,7 @@ export const mockServer = {
     const user = requireAuth(auth)
     requireRole(user, 'PRODUCT_MANAGER')
     await wait(240)
-    const doc = store.documents.find((d) => d.documentId === documentId)
+    const doc = store.documents.find((d) => sameId(d.documentId, documentId))
     if (!doc) throw new ApiError({ status: 404, errorCode: 'DOCUMENT_NOT_FOUND', message: '문서를 찾을 수 없습니다.' })
     if (doc.extractStatus !== 'FAILED' || !doc.error?.retryable) throw new ApiError({ status: 409, errorCode: 'DOCUMENT_NOT_RETRYABLE', message: '재시도할 수 없는 문서입니다.' })
     doc.attemptCount += 1
@@ -429,11 +475,32 @@ export const mockServer = {
     return { items: store.redTeamPacks }
   },
 
+  async listGroundTruthFacts(auth, documentId) {
+    requireAuth(auth)
+    await wait(100)
+    return { items: clone(store.groundTruthFacts.filter((fact) => sameId(fact.documentId, documentId))) }
+  },
+
+  async verifyGroundTruthFact(auth, factId, body) {
+    const user = requireAuth(auth)
+    requireRole(user, 'PRODUCT_MANAGER')
+    await wait(120)
+    const fact = store.groundTruthFacts.find((item) => sameId(item.factId, factId))
+    if (!fact) throw new ApiError({ status: 404, errorCode: 'GROUND_TRUTH_FACT_NOT_FOUND', message: '공식 상품 사실을 찾을 수 없습니다.' })
+    if (!['VERIFIED', 'REJECTED'].includes(body.verificationStatus)) throw new ApiError({ status: 400, errorCode: 'VALIDATION_ERROR', message: '확인 상태가 올바르지 않습니다.' })
+    fact.verificationStatus = body.verificationStatus
+    if (body.value != null) fact.value = normalizedText(body.value)
+    fact.verifiedBy = user.id
+    fact.verifiedAt = iso()
+    return clone(fact)
+  },
+
   async createAnalysis(auth, body, idemKey, scenarioOverride, opts = {}) {
     const user = requireAuth(auth)
     requireRole(user, 'PRODUCT_MANAGER')
     await wait(300)
-    const doc = store.documents.find((d) => d.documentId === body.productDocumentId)
+    if (idemKey && store.idempotency.has(idemKey)) return clone(store.idempotency.get(idemKey))
+    const doc = store.documents.find((d) => sameId(d.documentId, body.productDocumentId))
     if (!doc) throw new ApiError({ status: 404, errorCode: 'DOCUMENT_NOT_FOUND', message: '문서를 찾을 수 없습니다.' })
     if (!doc.confirmed) throw new ApiError({ status: 409, errorCode: 'DOCUMENT_NOT_CONFIRMED', message: '추출 텍스트 확인 후 분석을 요청하세요.' })
     const ev = body.evidenceDocumentIds || []
@@ -441,16 +508,26 @@ export const mockServer = {
     if (ev.length < 1 || ev.length > 3) throw new ApiError({ status: 400, errorCode: 'INVALID_SELECTION_COUNT', message: '근거 문서는 1~3건 선택해야 합니다.' })
     if (personas.length < 1 || personas.length > 3) throw new ApiError({ status: 400, errorCode: 'INVALID_SELECTION_COUNT', message: 'Persona는 1~3개 선택해야 합니다.' })
     for (const id of ev) {
-      const e = store.evidenceDocuments.find((x) => x.documentId === id)
+      const e = store.evidenceDocuments.find((x) => sameId(x.documentId, id))
       if (!e || !e.active) throw new ApiError({ status: 400, errorCode: 'INVALID_EVIDENCE_DOCUMENT', message: '비활성 근거 문서는 사용할 수 없습니다.' })
+    }
+    const pack = store.redTeamPacks.find((x) => sameId(x.redTeamPackId, body.redTeamPackId))
+    if (!pack) throw new ApiError({ status: 400, errorCode: 'INVALID_RED_TEAM_PACK', message: 'Red Team Pack을 선택하세요.' })
+    const verifiedFacts = store.groundTruthFacts.filter((fact) => sameId(fact.documentId, doc.documentId) && fact.verificationStatus === 'VERIFIED')
+    if (!verifiedFacts.length) throw new ApiError({ status: 409, errorCode: 'GROUND_TRUTH_NOT_VERIFIED', message: '확정된 공식 상품 사실이 필요합니다.' })
+    const inputHash = await analysisInputHash(doc, body)
+    const duplicate = store.analyses.find((analysis) =>
+      sameId(analysis.productDocumentId, doc.documentId) && analysis.inputHash === inputHash && analysis.status !== 'FAILED')
+    if (duplicate) {
+      throw new ApiError({ status: 409, errorCode: 'DUPLICATE_ANALYSIS_INPUT', message: '동일 문서와 동일 조건으로 생성된 분석이 있습니다.', existingAnalysisId: duplicate.analysisId })
     }
     return idempotent(idemKey, () => {
       const analysisId = nextId('ANL')
       const a = {
         analysisId, productDocumentId: doc.documentId, productId: doc.productId,
         status: 'CREATED', riskScore: null, providerType: 'MOCK',
-        evidenceDocumentIds: ev, personaIds: personas, redTeamPackCode: body.redTeamPackCode,
-        findings: [], attemptCount: 1, error: null, createdAt: iso(),
+        evidenceDocumentIds: ev, personaIds: personas, redTeamPackId: body.redTeamPackId,
+        findings: [], inputHash, attemptCount: 1, error: null, createdAt: iso(),
       }
       if (opts.local) {
         a.status = 'RUNNING'
@@ -467,17 +544,17 @@ export const mockServer = {
   async getAnalysis(auth, analysisId) {
     requireAuth(auth)
     await wait(120)
-    const a = store.analyses.find((x) => x.analysisId === analysisId)
+    const a = store.analyses.find((x) => sameId(x.analysisId, analysisId))
     if (!a) throw new ApiError({ status: 404, errorCode: 'ANALYSIS_NOT_FOUND', message: '분석을 찾을 수 없습니다.' })
     const v = viewAnalysis(a)
-    return { analysisId, status: v.status, progress: v.progress ?? (v.status === 'COMPLETED' ? 100 : 0), attemptCount: a.attemptCount, updatedAt: iso(), error: v.error || null }
+    return { analysisId: a.analysisId, status: v.status, stage: v.stage, progress: v.progress ?? (v.status === 'COMPLETED' ? 100 : 0), riskScore: v.riskScore, requiresHumanApproval: true, retryable: !!v.error?.retryable, attemptCount: a.attemptCount, updatedAt: iso(), error: v.error || null }
   },
 
   async retryAnalysis(auth, analysisId) {
     const user = requireAuth(auth)
     requireRole(user, 'PRODUCT_MANAGER')
     await wait(260)
-    const a = store.analyses.find((x) => x.analysisId === analysisId)
+    const a = store.analyses.find((x) => sameId(x.analysisId, analysisId))
     if (!a) throw new ApiError({ status: 404, errorCode: 'ANALYSIS_NOT_FOUND', message: '분석을 찾을 수 없습니다.' })
     settleAnalysis(a)
     const v = viewAnalysis(a)
@@ -492,24 +569,48 @@ export const mockServer = {
   async getAnalysisResult(auth, analysisId) {
     requireAuth(auth)
     await wait(160)
-    const a = store.analyses.find((x) => x.analysisId === analysisId)
+    const a = store.analyses.find((x) => sameId(x.analysisId, analysisId))
     if (!a) throw new ApiError({ status: 404, errorCode: 'ANALYSIS_NOT_FOUND', message: '분석을 찾을 수 없습니다.' })
     settleAnalysis(a)
     const v = viewAnalysis(a)
     if (v.status !== 'COMPLETED') throw new ApiError({ status: 409, errorCode: 'ANALYSIS_NOT_COMPLETED', message: '분석이 완료되지 않았습니다.' })
-    const doc = store.documents.find((d) => d.documentId === a.productDocumentId)
+    const doc = store.documents.find((d) => sameId(d.documentId, a.productDocumentId))
     // 로컬 AI(RAG) 경로는 실제 검색된 근거(유사도 포함), 그 외는 선택 근거 문서를 groundingDocuments로 반환
     const grounding = (a.ragGrounding && a.ragGrounding.length)
       ? a.ragGrounding.map((g) => ({ documentId: g.documentId, title: g.title, sourceType: g.sourceType, score: g.score }))
       : (a.evidenceDocumentIds || []).map((id) => {
-          const e = store.evidenceDocuments.find((x) => x.documentId === id)
+          const e = store.evidenceDocuments.find((x) => sameId(x.documentId, id))
           return e ? { documentId: e.documentId, title: e.title } : { documentId: id, title: id }
         })
     return {
-      analysisId, status: 'COMPLETED', riskScore: a.riskScore,
+      contractVersion: '1.0', analysisId: a.analysisId, status: 'COMPLETED', riskScore: a.riskScore,
+      scoreBreakdown: {
+        severityBase: a.findings?.some((finding) => finding.severity === 'HIGH') ? 60 : a.findings?.length ? 35 : 0,
+        personaBonus: Math.min(15, 5 * new Set((a.findings || []).flatMap((finding) => finding.affectedPersonaCodes || [])).size),
+        ruleBonus: Math.min(12, 3 * new Set((a.findings || []).map((finding) => finding.ruleCode || finding.aiDetail?.ruleCode).filter(Boolean)).size),
+        groundingBonus: a.findings?.some((finding) => finding.severity === 'HIGH') ? 6 : 0,
+        scorePolicyVersion: '1.0',
+      },
       sourceDocument: doc ? { documentId: doc.documentId, fileName: doc.fileName } : null,
       groundingDocuments: grounding,
+      experimentSummary: { repetitionCountPerPersona: 3, selectedPersonaCount: a.personaIds?.length || 0, totalRunCount: a.personaRuns?.length || 0, stabilityThreshold: 0.67 },
+      personaRuns: clone(a.personaRuns || []),
+      personaSummaries: (a.personaIds || []).map((personaId) => {
+        const runs = (a.personaRuns || []).filter((run) => sameId(run.personaId, personaId))
+        return {
+          personaCode: runs[0]?.personaCode || String(personaId),
+          averageComprehensionScore: runs.length ? Math.round(runs.reduce((sum, run) => sum + (run.questionResults?.[0]?.score || 0), 0) / runs.length) : 0,
+          runCount: runs.length,
+          topMisunderstandingCodes: [...new Set(runs.flatMap((run) => run.misunderstandingCandidates || []).map((item) => item.categoryCode))],
+        }
+      }),
+      redTeamResults: clone(a.redTeamResults || []),
+      redTeamSummary: { checkedRuleCount: 6, triggeredRuleCount: (a.redTeamResults || []).filter((item) => item.triggered).length, triggeredRuleCodes: (a.redTeamResults || []).filter((item) => item.triggered).map((item) => item.ruleCode) },
       findings: clone(a.findings || []),
+      vulnerabilityPatterns: clone(a.vulnerabilityPatterns || []),
+      guardFitSuggestions: clone(a.guardFitSuggestions || []),
+      groundTruthFacts: clone(store.groundTruthFacts.filter((fact) => sameId(fact.documentId, a.productDocumentId) && fact.verificationStatus === 'VERIFIED')),
+      provenance: { providerType: a.providerType || 'MOCK', modelVersion: 'DETERMINISTIC_FIXTURE_V1', promptVersion: '1.0', outputSchemaVersion: '1.0', scorePolicyVersion: '1.0', taxonomyVersion: '1.0', generatedAt: iso() },
     }
   },
 
@@ -517,30 +618,30 @@ export const mockServer = {
     const user = requireAuth(auth)
     requireRole(user, 'PRODUCT_MANAGER')
     await wait(240)
-    const a = store.analyses.find((x) => x.analysisId === body.analysisId)
+    const a = store.analyses.find((x) => sameId(x.analysisId, body.analysisId))
     if (!a) throw new ApiError({ status: 404, errorCode: 'ANALYSIS_NOT_FOUND', message: '분석을 찾을 수 없습니다.' })
     settleAnalysis(a)
     if (viewAnalysis(a).status !== 'COMPLETED') throw new ApiError({ status: 409, errorCode: 'ANALYSIS_NOT_COMPLETED', message: '완료된 분석만 검토 요청할 수 있습니다.' })
-    if (store.reviews.some((r) => r.analysisId === body.analysisId)) throw new ApiError({ status: 409, errorCode: 'REVIEW_ALREADY_EXISTS', message: '이미 검토가 요청된 분석입니다.' })
+    if (store.reviews.some((r) => sameId(r.analysisId, body.analysisId))) throw new ApiError({ status: 409, errorCode: 'REVIEW_ALREADY_EXISTS', message: '이미 검토가 요청된 분석입니다.' })
     return idempotent(idemKey, () => {
-      const product = store.products.find((p) => p.productId === a.productId)
+      const product = store.products.find((p) => sameId(p.productId, a.productId))
       const review = {
         reviewId: nextId('REV'), analysisId: a.analysisId, productId: a.productId,
         productName: product?.name || a.productId, maxSeverity: maxSeverity(a.findings || []),
-        status: 'PENDING', decision: null, submittedBy: user.id, ownerName: user.name,
+        status: 'PENDING', submittedBy: user.id, ownerName: user.name,
         submittedAt: iso(), submissionComment: body.submissionComment || '',
         reviewerId: null, decidedAt: null, comment: null, selectedFindingIds: [],
       }
       store.reviews.push(review)
       pushAudit('REVIEW', review.reviewId, 'REVIEW_SUBMITTED', user.id)
-      return { reviewId: review.reviewId, analysisId: review.analysisId, status: 'PENDING', decision: null, submittedBy: user.id, submittedAt: review.submittedAt }
+      return { reviewId: review.reviewId, analysisId: review.analysisId, status: 'PENDING', submittedBy: user.id, submittedAt: review.submittedAt }
     })
   },
 
   async getReview(auth, reviewId) {
     const user = requireAuth(auth)
     await wait(90)
-    const r = store.reviews.find((x) => x.reviewId === reviewId)
+    const r = store.reviews.find((x) => sameId(x.reviewId, reviewId))
     if (!r) throw new ApiError({ status: 404, errorCode: 'REVIEW_NOT_FOUND', message: '검토를 찾을 수 없습니다.' })
     if (user.role === 'PRODUCT_MANAGER' && r.submittedBy !== user.id)
       throw new ApiError({ status: 403, errorCode: 'FORBIDDEN', message: '권한이 없습니다.' })
@@ -550,7 +651,7 @@ export const mockServer = {
   async getReviewByAnalysis(auth, analysisId) {
     const user = requireAuth(auth)
     await wait(80)
-    const r = store.reviews.find((x) => x.analysisId === analysisId)
+    const r = store.reviews.find((x) => sameId(x.analysisId, analysisId))
     if (!r) return null
     if (user.role === 'PRODUCT_MANAGER' && r.submittedBy !== user.id) return null
     return clone(r)
@@ -576,16 +677,16 @@ export const mockServer = {
     const user = requireAuth(auth)
     requireRole(user, 'COMPLIANCE_REVIEWER')
     await wait(300)
-    const review = store.reviews.find((r) => r.reviewId === reviewId)
+    const review = store.reviews.find((r) => sameId(r.reviewId, reviewId))
     if (!review) throw new ApiError({ status: 404, errorCode: 'REVIEW_NOT_FOUND', message: '검토를 찾을 수 없습니다.' })
     if (review.status !== 'PENDING') throw new ApiError({ status: 409, errorCode: 'REVIEW_ALREADY_DECIDED', message: '이미 결정된 검토입니다.' })
-    if (!['APPROVED', 'REJECTED'].includes(body.decision)) throw new ApiError({ status: 400, errorCode: 'VALIDATION_ERROR', message: '결정 값이 올바르지 않습니다.' })
-    if (body.decision === 'REJECTED' && !(body.comment || '').trim()) throw new ApiError({ status: 400, errorCode: 'COMMENT_REQUIRED', message: '반려 사유를 입력하세요.' })
-    const analysis = store.analyses.find((a) => a.analysisId === review.analysisId)
+    if (!['APPROVED', 'REJECTED'].includes(body.status)) throw new ApiError({ status: 400, errorCode: 'VALIDATION_ERROR', message: '결정 상태가 올바르지 않습니다.' })
+    if (body.status === 'REJECTED' && !(body.comment || '').trim()) throw new ApiError({ status: 400, errorCode: 'COMMENT_REQUIRED', message: '반려 사유를 입력하세요.' })
+    const analysis = store.analyses.find((a) => sameId(a.analysisId, review.analysisId))
     const findingIds = (analysis?.findings || []).map((f) => f.findingId)
     const selected = body.selectedFindingIds || []
     let riskPatternIds = []
-    if (body.decision === 'APPROVED') {
+    if (body.status === 'APPROVED') {
       if (selected.length === 0 || !selected.every((id) => findingIds.includes(id))) {
         throw new ApiError({ status: 400, errorCode: 'INVALID_FINDING_SELECTION', message: '승격할 Finding을 1개 이상 올바르게 선택하세요.' })
       }
@@ -593,25 +694,24 @@ export const mockServer = {
         const f = analysis.findings.find((x) => x.findingId === fid)
         const rp = {
           riskPatternId: nextId('RISK'), name: f.statement.slice(0, 24), severity: f.severity,
-          ruleCode: f.ruleCode, affectedPersonaCodes: f.affectedPersonaCodes,
-          sourceFindingId: f.findingId, sourceReviewId: review.reviewId, status: 'ACTIVE', createdAt: iso(),
-          sourceExcerpt: f.sourceReference?.excerpt || '', recommendation: f.recommendation || '',
+          ruleCode: f.ruleCode || f.aiDetail?.ruleCode, affectedPersonaCodes: f.affectedPersonaCodes,
+          sourceFindingId: f.findingId, sourceReviewId: review.reviewId, sourceAnalysisId: analysis.analysisId, status: 'ACTIVE', createdAt: iso(),
+          sourceExcerpt: f.sourceReferences?.[0]?.excerpt || f.aiDetail?.sourceReferences?.[0]?.excerpt || '', recommendation: f.recommendation || '',
         }
         store.riskPatterns.push(rp)
         return rp.riskPatternId
       })
     }
-    review.status = body.decision
-    review.decision = body.decision
+    review.status = body.status
     review.comment = body.comment || null
     review.reviewerId = user.id
     review.decidedAt = iso()
     review.selectedFindingIds = selected
     review.riskPatternIds = riskPatternIds
-    const product = store.products.find((p) => p.productId === analysis?.productId)
-    if (product) product.status = body.decision === 'APPROVED' ? 'APPROVED' : 'NEEDS_FIX'
-    pushAudit('REVIEW', review.reviewId, body.decision === 'APPROVED' ? 'REVIEW_APPROVED' : 'REVIEW_REJECTED', user.id)
-    return { reviewId, status: review.status, decision: review.decision, reviewerId: user.id, riskPatternIds, decidedAt: review.decidedAt }
+    const product = store.products.find((p) => sameId(p.productId, analysis?.productId))
+    if (product) product.status = body.status === 'APPROVED' ? 'APPROVED' : 'NEEDS_FIX'
+    pushAudit('REVIEW', review.reviewId, body.status === 'APPROVED' ? 'REVIEW_APPROVED' : 'REVIEW_REJECTED', user.id)
+    return { reviewId, status: review.status, reviewerId: user.id, riskPatternIds, decidedAt: review.decidedAt }
   },
 
   async listRiskPatterns(auth, filters = {}) {
@@ -622,6 +722,12 @@ export const mockServer = {
     if (filters.severity) items = items.filter((r) => r.severity === filters.severity)
     if (filters.ruleCode) items = items.filter((r) => r.ruleCode === filters.ruleCode)
     if (filters.personaCode) items = items.filter((r) => r.affectedPersonaCodes.includes(filters.personaCode))
+    items = items.map((pattern) => {
+      const analysis = store.analyses.find((item) => sameId(item.analysisId, pattern.sourceAnalysisId))
+      const suggestion = (analysis?.guardFitSuggestions || []).find((item) =>
+        analysis.vulnerabilityPatterns?.some((candidate) => sameId(candidate.patternId, item.patternId) && candidate.findingIds.some((id) => sameId(id, pattern.sourceFindingId))))
+      return { ...pattern, guardFitSuggestion: suggestion ? clone(suggestion) : null }
+    })
     return { items }
   },
 
@@ -629,8 +735,9 @@ export const mockServer = {
     const user = requireAuth(auth)
     requireRole(user, 'COMPLIANCE_REVIEWER')
     await wait(240)
-    const rp = store.riskPatterns.find((r) => r.riskPatternId === body.riskPatternId)
+    const rp = store.riskPatterns.find((r) => sameId(r.riskPatternId, body.riskPatternId))
     if (!rp || rp.status !== 'ACTIVE') throw new ApiError({ status: 409, errorCode: 'RISK_PATTERN_NOT_ACTIVE', message: 'ACTIVE 상태의 Risk Pattern에만 조치를 만들 수 있습니다.' })
+    if (!['LABEL', 'WARNING', 'QUESTION', 'COMPARISON'].includes(body.actionType)) throw new ApiError({ status: 400, errorCode: 'INVALID_ACTION_TYPE', message: '조치 유형이 올바르지 않습니다.' })
     return idempotent(idemKey, () => {
       const action = {
         actionId: nextId('GFA'), riskPatternId: body.riskPatternId, actionType: body.actionType,
@@ -648,17 +755,28 @@ export const mockServer = {
     await wait(160)
     let items = clone(store.guardfitActions)
     if (user.role === 'PRODUCT_MANAGER') items = items.filter((a) => a.status === 'APPROVED')
-    if (riskPatternId) items = items.filter((a) => a.riskPatternId === riskPatternId)
+    if (riskPatternId) items = items.filter((a) => sameId(a.riskPatternId, riskPatternId))
     if (status) items = items.filter((a) => a.status === status)
     // Join the source pattern so the PM Before/After guide has the original
     // risky expression without needing Risk Library access (RBAC).
     items = items.map((a) => {
-      const rp = store.riskPatterns.find((r) => r.riskPatternId === a.riskPatternId)
+      const rp = store.riskPatterns.find((r) => sameId(r.riskPatternId, a.riskPatternId))
+      const review = rp ? store.reviews.find((item) => sameId(item.reviewId, rp.sourceReviewId)) : null
+      const analysis = review ? store.analyses.find((item) => sameId(item.analysisId, review.analysisId)) : null
+      const finding = analysis?.findings?.find((item) => sameId(item.findingId, rp.sourceFindingId))
       return {
         ...a,
         pattern: rp
           ? { name: rp.name, severity: rp.severity, ruleCode: rp.ruleCode, sourceExcerpt: rp.sourceExcerpt || '', recommendation: rp.recommendation || '', affectedPersonaCodes: rp.affectedPersonaCodes || [] }
           : null,
+        supportingContext: finding ? {
+          findingId: finding.findingId,
+          reviewId: review.reviewId,
+          statement: finding.statement,
+          sourceReferences: clone(finding.sourceReferences || finding.aiDetail?.sourceReferences || []),
+          evidenceReferences: clone(finding.evidenceReferences || []),
+          caseReferences: clone(finding.aiDetail?.caseReferences || []),
+        } : null,
       }
     })
     return { items }
@@ -668,17 +786,16 @@ export const mockServer = {
     const user = requireAuth(auth)
     requireRole(user, 'COMPLIANCE_REVIEWER')
     await wait(240)
-    const action = store.guardfitActions.find((a) => a.actionId === actionId)
+    const action = store.guardfitActions.find((a) => sameId(a.actionId, actionId))
     if (!action) throw new ApiError({ status: 404, errorCode: 'ACTION_NOT_FOUND', message: '조치를 찾을 수 없습니다.' })
-    if (['APPROVED', 'DISCARDED'].includes(action.status)) throw new ApiError({ status: 409, errorCode: 'ACTION_ALREADY_FINALIZED', message: '확정된 조치는 수정할 수 없습니다. 새 버전을 만드세요.' })
+    if (action.status === 'APPROVED') throw new ApiError({ status: 409, errorCode: 'ACTION_ALREADY_FINALIZED', message: '확정된 조치는 수정할 수 없습니다. 새 버전을 만드세요.' })
     if (body.label != null) action.label = body.label
     if (body.placement != null) action.placement = body.placement
     if (body.required != null) action.required = !!body.required
-    if (body.status && ['APPROVED', 'DISCARDED', 'DRAFT'].includes(body.status)) action.status = body.status
+    if (body.status && ['APPROVED', 'DRAFT'].includes(body.status)) action.status = body.status
     action.updatedBy = user.id
     action.updatedAt = iso()
     if (body.status === 'APPROVED') pushAudit('GUARDFIT_ACTION', action.actionId, 'ACTION_APPROVED', user.id)
-    if (body.status === 'DISCARDED') pushAudit('GUARDFIT_ACTION', action.actionId, 'ACTION_DISCARDED', user.id)
     return { actionId, status: action.status, updatedBy: user.id, updatedAt: action.updatedAt }
   },
 

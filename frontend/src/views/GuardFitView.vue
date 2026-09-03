@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref, reactive, computed } from 'vue'
-import { PhShieldCheck, PhPencilSimple, PhSealCheck, PhProhibit, PhArrowRight } from '@phosphor-icons/vue'
+import { PhShieldCheck, PhPencilSimple, PhSealCheck, PhArrowRight } from '@phosphor-icons/vue'
 import { api } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useToastStore } from '@/stores/toast'
@@ -32,7 +32,7 @@ async function load() { loading.value = true; try { items.value = (await api.lis
 function openEdit(a) { editing.value = a; form.label = a.label; form.placement = a.placement; form.required = a.required ? 'true' : 'false'; showEdit.value = true }
 async function save(status) {
   saving.value = status
-  try { await api.updateGuardFitAction(editing.value.actionId, { label: form.label, placement: form.placement, required: form.required === 'true', status }); toast.success(`${{ DRAFT: '초안 저장', APPROVED: '승인', DISCARDED: '폐기' }[status]} 완료`, editing.value.actionId); showEdit.value = false; await load() }
+  try { await api.updateGuardFitAction(editing.value.actionId, { label: form.label, placement: form.placement, required: form.required === 'true', status }); toast.success(`${{ DRAFT: '초안 저장', APPROVED: '승인' }[status]} 완료`, editing.value.actionId); showEdit.value = false; await load() }
   catch (e) { toast.fromError(e) } finally { saving.value = null }
 }
 </script>
@@ -71,6 +71,14 @@ async function save(status) {
               <p v-if="a.pattern?.recommendation" class="ba-reco">권고 · {{ a.pattern.recommendation }}</p>
             </div>
           </div>
+          <details v-if="a.supportingContext" class="support">
+            <summary>근거 보기</summary>
+            <p class="t-sm fw-semibold">{{ a.supportingContext.statement }}</p>
+            <p v-for="(source, index) in a.supportingContext.sourceReferences || []" :key="`s-${index}`" class="t-sm soft">판매자료 p.{{ source.page ?? '-' }} · {{ source.excerpt }}</p>
+            <p v-for="evidence in a.supportingContext.evidenceReferences || []" :key="evidence.evidenceDocumentId" class="t-sm soft">공식 근거 {{ evidence.evidenceDocumentId }} · {{ evidence.excerpt }}</p>
+            <p v-for="caseItem in a.supportingContext.caseReferences || []" :key="caseItem.knowledgeSourceId" class="t-sm soft">민원/분쟁 · {{ caseItem.excerpt }}</p>
+            <p class="mono t-xs mute">finding {{ a.supportingContext.findingId }} · riskPattern {{ a.riskPatternId }} · review {{ a.supportingContext.reviewId }}</p>
+          </details>
         </article>
       </div>
     </template>
@@ -85,6 +93,11 @@ async function save(status) {
             <div class="l-top"><GBadge tone="accent">{{ ACTION_TYPE_LABEL[a.actionType] || a.actionType }}</GBadge><GBadge :tone="a.required ? 'high' : 'neutral'" :mono="false">{{ a.required ? '필수' : '권장' }}</GBadge><GStatusPill :status="a.status" /></div>
             <span class="fw-medium label">{{ a.label }}</span>
             <span class="mono meta">{{ a.placement }} · {{ a.riskPatternId }}</span>
+            <details v-if="a.supportingContext" class="support">
+              <summary>근거 보기</summary>
+              <p class="t-sm">{{ a.supportingContext.statement }}</p>
+              <p class="mono t-xs mute">finding {{ a.supportingContext.findingId }} · review {{ a.supportingContext.reviewId }}</p>
+            </details>
           </div>
           <GButton v-if="a.status === 'DRAFT'" variant="secondary" size="sm" @click="openEdit(a)"><template #icon><PhPencilSimple :size="15" /></template>편집·결정</GButton>
           <span v-else class="mono fin">{{ formatDateTime(a.updatedAt) }}</span>
@@ -99,7 +112,6 @@ async function save(status) {
         <GField label="필수 여부" for-id="er"><GSelect id="er" v-model="form.required" :options="requiredOptions" /></GField>
       </form>
       <template #footer>
-        <GButton variant="danger" :loading="saving === 'DISCARDED'" :disabled="!!saving" @click="save('DISCARDED')"><template #icon><PhProhibit :size="15" /></template>폐기</GButton>
         <GButton variant="ghost" :loading="saving === 'DRAFT'" :disabled="!!saving" @click="save('DRAFT')">초안 저장</GButton>
         <GButton variant="primary" :loading="saving === 'APPROVED'" :disabled="!!saving" @click="save('APPROVED')"><template #icon><PhSealCheck :size="15" /></template>승인</GButton>
       </template>
@@ -118,6 +130,8 @@ async function save(status) {
 .ba-col { display: flex; flex-direction: column; gap: var(--s-8); padding: var(--s-16); border-radius: var(--r); }
 .ba-col.before { background: var(--surface-2); }
 .ba-col.after { background: var(--accent-wash); }
+.support { margin-top: var(--s-12); font-size: var(--text-sm); }
+.support summary { cursor: pointer; color: var(--accent); }
 .ba-tag { font-size: 10.5px; letter-spacing: 0.1em; }
 .ba-col.before .ba-tag { color: var(--ink-mute); }
 .ba-col.after .ba-tag { color: var(--accent); }
@@ -126,8 +140,8 @@ async function save(status) {
 .ba-place { font-size: var(--text-xs); color: var(--ink-mute); }
 .ba-personas { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .ba-reco { margin-top: var(--s-10); font-size: var(--text-xs); color: var(--ink-soft); line-height: 1.55; }
-.ba-arrow { display: grid; place-items: center; color: var(--ink-faint); }
-@media (max-width: 680px) { .ba-grid { grid-template-columns: 1fr; } .ba-arrow { transform: rotate(90deg); } }
+.ba-arrow { display: flex; align-self: center; align-items: center; justify-content: center; color: var(--ink-faint); }
+@media (max-width: 680px) { .ba-grid { grid-template-columns: 1fr; } .ba-arrow { justify-self: center; transform: rotate(90deg); } }
 .list { list-style: none; border-top: 1px solid var(--line-strong); margin-top: var(--s-32); }
 .row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-16); padding: var(--s-20) var(--s-4); border-bottom: 1px solid var(--line); }
 .l { display: flex; flex-direction: column; gap: var(--s-8); min-width: 0; }

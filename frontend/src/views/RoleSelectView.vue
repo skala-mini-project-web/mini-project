@@ -36,7 +36,7 @@ async function enter(r) {
     <div class="frame">
       <!-- meta bar -->
       <header class="meta">
-        <span class="brand"><span class="mark" aria-hidden="true"></span><span class="mono word">GUARDLAB</span></span>
+        <span class="brand"><img src="/argus-logo.png" alt="ARGUS" class="logo-img" /></span>
       </header>
 
       <!-- hero: copy (dominant) + a real product instrument, off-balance -->
@@ -79,8 +79,7 @@ async function enter(r) {
 
 .meta { display: flex; align-items: center; justify-content: space-between; padding-bottom: var(--s-20); border-bottom: 1px solid var(--line); }
 .brand { display: inline-flex; align-items: center; gap: var(--s-10); }
-.mark { width: 16px; height: 16px; border-radius: var(--r-xs); background: var(--ink); box-shadow: inset 0 0 0 3px var(--paper), inset 0 0 0 4px var(--ink); }
-.word { font-size: var(--text-sm); font-weight: var(--fw-bold); letter-spacing: 0.16em; }
+.logo-img { height: 26px; width: auto; display: block; }
 .sub { font-size: 11px; color: var(--ink-mute); letter-spacing: 0.18em; padding-left: var(--s-10); border-left: 1px solid var(--line-strong); }
 .deploy { font-size: 11px; color: var(--ink-mute); letter-spacing: 0.08em; }
 

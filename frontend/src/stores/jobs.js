@@ -16,7 +16,7 @@ export const useJobsStore = defineStore('jobs', {
   state: () => ({ tracked: [], notifications: [], timer: null }),
   getters: {
     unread: (s) => s.notifications.filter((n) => !n.read).length,
-    unreadForProduct: (s) => (pid) => s.notifications.filter((n) => !n.read && n.productId === pid).length,
+    unreadForProduct: (s) => (pid) => s.notifications.filter((n) => !n.read && String(n.productId) === String(pid)).length,
   },
   actions: {
     restore() {
@@ -59,7 +59,7 @@ export const useJobsStore = defineStore('jobs', {
     markProductRead(productId) {
       let changed = false
       this.notifications.forEach((n) => {
-        if (!n.read && n.productId === productId) { n.read = true; changed = true }
+        if (!n.read && String(n.productId) === String(productId)) { n.read = true; changed = true }
       })
       if (changed) this.save()
     },
@@ -102,7 +102,7 @@ export const useJobsStore = defineStore('jobs', {
           } else if (job.kind === 'review') {
             const r = await api.getReview(job.id)
             if (r && r.status !== 'PENDING' && r.submittedBy === session.user?.userId) {
-              const ok = r.decision === 'APPROVED'
+              const ok = r.status === 'APPROVED'
               toast.push({ type: ok ? 'success' : 'error', title: '검토 완료', message: `${job.name} · ${ok ? '승인되었습니다' : '반려되었습니다'}` })
               this.addNote('review', r.productId, `검토 ${ok ? '승인' : '반려'} · ${job.name}`)
               this.untrack('review', job.id)

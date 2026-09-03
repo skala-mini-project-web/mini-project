@@ -10,7 +10,7 @@ export function computeRiskScore(findings) {
   const sevBase = { HIGH: 60, MEDIUM: 35, LOW: 15 }
   const severityBase = Math.max(...findings.map((f) => sevBase[f.severity] ?? 0))
   const personas = new Set(findings.flatMap((f) => f.affectedPersonaCodes ?? []))
-  const rules = new Set(findings.map((f) => f.ruleCode))
+  const rules = new Set(findings.map((f) => f.ruleCode || f.aiDetail?.ruleCode).filter(Boolean))
   const personaBonus = Math.min(15, 5 * personas.size)
   const ruleBonus = Math.min(12, 3 * rules.size)
   const highs = findings.filter((f) => f.severity === 'HIGH')
@@ -20,9 +20,12 @@ export function computeRiskScore(findings) {
   return Math.min(100, severityBase + personaBonus + ruleBonus + groundingBonus)
 }
 
-// Finding factory keeps sourceReference.documentId bound to the analyzed doc.
+// Finding 팩토리: sourceReferences[]의 documentId를 분석 대상 문서로 고정
 function finding(documentId, f) {
-  return { ...f, sourceReference: { ...f.sourceReference, documentId } }
+  return {
+    ...f,
+    sourceReferences: (f.sourceReferences || []).map((reference) => ({ ...reference, documentId })),
+  }
 }
 
 // Normal scenarios: return findings for a given source documentId.
@@ -32,19 +35,19 @@ export const NORMAL_SCENARIOS = {
     schedule: { createdToRunningMs: 900, runningToCompletedMs: 2200 },
     findings: (docId) => [
       finding(docId, {
-        findingId: 'FND-001', findingType: 'FRAMING', ruleCode: 'STABILITY_KEYWORD',
+        findingId: 'FND-001', findingType: 'FRAMING', categoryCode: 'PRINCIPAL_PROTECTION_MISUNDERSTANDING', ruleCode: 'STABILITY_KEYWORD',
         statement: '안정성 표현이 원금보장으로 오인될 가능성이 있습니다.', severity: 'HIGH',
-        sourceReference: { page: 1, excerpt: '최근 안정적인 수익률을 기록한 투자상품입니다.' },
+        sourceReferences: [{ page: 1, excerpt: '최근 안정적인 수익률을 기록한 투자상품입니다.' }],
         affectedPersonaCodes: ['FINANCIAL_BEGINNER', 'SENIOR'],
-        evidenceReferences: [{ documentId: 'POLICY-003', excerpt: '원금손실 가능성은 안정성 표현과 인접해 표시해야 합니다.', sourceType: 'INTERNAL_POLICY' }],
+        evidenceReferences: [{ evidenceDocumentId: 'POLICY-003', excerpt: '원금손실 가능성은 안정성 표현과 인접해 표시해야 합니다.', sourceType: 'INTERNAL_POLICY' }],
         recommendation: '같은 영역에 원금 손실 가능성을 명시하세요.',
       }),
       finding(docId, {
-        findingId: 'FND-002', findingType: 'OMISSION', ruleCode: 'COST_OMISSION',
+        findingId: 'FND-002', findingType: 'OMISSION', categoryCode: 'COST_OMISSION', ruleCode: 'COST_OMISSION',
         statement: '총비용 및 운용 보수가 인접 위치에 표시되지 않았습니다.', severity: 'MEDIUM',
-        sourceReference: { page: 2, excerpt: '운용 보수' },
+        sourceReferences: [{ page: 2, excerpt: '운용 보수' }],
         affectedPersonaCodes: ['FINANCIAL_BEGINNER'],
-        evidenceReferences: [{ documentId: 'POLICY-003', excerpt: '비용 정보는 수익 표현과 함께 제시해야 합니다.', sourceType: 'INTERNAL_POLICY' }],
+        evidenceReferences: [{ evidenceDocumentId: 'POLICY-003', excerpt: '비용 정보는 수익 표현과 함께 제시해야 합니다.', sourceType: 'INTERNAL_POLICY' }],
         recommendation: '총비용 예시를 수익 표현 인접 위치에 표시하세요.',
       }),
     ],
@@ -54,11 +57,11 @@ export const NORMAL_SCENARIOS = {
     schedule: { createdToRunningMs: 700, runningToCompletedMs: 1800 },
     findings: (docId) => [
       finding(docId, {
-        findingId: 'FND-101', findingType: 'OMISSION', ruleCode: 'COST_OMISSION',
+        findingId: 'FND-101', findingType: 'OMISSION', categoryCode: 'COST_OMISSION', ruleCode: 'COST_OMISSION',
         statement: '수수료 및 총비용 정보가 누락되었습니다.', severity: 'MEDIUM',
-        sourceReference: { page: 1, excerpt: '수수료 안내' },
+        sourceReferences: [{ page: 1, excerpt: '수수료 안내' }],
         affectedPersonaCodes: ['FINANCIAL_BEGINNER', 'LOW_LITERACY', 'DIGITAL_NOVICE'],
-        evidenceReferences: [{ documentId: 'POLICY-003', excerpt: '비용 정보는 수익 표현과 함께 제시해야 합니다.', sourceType: 'INTERNAL_POLICY' }],
+        evidenceReferences: [{ evidenceDocumentId: 'POLICY-003', excerpt: '비용 정보는 수익 표현과 함께 제시해야 합니다.', sourceType: 'INTERNAL_POLICY' }],
         recommendation: '총비용 예시와 수수료 항목을 명시하세요.',
       }),
     ],
@@ -68,9 +71,9 @@ export const NORMAL_SCENARIOS = {
     schedule: { createdToRunningMs: 600, runningToCompletedMs: 1500 },
     findings: (docId) => [
       finding(docId, {
-        findingId: 'FND-201', findingType: 'ACCESSIBILITY', ruleCode: 'COGNITIVE_ACCESSIBILITY',
+        findingId: 'FND-201', findingType: 'ACCESSIBILITY', categoryCode: 'COGNITIVE_ACCESSIBILITY', ruleCode: 'COGNITIVE_ACCESSIBILITY',
         statement: '전문용어가 많아 저문해 소비자에게 인지 부담이 큽니다.', severity: 'LOW',
-        sourceReference: { page: 1, excerpt: '기초자산 변동성' },
+        sourceReferences: [{ page: 1, excerpt: '기초자산 변동성' }],
         affectedPersonaCodes: ['LOW_LITERACY'],
         evidenceReferences: [],
         recommendation: '핵심 용어에 쉬운 설명을 병기하세요.',

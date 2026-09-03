@@ -1,4 +1,4 @@
-# GuardLab AI 분석 설계 (RiskAnalysisProvider)
+# ARGUS AI 분석 설계 (RiskAnalysisProvider)
 
 > 이 문서는 **AI 확장 지점**의 구현 규격이다. 프론트엔드는 Interface First 원칙에 따라
 > 결과 JSON 계약만 소비하므로, Mock이든 실제 LLM이든 **화면 코드는 바뀌지 않는다.**
@@ -63,19 +63,20 @@ interface RiskAnalysisProvider {
   "findings": [
     {
       "findingType": "FRAMING | OMISSION | MISUNDERSTANDING | ACCESSIBILITY",
+      "categoryCode": "PRINCIPAL_PROTECTION_MISUNDERSTANDING",
       "ruleCode": "<ruleCodes 중 하나>",
       "severity": "HIGH | MEDIUM | LOW",
-      "message": "사용자가 이해 가능한 1~1000자 진술",
-      "sourceReference": { "page": 1, "excerpt": "<sourceText의 실제 부분 문자열>" },
+      "statement": "사용자가 이해 가능한 1~1000자 진술",
+      "sourceReferences": [{ "page": 1, "excerpt": "<sourceText의 실제 부분 문자열>" }],
       "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
-      "evidenceReferences": [ { "documentId": "POLICY-003", "excerpt": "<evidence의 실제 부분 문자열>", "sourceType": "INTERNAL_POLICY" } ],
+      "evidenceReferences": [ { "evidenceDocumentId": 22, "excerpt": "<evidence의 실제 부분 문자열>", "sourceType": "INTERNAL_POLICY" } ],
       "recommendation": "구체적 위치·표현 방향 (1~1000자)"
     }
   ]
 }
 ```
 
-- `findingId`, `sourceReference.documentId`, `riskScore`는 **서버가 채운다**(LLM이 만들지 않는다).
+- `findingId`, `sourceReferences[].documentId`, `riskScore`는 **서버가 채운다**(LLM이 만들지 않는다).
 - `findings`가 비면 정상 저위험(NO_FINDING), riskScore=0.
 
 ## 5. 점수 정책 (LLM이 아니라 서버가 계산 · 결정론)
@@ -94,12 +95,12 @@ Provider 응답을 서버가 후처리·검증하고, 위반 시 `AnalysisStatus
 `errorCode=PROVIDER_RESPONSE_INVALID`, `retryable=false`로 저장한다(400을 내지 않는다).
 
 - [ ] **스키마 검증**: JSON 파싱 + `analysis-result.schema.json` 통과. 스키마 밖 텍스트 → 실패.
-- [ ] **근거 실재성(anti-hallucination)**: 모든 `sourceReference.excerpt`는 `sourceText`의
+- [ ] **근거 실재성(anti-hallucination)**: 모든 `sourceReferences[].excerpt`는 `sourceText`의
       **부분 문자열**이어야 한다(정규화 후). 아니면 그 finding을 폐기(또는 전체 실패).
 - [ ] **규칙 범위**: `ruleCode ∈ 요청 ruleCodes`.
 - [ ] **Persona 범위**: `affectedPersonaCodes ⊆ 요청 personas`, 최소 1개.
-- [ ] **근거 범위**: `evidenceReferences[].documentId ∈ 요청 evidence`. HIGH는 ≥1건.
-- [ ] **길이/필드**: message·recommendation 1~1000자, 필수 필드 존재.
+- [ ] **근거 범위**: `evidenceReferences[].evidenceDocumentId ∈ 요청 evidence`. HIGH는 ≥1건.
+- [ ] **길이/필드**: statement·recommendation 1~1000자, 필수 필드 존재.
 - [ ] **점수 무시**: 응답에 riskScore가 있어도 버리고 §5로 재계산.
 - [ ] **PII·비밀·원문 전문**을 로그에 남기지 않는다. 프롬프트/응답 원문 로깅 금지.
 - [ ] **재현성**: temperature 낮게(≤0.2), 동일 입력+모델은 가능한 한 동일 결과. 실제

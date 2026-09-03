@@ -50,7 +50,7 @@ const filtered = computed(() => {
     if (typeFilter.value && p.productType !== typeFilter.value) return false
     if (statusFilter.value && productStatusKey(p) !== statusFilter.value) return false
     if (!term) return true
-    return matchesQuery(p.name, q.value) || p.productId.toLowerCase().includes(term)
+    return matchesQuery(p.name, q.value) || String(p.productId).toLowerCase().includes(term)
   })
 })
 const shown = computed(() => filtered.value.slice(page.value * PAGE, page.value * PAGE + PAGE))
@@ -71,7 +71,6 @@ async function submit() {
   <div class="wrap rise">
     <header class="top">
       <div><h1 class="d-h1">상품</h1></div>
-      <GButton variant="primary" @click="openCreate"><template #icon><PhPlus :size="16" /></template>상품 등록</GButton>
     </header>
 
     <!-- Controls -->
@@ -91,12 +90,15 @@ async function submit() {
         />
         <button v-if="q" class="s-clear" aria-label="지우기" @click="q = ''"><PhX :size="14" /></button>
       </div>
+      <GButton variant="primary" @click="openCreate"><template #icon><PhPlus :size="16" /></template>상품 등록</GButton>
+    </div>
+    <div class="filter-row">
       <div class="seg">
         <button v-for="f in typeFilters" :key="f.v" class="seg-b" :class="{ on: typeFilter === f.v }" @click="typeFilter = f.v">{{ f.l }}</button>
       </div>
-    </div>
-    <div class="seg seg-status">
-      <button v-for="f in statusFilters" :key="f.v" class="seg-b" :class="{ on: statusFilter === f.v }" @click="statusFilter = f.v">{{ f.l }}</button>
+      <div class="seg seg-status">
+        <button v-for="f in statusFilters" :key="f.v" class="seg-b" :class="{ on: statusFilter === f.v }" @click="statusFilter = f.v">{{ f.l }}</button>
+      </div>
     </div>
 
     <p v-if="!loading" class="resline mono mute">
@@ -146,7 +148,8 @@ async function submit() {
 .wrap { max-width: 940px; }
 .top { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-16); margin-bottom: var(--s-24); }
 .top .kicker { margin-bottom: var(--s-10); }
-.controls { display: flex; align-items: center; gap: var(--s-12); flex-wrap: wrap; }
+.controls { display: flex; align-items: center; gap: var(--s-12); }
+.filter-row { display: flex; gap: var(--s-12); flex-wrap: wrap; margin-top: var(--s-12); }
 .search { position: relative; display: flex; align-items: center; flex: 1; min-width: 220px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-sm); }
 .search:focus-within { border-color: var(--accent); box-shadow: var(--focus); }
 .s-ico { color: var(--ink-mute); margin-left: 12px; flex: none; }
@@ -156,7 +159,7 @@ async function submit() {
 .seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--r); padding: 2px; gap: 2px; flex: none; }
 .seg-b { border: 0; background: transparent; padding: 6px 12px; border-radius: var(--r-sm); font-size: var(--text-xs); font-weight: var(--fw-medium); color: var(--ink-mute); cursor: pointer; font-family: var(--font-mono); letter-spacing: 0.02em; }
 .seg-b.on { background: var(--ink); color: #fff; }
-.seg-status { display: flex; flex-wrap: wrap; margin-top: var(--s-12); }
+.seg-status { display: flex; flex-wrap: wrap; }
 .resline { margin: var(--s-16) 0 var(--s-4); font-size: var(--text-xs); }
 .list { list-style: none; border-top: 1px solid var(--line-strong); }
 .row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-16); padding: var(--s-20) var(--s-12); border-bottom: 1px solid var(--line); cursor: pointer; transition: background var(--fast) var(--ease); }
