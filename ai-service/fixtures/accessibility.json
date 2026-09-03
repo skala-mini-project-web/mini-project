@@ -1,0 +1,16 @@
+{
+  "riskScore": 35,
+  "modelVersion": "mock-risk-v1",
+  "promptVersion": "mock-prompt-v1",
+  "findings": [
+    {
+      "statement": "긴 문장과 전문용어가 집중되어 상품 위험을 이해하기 어렵습니다.",
+      "severity": "LOW",
+      "affectedPersonaCodes": [
+        "SENIOR"
+      ],
+      "evidenceReferences": [],
+      "recommendation": "문장을 짧게 나누고 전문용어 옆에 쉬운 설명을 제공하세요."
+    }
+  ]
+}
