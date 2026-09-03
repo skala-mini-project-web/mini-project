@@ -1,21 +1,14 @@
 package com.crosschecklab;
 
+import com.crosschecklab.support.IntegrationTestSupport;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@SpringBootTest
-@Testcontainers
-class CrosschecklabApplicationTests {
-
-	@Container
-	@ServiceConnection
-	static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+class CrosschecklabApplicationTests extends IntegrationTestSupport {
 
 	@Test
+	@DisplayName("Flyway 마이그레이션 적용 후 애플리케이션 컨텍스트가 로드된다")
 	void contextLoads() {
 	}
+
 }
