@@ -26,6 +26,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.core.task.SyncTaskExecutor;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 // ANA-001~004 통합 검증. 외부 ai-service 없이 테스트 대역으로 전체 흐름을 돌린다.
 @Import(AnalysisApiTest.TestBeans.class)
@@ -56,8 +57,20 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @Autowired
     private RiskAnalysisProvider provider;
 
+    // V2 시드: 1 = pm_park(PRODUCT_MANAGER, 아래 상품의 소유자), 2 = reviewer_kim(COMPLIANCE_REVIEWER)
+    private static final String USER_ID_HEADER = "X-Demo-User-Id";
+    private static final String ROLE_HEADER = "X-Demo-Role";
+
     private Long productId;
     private Long confirmedDocumentId;
+
+    private MockHttpServletRequestBuilder asPm(MockHttpServletRequestBuilder builder) {
+        return builder.header(USER_ID_HEADER, "1").header(ROLE_HEADER, "PRODUCT_MANAGER");
+    }
+
+    private MockHttpServletRequestBuilder asReviewer(MockHttpServletRequestBuilder builder) {
+        return builder.header(USER_ID_HEADER, "2").header(ROLE_HEADER, "COMPLIANCE_REVIEWER");
+    }
 
     // 컨테이너는 JVM 당 하나라 여기서 만든 행이 다른 테스트로 새어 나간다.
     // analyses 가 남으면 다른 테스트의 products 삭제가 FK 에 걸리므로 앞뒤로 비운다.
@@ -84,6 +97,20 @@ class AnalysisApiTest extends IntegrationTestSupport {
         jdbc.update("DELETE FROM products");
     }
 
+    private Long insertDocumentOwnedBy(Long ownerId) {
+        Long otherProductId = jdbc.queryForObject("""
+                INSERT INTO products (owner_id, name, product_type, created_at, updated_at)
+                VALUES (?, '타인 상품', 'INVESTMENT', NOW(), NOW())
+                RETURNING id""", Long.class, ownerId);
+        return jdbc.queryForObject("""
+                INSERT INTO product_documents
+                    (product_id, file_name, media_type, storage_key, extract_status, extracted_text,
+                     confirmed, created_at, updated_at)
+                VALUES (?, '타인_설명서.pdf', 'application/pdf', 'mock://documents/other',
+                        'READY', '타인 상품 설명 텍스트입니다.', TRUE, NOW(), NOW())
+                RETURNING id""", Long.class, otherProductId);
+    }
+
     private Long insertDocument(boolean confirmed) {
         return jdbc.queryForObject("""
                 INSERT INTO product_documents
@@ -95,9 +122,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     private Long createAnalysis() throws Exception {
-        String body = mockMvc.perform(post("/api/analyses")
+        String body = mockMvc.perform(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2))))
+                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))))
                 .andExpect(status().isAccepted())
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body).get("analysisId").asLong();
@@ -114,9 +141,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @Test
     @DisplayName("ANA-001·004: 분석을 생성하면 202로 수락되고 riskScore 82 시나리오가 COMPLETED로 저장된다")
     void createAndComplete() throws Exception {
-        mockMvc.perform(post("/api/analyses")
+        mockMvc.perform(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2))))
+                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status").value("CREATED"))
                 .andExpect(jsonPath("$.statusUrl").exists())
@@ -124,7 +151,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
         Long analysisId = jdbc.queryForObject("SELECT MAX(id) FROM analyses", Long.class);
 
-        mockMvc.perform(get("/api/analyses/{id}", analysisId))
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.progress").value(100))
@@ -132,7 +159,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.requiresHumanApproval").value(true))
                 .andExpect(jsonPath("$.errorCode").isEmpty());
 
-        mockMvc.perform(get("/api/analyses/{id}/result", analysisId))
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.riskScore").value(82))
                 .andExpect(jsonPath("$.sourceDocument.fileName").value("스마트인컴_상품설명서.pdf"))
@@ -164,8 +191,8 @@ class AnalysisApiTest extends IntegrationTestSupport {
         Long analysisId = createAnalysis();
         String before = jdbc.queryForObject("SELECT updated_at::text FROM analyses WHERE id = ?", String.class, analysisId);
 
-        mockMvc.perform(get("/api/analyses/{id}", analysisId)).andExpect(status().isOk());
-        mockMvc.perform(get("/api/analyses/{id}", analysisId)).andExpect(status().isOk());
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId))).andExpect(status().isOk());
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId))).andExpect(status().isOk());
 
         assertThat(jdbc.queryForObject("SELECT updated_at::text FROM analyses WHERE id = ?", String.class, analysisId))
                 .isEqualTo(before);
@@ -176,9 +203,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     void documentNotConfirmed() throws Exception {
         Long documentId = insertDocument(false);
 
-        mockMvc.perform(post("/api/analyses")
+        mockMvc.perform(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(documentId, List.of(1), List.of(1))))
+                        .content(request(documentId, List.of(1), List.of(1)))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("DOCUMENT_NOT_CONFIRMED"))
                 .andExpect(jsonPath("$.traceId").isNotEmpty());
@@ -187,9 +214,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @Test
     @DisplayName("Persona 를 4개 선택하면 400 INVALID_SELECTION_COUNT")
     void invalidSelectionCount() throws Exception {
-        mockMvc.perform(post("/api/analyses")
+        mockMvc.perform(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1, 2, 3, 4))))
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1, 2, 3, 4)))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_SELECTION_COUNT"));
     }
@@ -197,9 +224,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @Test
     @DisplayName("존재하지 않는 근거 문서를 선택하면 400 INVALID_EVIDENCE_DOCUMENT")
     void invalidEvidenceDocument() throws Exception {
-        mockMvc.perform(post("/api/analyses")
+        mockMvc.perform(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(999), List.of(1))))
+                        .content(request(confirmedDocumentId, List.of(999), List.of(1)))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_EVIDENCE_DOCUMENT"));
     }
@@ -209,9 +236,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     void duplicateRequest() throws Exception {
         createAnalysis();
 
-        mockMvc.perform(post("/api/analyses")
+        mockMvc.perform(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2))))
+                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("DUPLICATE_ANALYSIS_REQUEST"));
     }
@@ -223,7 +250,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
         fake.failWith(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true);
         Long analysisId = createAnalysis();
 
-        mockMvc.perform(get("/api/analyses/{id}", analysisId))
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("FAILED"))
                 .andExpect(jsonPath("$.retryable").value(true))
@@ -231,11 +258,11 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.message").isNotEmpty());
 
         fake.reset();
-        mockMvc.perform(post("/api/analyses/{id}/retry", analysisId))
+        mockMvc.perform(asPm(post("/api/analyses/{id}/retry", analysisId)))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.analysisId").value(analysisId));
 
-        mockMvc.perform(get("/api/analyses/{id}", analysisId))
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.riskScore").value(82))
@@ -248,11 +275,11 @@ class AnalysisApiTest extends IntegrationTestSupport {
         ((FakeRiskAnalysisProvider) provider).failWith(ErrorCode.PROVIDER_RESPONSE_INVALID, false);
         Long analysisId = createAnalysis();
 
-        mockMvc.perform(get("/api/analyses/{id}", analysisId))
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
                 .andExpect(jsonPath("$.status").value("FAILED"))
                 .andExpect(jsonPath("$.retryable").value(false));
 
-        mockMvc.perform(post("/api/analyses/{id}/retry", analysisId))
+        mockMvc.perform(asPm(post("/api/analyses/{id}/retry", analysisId)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("ANALYSIS_NOT_RETRYABLE"));
     }
@@ -263,15 +290,80 @@ class AnalysisApiTest extends IntegrationTestSupport {
         ((FakeRiskAnalysisProvider) provider).failWith(ErrorCode.PROVIDER_RESPONSE_INVALID, false);
         Long analysisId = createAnalysis();
 
-        mockMvc.perform(get("/api/analyses/{id}/result", analysisId))
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("ANALYSIS_NOT_COMPLETED"));
     }
 
     @Test
+    @DisplayName("인증 헤더가 없으면 401")
+    void unauthenticated() throws Exception {
+        mockMvc.perform(get("/api/analyses/{id}", 1L))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("다른 사용자의 문서로는 분석을 생성할 수 없다 (403)")
+    void cannotCreateOnOthersDocument() throws Exception {
+        Long othersDocumentId = insertDocumentOwnedBy(2L);
+
+        mockMvc.perform(asPm(post("/api/analyses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request(othersDocumentId, List.of(1), List.of(1)))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN_OWNERSHIP"));
+    }
+
+    @Test
+    @DisplayName("검토자는 분석을 생성할 수 없다 (403)")
+    void reviewerCannotCreate() throws Exception {
+        mockMvc.perform(asReviewer(post("/api/analyses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1)))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+    }
+
+    @Test
+    @DisplayName("검토자는 담당이 아닌 분석도 조회할 수 있다")
+    void reviewerCanRead() throws Exception {
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asReviewer(get("/api/analyses/{id}", analysisId)))
+                .andExpect(status().isOk());
+        mockMvc.perform(asReviewer(get("/api/analyses/{id}/result", analysisId)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("진행 중인 분석은 재시도할 수 없다 (409)")
+    void cannotRetryWhileRunning() throws Exception {
+        Long analysisId = createAnalysis();
+        jdbc.update("UPDATE analyses SET status = 'RUNNING', updated_at = NOW() WHERE id = ?", analysisId);
+
+        mockMvc.perform(asPm(post("/api/analyses/{id}/retry", analysisId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("ANALYSIS_ALREADY_RUNNING"));
+    }
+
+    @Test
+    @DisplayName("멈춘 지 오래된 RUNNING 분석은 재시도로 되살릴 수 있다")
+    void canRetryStaleRunning() throws Exception {
+        Long analysisId = createAnalysis();
+        jdbc.update("UPDATE analyses SET status = 'RUNNING', updated_at = NOW() - INTERVAL '10 minutes'"
+                + " WHERE id = ?", analysisId);
+
+        mockMvc.perform(asPm(post("/api/analyses/{id}/retry", analysisId)))
+                .andExpect(status().isAccepted());
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+    }
+
+    @Test
     @DisplayName("없는 분석을 조회하면 404")
     void notFound() throws Exception {
-        mockMvc.perform(get("/api/analyses/{id}", 999999L))
+        mockMvc.perform(asPm(get("/api/analyses/{id}", 999999L)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errorCode").value("NOT_FOUND"));
     }

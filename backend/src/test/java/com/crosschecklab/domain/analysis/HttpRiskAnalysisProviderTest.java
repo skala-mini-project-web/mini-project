@@ -1,6 +1,7 @@
 package com.crosschecklab.domain.analysis;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.crosschecklab.analysis.provider.ProviderException;
@@ -132,6 +133,38 @@ class HttpRiskAnalysisProviderTest {
                 {"riskScore":82,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"HIGH","affectedPersonaCodes":["SENIOR"],
                  "evidenceReferences":[],"recommendation":null}]}""";
+
+        assertThatThrownBy(() -> provider().analyze(request()))
+                .isInstanceOfSatisfying(ProviderException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID);
+                    assertThat(e.isRetryable()).isFalse();
+                });
+    }
+
+    @Test
+    @DisplayName("loopback 이 아닌 http base-url 은 기동 시점에 거부된다")
+    void plaintextBaseUrlIsRejected() {
+        assertThatThrownBy(() -> provider("http://ai.example.com"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("https");
+    }
+
+    @Test
+    @DisplayName("https 와 로컬 http 는 허용된다")
+    void secureOrLocalBaseUrlIsAllowed() {
+        assertThatNoException().isThrownBy(() -> provider("https://ai.example.com"));
+        assertThatNoException().isThrownBy(() -> provider("http://127.0.0.1:8000"));
+    }
+
+    @Test
+    @DisplayName("요청에서 선택하지 않은 근거 문서를 인용하면 계약 위반으로 끊는다")
+    void evidenceOutsideSelectionIsRejected() {
+        // 요청은 근거 문서 1번만 보냈는데 응답이 99번을 인용한다.
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "evidenceReferences":[{"evidenceDocumentId":99,"excerpt":"남의 문서"}],
+                 "recommendation":null}]}""";
 
         assertThatThrownBy(() -> provider().analyze(request()))
                 .isInstanceOfSatisfying(ProviderException.class, e -> {

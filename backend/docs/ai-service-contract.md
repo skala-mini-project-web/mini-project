@@ -26,6 +26,19 @@ ai-service:
   default-scenario-code: GUARANTEE_MISUNDERSTANDING_HIGH
 ```
 
+### 전송 보안
+
+요청 본문에는 상품 설명 확정 텍스트와 근거 문서 원문이 실린다. 평문 전송을 막기 위해
+`base-url` 이 loopback(`localhost` / `127.0.0.0/8` / `::1`) 이 아니면 **`https` 만 허용**하며,
+아니면 애플리케이션 기동 시점에 실패한다.
+
+```
+ai-service.base-url 은 https 여야 합니다 (http 는 localhost 만 허용): http://ai.example.com
+```
+
+호출은 POST 라 Spring 의 `SimpleClientHttpRequestFactory` 가 리다이렉트를 따라가지 않는다
+(`setInstanceFollowRedirects("GET".equals(httpMethod))`). 별도 설정이 필요 없다.
+
 ## `POST {base-url}/internal/v1/risk-analyses`
 
 ### Request

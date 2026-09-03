@@ -9,6 +9,10 @@ import com.crosschecklab.global.common.enums.Severity;
 import com.crosschecklab.global.error.ErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.net.URI;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -30,6 +34,7 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
     private final ObjectMapper objectMapper;
 
     public HttpRiskAnalysisProvider(AiServiceProperties properties, ObjectMapper objectMapper) {
+        requireSecureTransport(properties.baseUrl());
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(properties.connectTimeout());
         requestFactory.setReadTimeout(properties.readTimeout());
@@ -38,6 +43,18 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
                 .requestFactory(requestFactory)
                 .build();
         this.objectMapper = objectMapper;
+    }
+
+    // 요청 본문에 확정 텍스트와 근거 문서 원문이 실리므로 평문 전송은 로컬 개발에서만 허용한다.
+    private static void requireSecureTransport(String baseUrl) {
+        URI uri = URI.create(baseUrl);
+        String host = uri.getHost();
+        if ("https".equalsIgnoreCase(uri.getScheme())
+                || "localhost".equals(host) || "127.0.0.1".equals(host) || "[::1]".equals(host)) {
+            return;
+        }
+        throw new IllegalStateException(
+                "ai-service.base-url 은 https 여야 합니다 (http 는 localhost 만 허용): " + baseUrl);
     }
 
     @Override
@@ -52,7 +69,7 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
                         throw toProviderException(response);
                     })
                     .body(AnalysisResult.class);
-            return validate(result);
+            return validate(request, result);
         } catch (ResourceAccessException e) {
             // 연결 실패 / 읽기 타임아웃 — 같은 요청을 그대로 재시도할 수 있다.
             throw new ProviderException(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true,
@@ -81,17 +98,27 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
     }
 
     // 계약 위반은 재시도해도 같은 결과이므로 retryable=false 로 끊는다.
-    private AnalysisResult validate(AnalysisResult result) {
+    private AnalysisResult validate(AnalysisRequest request, AnalysisResult result) {
         if (result == null || result.findings() == null || result.findings().isEmpty()) {
             throw invalid("findings 가 비어 있음");
         }
         if (result.riskScore() < 0 || result.riskScore() > 100) {
             throw invalid("riskScore 범위 초과: " + result.riskScore());
         }
+        Set<Long> selected = request.evidenceDocuments().stream()
+                .map(AnalysisRequest.EvidenceDocumentPayload::id).collect(Collectors.toSet());
+
         for (FindingPayload finding : result.findings()) {
-            if (finding.severity() == Severity.HIGH
-                    && (finding.evidenceReferences() == null || finding.evidenceReferences().isEmpty())) {
+            List<FindingPayload.EvidenceRefPayload> references =
+                    finding.evidenceReferences() == null ? List.of() : finding.evidenceReferences();
+            if (finding.severity() == Severity.HIGH && references.isEmpty()) {
                 throw invalid("HIGH Finding 에 근거 인용이 없음");
+            }
+            // 선택하지 않은 근거를 인용하면 결과 조회에서 그 문서의 제목·출처가 노출된다.
+            for (FindingPayload.EvidenceRefPayload reference : references) {
+                if (!selected.contains(reference.evidenceDocumentId())) {
+                    throw invalid("선택하지 않은 근거 문서 인용: " + reference.evidenceDocumentId());
+                }
             }
         }
         return result;

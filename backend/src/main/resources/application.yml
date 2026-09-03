@@ -28,6 +28,8 @@ spring:
 
 # 외부 ai-service(FastAPI Mock) 호출 설정. Provider 교체 시 여기만 바꾼다.
 ai-service:
+  # 요청 본문에 확정 텍스트와 근거 문서 원문이 실린다.
+  # 로컬(localhost)이 아니면 https 만 허용하며, 아니면 기동 시점에 실패한다.
   base-url: ${AI_SERVICE_URL:http://localhost:8000}
   connect-timeout: 2s
   read-timeout: 20s

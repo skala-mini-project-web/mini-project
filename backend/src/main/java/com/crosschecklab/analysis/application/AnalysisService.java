@@ -3,7 +3,6 @@ package com.crosschecklab.analysis.application;
 import com.crosschecklab.analysis.provider.http.AiServiceProperties;
 import com.crosschecklab.domain.analysis.Analysis;
 import com.crosschecklab.domain.analysis.AnalysisRepository;
-import com.crosschecklab.domain.analysis.EvidenceReference;
 import com.crosschecklab.domain.analysis.Finding;
 import com.crosschecklab.domain.analysis.FindingRepository;
 import com.crosschecklab.domain.analysis.dto.AnalysisAcceptedResponse;
@@ -17,12 +16,15 @@ import com.crosschecklab.domain.evidence.EvidenceDocumentRepository;
 import com.crosschecklab.domain.persona.PersonaTemplate;
 import com.crosschecklab.domain.persona.PersonaTemplateRepository;
 import com.crosschecklab.global.common.enums.PersonaCode;
+import com.crosschecklab.global.common.enums.UserRole;
 import com.crosschecklab.global.error.BusinessException;
 import com.crosschecklab.global.error.ErrorCode;
-import java.util.LinkedHashSet;
+import com.crosschecklab.global.security.DemoUser;
+import com.crosschecklab.global.security.OwnershipChecker;
+import java.time.Clock;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -43,12 +45,18 @@ public class AnalysisService {
     private final EvidenceDocumentRepository evidenceDocumentRepository;
     private final PersonaTemplateRepository personaTemplateRepository;
     private final AnalysisInputLoader inputLoader;
+    private final OwnershipChecker ownershipChecker;
     private final ApplicationEventPublisher eventPublisher;
     private final AiServiceProperties aiServiceProperties;
+    private final Clock clock;
 
     // ANA-001. 입력을 검증해 CREATED 로 저장하고 즉시 202 를 반환한다.
     @Transactional
-    public AnalysisAcceptedResponse create(AnalysisCreateRequest request, String scenarioCode) {
+    public AnalysisAcceptedResponse create(AnalysisCreateRequest request, String scenarioCode, DemoUser currentUser) {
+        ownershipChecker.requireRole(currentUser, UserRole.PRODUCT_MANAGER);
+        // 문서 상태(409)를 알려주기 전에 소유권부터 판정한다.
+        ownershipChecker.requireOwner(ownerIdOf(request.productDocumentId()), currentUser);
+
         AnalysisInput input = inputLoader.load(request.productDocumentId(), request.redTeamPackId(),
                 request.personaIds(), request.evidenceDocumentIds());
 
@@ -67,15 +75,19 @@ public class AnalysisService {
 
     // ANA-002. 조회만 하며 상태를 바꾸지 않는다.
     @Transactional(readOnly = true)
-    public AnalysisStatusResponse getStatus(Long analysisId) {
-        return AnalysisStatusResponse.from(find(analysisId));
+    public AnalysisStatusResponse getStatus(Long analysisId, DemoUser currentUser) {
+        Analysis analysis = find(analysisId);
+        ownershipChecker.requireOwnerOrReviewer(ownerIdOf(analysis.getProductDocumentId()), currentUser);
+        return AnalysisStatusResponse.from(analysis);
     }
 
     // ANA-003. 새 Analysis 를 만들지 않고 같은 행을 RUNNING 으로 되돌린다.
     @Transactional
-    public AnalysisAcceptedResponse retry(Long analysisId, String scenarioCode) {
-        Analysis analysis = find(analysisId);
-        analysis.requireRetryable();
+    public AnalysisAcceptedResponse retry(Long analysisId, String scenarioCode, DemoUser currentUser) {
+        Analysis analysis = analysisRepository.findWithLockById(analysisId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        ownershipChecker.requireOwner(ownerIdOf(analysis.getProductDocumentId()), currentUser);
+        analysis.requireRetryable(OffsetDateTime.now(clock));
         analysis.markRunning();
         try {
             // FAILED 였던 행이 다시 활성화되면서 같은 입력의 다른 분석과 UNIQUE 로 부딪힐 수 있다.
@@ -90,34 +102,35 @@ public class AnalysisService {
 
     // ANA-004
     @Transactional(readOnly = true)
-    public AnalysisResultResponse getResult(Long analysisId) {
+    public AnalysisResultResponse getResult(Long analysisId, DemoUser currentUser) {
         Analysis analysis = find(analysisId);
+        ProductDocument document = loadDocument(analysis.getProductDocumentId());
+        ownershipChecker.requireOwnerOrReviewer(document.getProduct().getOwnerId(), currentUser);
         analysis.requireCompleted();
-
-        ProductDocument document = productDocumentRepository.findById(analysis.getProductDocumentId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
         List<Finding> findings = findingRepository.findByAnalysisIdOrderByIdAsc(analysisId);
 
         Map<Long, PersonaCode> personaCodes = personaTemplateRepository.findAll().stream()
                 .collect(Collectors.toMap(PersonaTemplate::getId, PersonaTemplate::getCode));
         Map<Long, EvidenceDocument> evidenceDocuments = evidenceDocumentRepository
-                .findAllById(referencedEvidenceIds(analysis, findings)).stream()
+                .findAllById(analysis.getEvidenceDocumentIds()).stream()
                 .collect(Collectors.toMap(EvidenceDocument::getId, Function.identity()));
 
         return AnalysisResultResponse.of(analysis, document, findings, personaCodes, evidenceDocuments);
     }
 
-    // Provider 가 선택 목록 밖의 근거를 인용했을 수도 있으므로 실제 인용된 id 까지 합쳐서 조회한다.
-    private Set<Long> referencedEvidenceIds(Analysis analysis, List<Finding> findings) {
-        Set<Long> ids = new LinkedHashSet<>(analysis.getEvidenceDocumentIds());
-        findings.forEach(finding -> finding.getEvidenceReferences()
-                .forEach(reference -> ids.add(reference.getEvidenceDocumentId())));
-        return ids;
-    }
-
     // X-Demo-Scenario 헤더가 없으면 설정의 기본 시나리오를 쓴다.
     private String resolveScenario(String scenarioCode) {
         return StringUtils.hasText(scenarioCode) ? scenarioCode.trim() : aiServiceProperties.defaultScenarioCode();
+    }
+
+    // 소유자는 document → product → owner 로 파생한다.
+    private Long ownerIdOf(Long productDocumentId) {
+        return loadDocument(productDocumentId).getProduct().getOwnerId();
+    }
+
+    private ProductDocument loadDocument(Long productDocumentId) {
+        return productDocumentRepository.findById(productDocumentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
     }
 
     private Analysis find(Long analysisId) {

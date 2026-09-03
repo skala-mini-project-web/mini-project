@@ -15,6 +15,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Table;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -33,6 +34,10 @@ public class Analysis extends BaseTimeEntity {
 
     // Provider 가 단일 호출로 결과를 돌려주므로 실제 중간 진행률이 없다. RUNNING 표시용 고정값.
     private static final int RUNNING_PROGRESS = 50;
+
+    // 작업 스레드가 프로세스 중단 등으로 사라지면 CREATED/RUNNING 행이 남는다.
+    // 이 시간 넘게 갱신이 없으면 죽은 작업으로 보고 재시도를 허용한다.
+    private static final Duration STALE_AFTER = Duration.ofMinutes(5);
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -125,9 +130,12 @@ public class Analysis extends BaseTimeEntity {
     }
 
     // ANA-003. 새 Analysis 를 만들지 않고 같은 행을 RUNNING 으로 되돌린다.
-    public void requireRetryable() {
+    public void requireRetryable(OffsetDateTime now) {
         if (status == AnalysisStatus.CREATED || status == AnalysisStatus.RUNNING) {
-            throw new BusinessException(ErrorCode.ANALYSIS_ALREADY_RUNNING);
+            if (getUpdatedAt().isAfter(now.minus(STALE_AFTER))) {
+                throw new BusinessException(ErrorCode.ANALYSIS_ALREADY_RUNNING);
+            }
+            return; // 멈춘 지 오래된 작업은 되살린다
         }
         if (status != AnalysisStatus.FAILED || !retryable) {
             throw new BusinessException(ErrorCode.ANALYSIS_NOT_RETRYABLE);
