@@ -72,39 +72,60 @@ public class AnalysisJobService {
     }
 
     private void run(Long analysisId, String scenarioCode) {
-        AnalysisRequest request;
+        Job job;
         try {
-            request = transactionTemplate.execute(status -> startRunning(analysisId, scenarioCode));
+            job = transactionTemplate.execute(status -> startRunning(analysisId, scenarioCode));
         } catch (BusinessException e) {
             // 생성 이후 입력이 바뀐 경우(문서 확정 해제, 근거 비활성화 등) 원인 코드를 그대로 남긴다.
             log.warn("분석 {} 입력이 더 이상 유효하지 않음 errorCode={}", analysisId, e.getErrorCode());
-            markFailed(analysisId, e.getErrorCode(), false);
+            markFailed(analysisId, e.getErrorCode(), false, null);
             return;
         } catch (RuntimeException e) {
             log.error("분석 {} 입력 준비 실패", analysisId, e);
-            markFailed(analysisId, ErrorCode.INTERNAL_ERROR, false);
+            markFailed(analysisId, ErrorCode.INTERNAL_ERROR, false, null);
             return;
         }
 
         try {
-            AnalysisResult result = provider.analyze(request);
-            transactionTemplate.executeWithoutResult(status -> saveResult(analysisId, result));
+            AnalysisResult result = provider.analyze(job.request());
+            transactionTemplate.executeWithoutResult(status -> saveResult(analysisId, result, job.fence()));
         } catch (ProviderException e) {
             log.warn("분석 {} 실패 errorCode={} retryable={}", analysisId, e.getErrorCode(), e.isRetryable());
-            markFailed(analysisId, e.getErrorCode(), e.isRetryable());
+            markFailed(analysisId, e.getErrorCode(), e.isRetryable(), job.fence());
         } catch (RuntimeException e) {
             log.error("분석 {} 결과 저장 실패", analysisId, e);
-            markFailed(analysisId, ErrorCode.INTERNAL_ERROR, false);
+            markFailed(analysisId, ErrorCode.INTERNAL_ERROR, false, job.fence());
         }
     }
 
-    private AnalysisRequest startRunning(Long analysisId, String scenarioCode) {
-        Analysis analysis = find(analysisId);
-        analysis.markRunning();
-        return inputLoader.load(analysis).toProviderRequest(analysisId, scenarioCode);
+    // fence = 이 실행 회차의 updated_at. 재시도가 값을 바꾸면 이전 회차는 결과를 버린다.
+    private record Job(AnalysisRequest request, OffsetDateTime fence) {
     }
 
-    private void saveResult(Long analysisId, AnalysisResult result) {
+    private Job startRunning(Long analysisId, String scenarioCode) {
+        Analysis analysis = find(analysisId);
+        analysis.markRunning();
+        analysisRepository.flush();
+        AnalysisRequest request = inputLoader.load(analysis).toProviderRequest(analysisId, scenarioCode);
+        return new Job(request, analysisRepository.findUpdatedAtById(analysisId).orElseThrow());
+    }
+
+    // 이 회차가 아직 유효한가. 그 사이 재시도가 시작됐으면 false.
+    private boolean isCurrent(Long analysisId, OffsetDateTime fence) {
+        if (fence == null) {
+            return true;
+        }
+        boolean current = analysisRepository.findUpdatedAtById(analysisId).filter(fence::isEqual).isPresent();
+        if (!current) {
+            log.warn("분석 {} 이전 회차 결과를 버린다 (재시도가 이미 시작됨)", analysisId);
+        }
+        return current;
+    }
+
+    private void saveResult(Long analysisId, AnalysisResult result, OffsetDateTime fence) {
+        if (!isCurrent(analysisId, fence)) {
+            return;
+        }
         // 재시도면 이전 회차 Finding 을 먼저 비운다 (연관 행은 FK CASCADE).
         findingRepository.deleteByAnalysisId(analysisId);
         findingRepository.flush();
@@ -123,8 +144,12 @@ public class AnalysisJobService {
         analysis.complete(result.riskScore(), result.modelVersion(), result.promptVersion(), OffsetDateTime.now(clock));
     }
 
-    private void markFailed(Long analysisId, ErrorCode errorCode, boolean retryable) {
-        transactionTemplate.executeWithoutResult(status -> find(analysisId).fail(errorCode, retryable));
+    private void markFailed(Long analysisId, ErrorCode errorCode, boolean retryable, OffsetDateTime fence) {
+        transactionTemplate.executeWithoutResult(status -> {
+            if (isCurrent(analysisId, fence)) {
+                find(analysisId).fail(errorCode, retryable);
+            }
+        });
     }
 
     private Set<Long> personaIds(List<PersonaCode> codes, Map<PersonaCode, Long> personaIdsByCode) {

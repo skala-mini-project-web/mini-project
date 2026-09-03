@@ -174,6 +174,18 @@ class HttpRiskAnalysisProviderTest {
     }
 
     @Test
+    @DisplayName("응답을 계약대로 읽지 못하면 계약 위반으로 끊는다")
+    void undeserializableResponseIsRejected() {
+        responseBody = "{\"riskScore\": ";
+
+        assertThatThrownBy(() -> provider().analyze(request()))
+                .isInstanceOfSatisfying(ProviderException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID);
+                    assertThat(e.isRetryable()).isFalse();
+                });
+    }
+
+    @Test
     @DisplayName("연결 실패는 재시도 가능한 일시 장애로 매핑된다")
     void connectionFailure() {
         assertThatThrownBy(() -> provider("http://localhost:1").analyze(request()))

@@ -84,9 +84,14 @@ public class AnalysisService {
     // ANA-003. 새 Analysis 를 만들지 않고 같은 행을 RUNNING 으로 되돌린다.
     @Transactional
     public AnalysisAcceptedResponse retry(Long analysisId, String scenarioCode, DemoUser currentUser) {
+        // 비소유자 요청이 잠금을 잡고 소유자를 지연시키지 않도록 소유권을 먼저 판정한다.
+        // 상품 소유자는 변경되지 않으므로(products.owner_id updatable=false) 잠금 후 재검사가 필요 없다.
+        Long productDocumentId = analysisRepository.findProductDocumentIdById(analysisId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        ownershipChecker.requireOwner(ownerIdOf(productDocumentId), currentUser);
+
         Analysis analysis = analysisRepository.findWithLockById(analysisId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
-        ownershipChecker.requireOwner(ownerIdOf(analysis.getProductDocumentId()), currentUser);
         analysis.requireRetryable(OffsetDateTime.now(clock));
         analysis.markRunning();
         try {

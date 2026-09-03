@@ -20,6 +20,7 @@ import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClient;
 
 // ai-service(FastAPI Mock) HTTP 어댑터.
@@ -74,6 +75,10 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
             // 연결 실패 / 읽기 타임아웃 — 같은 요청을 그대로 재시도할 수 있다.
             throw new ProviderException(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true,
                     "ai-service 연결 실패: " + e.getMessage());
+        } catch (RestClientException e) {
+            // 응답 본문을 계약대로 읽지 못한 경우(역직렬화 실패 등). 재시도해도 같은 결과다.
+            throw new ProviderException(ErrorCode.PROVIDER_RESPONSE_INVALID, false,
+                    "ai-service 응답 해석 실패: " + e.getMessage());
         }
     }
 
@@ -109,6 +114,9 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
                 .map(AnalysisRequest.EvidenceDocumentPayload::id).collect(Collectors.toSet());
 
         for (FindingPayload finding : result.findings()) {
+            if (finding == null || finding.severity() == null) {
+                throw invalid("finding 또는 severity 가 비어 있음");
+            }
             List<FindingPayload.EvidenceRefPayload> references =
                     finding.evidenceReferences() == null ? List.of() : finding.evidenceReferences();
             if (finding.severity() == Severity.HIGH && references.isEmpty()) {
@@ -116,6 +124,9 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
             }
             // 선택하지 않은 근거를 인용하면 결과 조회에서 그 문서의 제목·출처가 노출된다.
             for (FindingPayload.EvidenceRefPayload reference : references) {
+                if (reference == null || reference.evidenceDocumentId() == null) {
+                    throw invalid("근거 인용에 evidenceDocumentId 가 없음");
+                }
                 if (!selected.contains(reference.evidenceDocumentId())) {
                     throw invalid("선택하지 않은 근거 문서 인용: " + reference.evidenceDocumentId());
                 }
