@@ -1,0 +1,14 @@
+{
+  "PROVIDER_RATE_LIMITED_THEN_SUCCESS": {
+    "httpStatus": 503,
+    "errorCode": "AI_SERVICE_TEMPORARY_FAILURE",
+    "message": "Mock AI provider is temporarily unavailable.",
+    "retryable": true
+  },
+  "PROVIDER_RESPONSE_INVALID": {
+    "httpStatus": 500,
+    "errorCode": "PROVIDER_RESPONSE_INVALID",
+    "message": "Mock AI provider returned an invalid response.",
+    "retryable": false
+  }
+}
