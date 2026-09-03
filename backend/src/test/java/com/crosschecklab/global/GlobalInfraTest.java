@@ -33,16 +33,24 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import com.crosschecklab.domain.user.UserRepository;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 // Task 1 완료 조건 검증: 스택트레이스/내부 메시지가 응답에 노출되지 않는다, 모든 응답에 traceId 가 포함된다.
-@WebMvcTest
+// controllers 를 ProbeController 로 한정해 다른 도메인 컨트롤러가 추가돼도 이 슬라이스가 영향받지 않게 한다.
+@WebMvcTest(controllers = GlobalInfraTest.ProbeController.class)
 @Import({ClockConfig.class, SecurityConfig.class, GlobalInfraTest.ProbeController.class})
 class GlobalInfraTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    // SecurityConfig 가 DemoAuthenticationFilter 를 위해 UserRepository 를 받는다.
+    // 이 슬라이스에는 JPA 가 없으므로 대역을 넣는다 (이 테스트는 데모 인증을 검증하지 않는다).
+    @MockitoBean
+    private UserRepository userRepository;
 
     @Test
     @DisplayName("BusinessException 은 계약 스키마 그대로 내려간다")

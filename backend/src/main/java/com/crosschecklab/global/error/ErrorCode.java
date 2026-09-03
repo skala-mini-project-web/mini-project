@@ -16,8 +16,16 @@ public enum ErrorCode {
     COMMENT_REQUIRED(HttpStatus.BAD_REQUEST, "반려 시 사유(comment)는 필수입니다."),
     INVALID_DATE_RANGE(HttpStatus.BAD_REQUEST, "조회 기간이 올바르지 않습니다."),
 
+    // --- 401 Unauthorized ---
+    // 데모 인증(X-Demo-User-Id / X-Demo-Role). 헤더의 role 은 신뢰하지 않고 DB 값으로 다시 검증한다.
+    DEMO_AUTHENTICATION_REQUIRED(HttpStatus.UNAUTHORIZED, "X-Demo-User-Id 와 X-Demo-Role 헤더가 필요합니다."),
+    DEMO_USER_NOT_FOUND(HttpStatus.UNAUTHORIZED, "존재하지 않는 데모 사용자입니다."),
+    DEMO_USER_INACTIVE(HttpStatus.UNAUTHORIZED, "비활성화된 데모 사용자입니다."),
+    ROLE_MISMATCH(HttpStatus.UNAUTHORIZED, "요청한 역할이 사용자 정보와 일치하지 않습니다."),
+
     // --- 403 Forbidden ---
     FORBIDDEN(HttpStatus.FORBIDDEN, "해당 작업을 수행할 권한이 없습니다."),
+    FORBIDDEN_OWNERSHIP(HttpStatus.FORBIDDEN, "본인이 담당하는 리소스만 접근할 수 있습니다."),
 
     // --- 404 / 405 / 415 ---
     NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 리소스를 찾을 수 없습니다."),
