@@ -1,12 +1,20 @@
 package com.crosschecklab.domain.risk;
 
+import jakarta.persistence.LockModeType;
+import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface RiskPatternRepository extends JpaRepository<RiskPattern, Long> {
+
+    // RISK-002. 활성화는 현재 상태를 보고 다음 상태를 정하므로, 동시 요청이 둘 다 통과하지 않게 행을 잠근다.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from RiskPattern p where p.id = :id")
+    Optional<RiskPattern> findWithLockById(@Param("id") Long id);
 
     // RISK-001 Risk Library. 필터가 risk_patterns 에 없는 값(Persona·규칙)에 걸려 있어
     // finding → analysis 로 거슬러 올라가야 하므로 페이징까지 DB 에서 끝내는 네이티브 쿼리를 쓴다.
@@ -23,6 +31,7 @@ public interface RiskPatternRepository extends JpaRepository<RiskPattern, Long> 
                      JOIN findings f ON f.id = rp.finding_id
                      JOIN analyses a ON a.id = f.analysis_id
             WHERE (CAST(:severity AS text) IS NULL OR rp.severity = CAST(:severity AS text))
+              AND (CAST(:status AS text) IS NULL OR rp.status = CAST(:status AS text))
               AND (CAST(:personaCode AS text) IS NULL
                    OR EXISTS (SELECT 1
                               FROM finding_affected_personas fap
@@ -43,6 +52,7 @@ public interface RiskPatternRepository extends JpaRepository<RiskPattern, Long> 
                              JOIN findings f ON f.id = rp.finding_id
                              JOIN analyses a ON a.id = f.analysis_id
                     WHERE (CAST(:severity AS text) IS NULL OR rp.severity = CAST(:severity AS text))
+                      AND (CAST(:status AS text) IS NULL OR rp.status = CAST(:status AS text))
                       AND (CAST(:personaCode AS text) IS NULL
                            OR EXISTS (SELECT 1
                                       FROM finding_affected_personas fap
@@ -58,5 +68,6 @@ public interface RiskPatternRepository extends JpaRepository<RiskPattern, Long> 
     Page<RiskPatternListRow> findLibrary(@Param("severity") String severity,
                                          @Param("personaCode") String personaCode,
                                          @Param("ruleCode") String ruleCode,
+                                         @Param("status") String status,
                                          Pageable pageable);
 }
