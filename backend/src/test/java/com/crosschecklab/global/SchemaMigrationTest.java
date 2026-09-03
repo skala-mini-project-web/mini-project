@@ -8,6 +8,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 
 @DisplayName("V1/V2 마이그레이션")
 class SchemaMigrationTest extends IntegrationTestSupport {
@@ -72,7 +73,10 @@ class SchemaMigrationTest extends IntegrationTestSupport {
         assertThat(ruleCount).isEqualTo(6);
     }
 
+    // 삽입한 행이 다른 테스트 클래스의 시드 데이터 개수 단언을 깨뜨리므로 롤백시킨다.
+    // (컨테이너는 JVM 당 하나라 커밋하면 이후 모든 테스트가 이 행을 보게 된다)
     @Test
+    @Transactional
     @DisplayName("시드 이후 identity 시퀀스가 재정렬되어 새 행을 삽입할 수 있다")
     void resetsIdentitySequencesAfterSeeding() {
         Long generatedId = jdbcTemplate.queryForObject("""
