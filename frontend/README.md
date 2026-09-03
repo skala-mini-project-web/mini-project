@@ -50,7 +50,11 @@ npm run build             # 프로덕션 번들
   - 참고: 명세상 추출은 백엔드(PDFBox/POI), OCR은 P2. 데모 편의를 위해 클라이언트에서 선구현
 - 알림 폴러(`src/stores/jobs.js`): 진행 중 작업 백그라운드 폴링, 완료 시 알림 적재
 - 로컬 영속화: Mock 스토어와 알림을 localStorage에 저장하여 새로고침 후 복구
-- AI 분석 설계 문서(`docs/ai-provider.md`): 역할 프롬프트, 입출력 JSON 스키마, 가드레일, RAG 계획. 실제 LLM 호출은 백엔드 담당
+- 문서 업로드 필터(`src/lib/upload.js`): 확장자·크기(10MB)·매직바이트 검증으로 위조·손상 파일 사전 차단
+- 로컬 AI 분석 (실동작, `src/lib/{analyze,rag,llm,guardrails}.js`)
+  - 로컬 LLM(Ollama)로 실제 분석. RAG는 `bge-m3` 임베딩 근거 검색, 가드레일은 발췌 실재성·규칙/페르소나 범위·HIGH 근거 강제·점수 재계산
+  - 분석요청 화면 "로컬 AI" 토글 opt-in. 끄면 결정론 Mock(score 82). 규격 `docs/ai-provider.md`, 실서버 연동 시 `RiskAnalysisProvider` 대응
+  - 전제: `ollama serve` + 모델 `qwen2.5:7b-instruct`(분석)·`bge-m3`(임베딩). 브라우저→Ollama는 vite `/ollama` 프록시
 
 ## 구조
 
@@ -61,19 +65,19 @@ src/
   components/layout/  사이드바 콘솔 셸, 페이지 헤더
   components/     PipelineGraph(진입 애니메이션)
   composables/    usePolling, useAsyncData
-  lib/            format(라벨·상태·시간), hangul(초성 검색), extract(문서 추출/OCR)
+  lib/            format, hangul(초성검색), upload(업로드 필터), extract(추출/OCR), rag·llm·analyze·guardrails(로컬 AI)
   stores/         session(데모 인증), toast(오류 표시), jobs(알림/폴러)
   views/          화면 12종
   styles/         tokens.css(디자인 토큰), base.css
-docs/             ai-provider.md(AI 분석 설계)
-scripts/          smoke.mjs(Mock 계약 E2E 스모크)
+docs/             ai-provider.md(AI 분석 설계·가드레일·RAG)
+scripts/          smoke(계약 E2E), ai-test(RAG·가드레일), analyze-live(로컬 AI 라이브)
 ```
 
 ## 검증
 
-- `npm run build`: 통과
-- `node scripts/smoke.mjs`: Mock 계약 E2E 31건 통과(score 82, 상태 전이, RBAC 403, 멱등성, 승격, 재시도)
-- 실제 PDF/PPTX 업로드 및 이미지 PDF OCR: 브라우저 E2E 확인
+- `npm run build` 통과 · `node scripts/smoke.mjs` Mock 계약 31/31(score 82, 상태 전이, RBAC 403, 멱등성, 승격, 재시도)
+- `node scripts/ai-test.mjs` RAG·가드레일 5/5 · `node scripts/analyze-live.mjs` 로컬 AI 라이브(Ollama 실행 시)
+- 브라우저 E2E: PDF/PPTX 추출·이미지 PDF OCR·업로드→OCR→로컬 AI 분석 전체 체인·콘솔 에러 0
 
 ## 협업 메모
 

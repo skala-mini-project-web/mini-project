@@ -21,6 +21,8 @@ const submitting = ref(false)
 const docs = ref([]); const evidence = ref([]); const personas = ref([]); const packs = ref([]); const productName = ref('')
 const selDoc = ref(''); const selEv = ref([]); const selPer = ref([]); const selPack = ref('')
 const scenario = ref('GUARANTEE_MISUNDERSTANDING_HIGH')
+const localAi = ref((() => { try { return localStorage.getItem('guardlab.ai.local') === '1' } catch { return false } })())
+function setLocalAi(v) { localAi.value = v; try { localStorage.setItem('guardlab.ai.local', v ? '1' : '0') } catch {} }
 const evOk = computed(() => selEv.value.length >= 1 && selEv.value.length <= 3)
 const perOk = computed(() => selPer.value.length >= 1 && selPer.value.length <= 3)
 const canSubmit = computed(() => selDoc.value && evOk.value && perOk.value && selPack.value)
@@ -37,7 +39,8 @@ onMounted(async () => {
     if (packs.value.length) selPack.value = packs.value[0].code
   } catch (e) { toast.fromError(e) } finally { loading.value = false }
 })
-function toggle(list, id, max) { const i = list.value.indexOf(id); if (i >= 0) list.value.splice(i, 1); else if (list.value.length < max) list.value.push(id); else toast.info('선택 한도', `최대 ${max}개`) }
+// 템플릿에서 넘어오는 list는 이미 언랩된 반응형 배열이므로 .value가 아니라 배열을 직접 변형한다.
+function toggle(list, id, max) { const i = list.indexOf(id); if (i >= 0) list.splice(i, 1); else if (list.length < max) list.push(id); else toast.info('선택 한도', `최대 ${max}개`) }
 async function submit() {
   if (!canSubmit.value) return; submitting.value = true
   try {
@@ -111,6 +114,14 @@ async function submit() {
         <GField hint="demo profile 전용. AI Mock 결과를 강제 선택합니다 (X-Demo-Scenario)."><GSelect v-model="scenario" :options="SCENARIO_OPTIONS" /></GField>
       </section>
 
+      <section class="blk">
+        <div class="bh"><span class="mono n">06</span><h2 class="d-h3">분석 엔진</h2></div>
+        <label class="engine" :class="{ on: localAi }">
+          <input type="checkbox" :checked="localAi" @change="setLocalAi($event.target.checked)" />
+          <span class="opt-m"><span class="fw-medium">로컬 AI로 분석 (Ollama · qwen2.5 + RAG)</span><span class="t-xs mute">실제 로컬 LLM으로 분석합니다. 끄면 데모 Mock 결과(score 82). Ollama 실행 필요.</span></span>
+        </label>
+      </section>
+
       <div class="submit"><GButton variant="primary" :loading="submitting" :disabled="!canSubmit" @click="submit"><template #icon><PhLightning :size="16" /></template>분석 요청</GButton></div>
     </template>
   </div>
@@ -124,6 +135,9 @@ async function submit() {
 .pad { display: grid; place-items: center; padding: var(--s-64); }
 .empty-doc { margin-top: var(--s-40); padding: var(--s-28); border: 1px solid var(--line); border-radius: var(--r-lg); display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-16); }
 .blk { margin-top: var(--s-40); }
+.engine { display: flex; gap: var(--s-12); align-items: flex-start; margin-top: var(--s-16); padding: var(--s-16); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; }
+.engine.on { border-color: var(--accent-line); background: var(--accent-wash); }
+.engine input { margin-top: 3px; }
 .bh { display: flex; align-items: center; gap: var(--s-12); padding-bottom: var(--s-12); border-bottom: 1px solid var(--line-strong); }
 .bh .n { font-size: var(--text-xs); color: var(--ink-faint); }
 .bh h2 { flex: 1; }

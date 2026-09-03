@@ -4,10 +4,32 @@
 //   VITE_USE_MOCK=false -> real Spring backend via the /api proxy
 // Paths, methods, status codes, IDs and enums follow the GuardLab API 명세서.
 // =============================================================================
-import { mockServer, ingestExtraction } from './mock/server.js'
+import { mockServer, ingestExtraction, ingestAnalysis } from './mock/server.js'
 import { http, uuid } from './client.js'
 import { getAuth } from './auth-context.js'
 import { extractDocument } from '../lib/extract.js'
+import { analyzeDocument } from '../lib/analyze.js'
+
+// 로컬 AI(Ollama) 분석 사용 여부 (설정 토글, localStorage)
+const AI_RULE_CODES = ['STABILITY_KEYWORD', 'RETURN_FRAMING', 'COST_OMISSION', 'LOSS_SOFTENING', 'FORMAL_CONFIRMATION', 'COGNITIVE_ACCESSIBILITY']
+function localAiEnabled() {
+  try { return localStorage.getItem('guardlab.ai.local') === '1' } catch { return false }
+}
+async function runLocalAnalysis(analysisId, documentId, personaIds) {
+  try {
+    const doc = await mockServer.getDocument(auth(), documentId)
+    let personaCodes = personaIds
+    try {
+      const tpls = (await mockServer.listPersonaTemplates(auth())).items || []
+      const map = Object.fromEntries(tpls.map((t) => [t.personaId, t.code || t.personaId]))
+      personaCodes = personaIds.map((id) => map[id] || id)
+    } catch {}
+    const r = await analyzeDocument({ sourceText: doc.verifiedText || doc.rawExtractedText || '', personaCodes, ruleCodes: AI_RULE_CODES })
+    ingestAnalysis(analysisId, { findings: r.findings, riskScore: r.riskScore, providerType: 'LOCAL_OLLAMA' })
+  } catch (e) {
+    ingestAnalysis(analysisId, { failed: true, errorCode: 'PROVIDER_RESPONSE_INVALID', message: e?.message || '로컬 분석 오류', retryable: true })
+  }
+}
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
 const auth = () => getAuth()
@@ -82,10 +104,13 @@ export const api = {
   listRedTeamPacks: () => (USE_MOCK ? mockServer.listRedTeamPacks(auth()) : http.get('/red-team-packs')),
 
   // ---- analyses ----
-  createAnalysis: (body, scenario) =>
-    USE_MOCK
-      ? mockServer.createAnalysis(auth(), body, uuid(), scenario)
-      : http.post('/analyses', body, { 'Idempotency-Key': uuid(), ...(scenario ? { 'X-Demo-Scenario': scenario } : {}) }),
+  createAnalysis: async (body, scenario) => {
+    if (!USE_MOCK) return http.post('/analyses', body, { 'Idempotency-Key': uuid(), ...(scenario ? { 'X-Demo-Scenario': scenario } : {}) })
+    const local = localAiEnabled()
+    const res = await mockServer.createAnalysis(auth(), body, uuid(), scenario, { local })
+    if (local) runLocalAnalysis(res.analysisId, body.productDocumentId, body.personaIds || [])
+    return res
+  },
   getAnalysis: (id) => (USE_MOCK ? mockServer.getAnalysis(auth(), id) : http.get(`/analyses/${id}`)),
   retryAnalysis: (id) =>
     USE_MOCK ? mockServer.retryAnalysis(auth(), id) : http.post(`/analyses/${id}/retry`, { reason: 'USER_RETRY' }),

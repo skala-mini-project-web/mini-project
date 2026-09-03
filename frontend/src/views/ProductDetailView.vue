@@ -6,6 +6,7 @@ import { api } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useToastStore } from '@/stores/toast'
 import { useJobsStore } from '@/stores/jobs'
+import { validateUploadFile } from '@/lib/upload'
 import { PRODUCT_TYPE_LABEL, formatDateTime, formatBytes } from '@/lib/format'
 import GButton from '@/components/ui/GButton.vue'
 import GStatusPill from '@/components/ui/GStatusPill.vue'
@@ -30,6 +31,8 @@ async function load() { loading.value = true; try { product.value = await api.ge
 function pick() { fileInput.value?.click() }
 async function onFile(e) {
   const file = e.target.files?.[0]; e.target.value = ''; if (!file) return
+  const v = await validateUploadFile(file)
+  if (!v.ok) { toast.push({ type: 'error', title: '업로드 불가', message: v.message }); return }
   uploading.value = true
   try {
     const res = await api.uploadDocument(props.productId, file)

@@ -129,6 +129,29 @@ export function ingestExtraction(documentId, result) {
   persist()
 }
 
+// 로컬 LLM 분석 결과를 분석 레코드에 주입(클라이언트 analyze 파이프라인이 호출). GET은 read-only.
+export function ingestAnalysis(analysisId, result) {
+  const a = store.analyses.find((x) => x.analysisId === analysisId)
+  if (!a) return
+  a.clockDriven = false
+  delete a._plan
+  if (result.failed) {
+    a.status = 'FAILED'
+    a.error = { errorCode: result.errorCode || 'PROVIDER_RESPONSE_INVALID', message: result.message || '분석 실패', retryable: !!result.retryable }
+  } else {
+    a.status = 'COMPLETED'
+    a.riskScore = result.riskScore
+    a.providerType = result.providerType || 'LOCAL_OLLAMA'
+    a.findings = (result.findings || []).map((f, i) => ({
+      findingId: `FND-L${i + 1}-${analysisId}`,
+      ...f,
+      sourceReference: { documentId: a.productDocumentId, page: f.sourceReference?.page ?? 1, excerpt: f.sourceReference?.excerpt || '' },
+    }))
+    a.error = null
+  }
+  persist()
+}
+
 // ---- clock-driven analysis --------------------------------------------------
 function planAnalysis(a, scenarioCode) {
   const start = nowMs()
@@ -405,7 +428,7 @@ export const mockServer = {
     return { items: store.redTeamPacks }
   },
 
-  async createAnalysis(auth, body, idemKey, scenarioOverride) {
+  async createAnalysis(auth, body, idemKey, scenarioOverride, opts = {}) {
     const user = requireAuth(auth)
     requireRole(user, 'PRODUCT_MANAGER')
     await wait(300)
@@ -428,9 +451,15 @@ export const mockServer = {
         evidenceDocumentIds: ev, personaIds: personas, redTeamPackCode: body.redTeamPackCode,
         findings: [], attemptCount: 1, error: null, createdAt: iso(),
       }
-      planAnalysis(a, scenarioOverride || 'GUARANTEE_MISUNDERSTANDING_HIGH')
+      if (opts.local) {
+        a.status = 'RUNNING'
+        a.providerType = 'LOCAL_OLLAMA'
+        a.clockDriven = false
+      } else {
+        planAnalysis(a, scenarioOverride || 'GUARANTEE_MISUNDERSTANDING_HIGH')
+      }
       store.analyses.push(a)
-      return { analysisId, status: 'CREATED', statusUrl: `/api/analyses/${analysisId}`, resultUrl: `/api/analyses/${analysisId}/result` }
+      return { analysisId, status: opts.local ? 'RUNNING' : 'CREATED', statusUrl: `/api/analyses/${analysisId}`, resultUrl: `/api/analyses/${analysisId}/result` }
     })
   },
 
