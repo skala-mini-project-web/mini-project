@@ -11,8 +11,7 @@ import com.crosschecklab.domain.review.dto.ReviewCreatedResponse;
 import com.crosschecklab.domain.review.dto.ReviewDecisionRequest;
 import com.crosschecklab.domain.review.dto.ReviewDecisionResponse;
 import com.crosschecklab.domain.review.dto.ReviewListItemResponse;
-import com.crosschecklab.domain.risk.RiskPattern;
-import com.crosschecklab.domain.risk.RiskPatternRepository;
+import com.crosschecklab.domain.risk.RiskPatternService;
 import com.crosschecklab.global.common.PageResponse;
 import com.crosschecklab.global.common.enums.ReviewStatus;
 import com.crosschecklab.global.common.enums.Severity;
@@ -42,7 +41,7 @@ import org.springframework.util.StringUtils;
 public class ReviewService {
 
     private final ReviewRepository reviewRepository;
-    private final RiskPatternRepository riskPatternRepository;
+    private final RiskPatternService riskPatternService;
     private final AnalysisRepository analysisRepository;
     private final FindingRepository findingRepository;
     private final ProductDocumentRepository productDocumentRepository;
@@ -102,27 +101,12 @@ public class ReviewService {
         review.decide(decision, currentUser.id(), normalizeComment(request.comment()),
                 selectedFindingIds, OffsetDateTime.now(clock));
 
+        // 승격 규칙(DRAFT 생성 → 검증 → ACTIVE)은 Risk 도메인이 소유한다.
+        // 승격 이력은 finding_id · review_id 로 원본까지 역추적할 수 있다.
         List<Long> riskPatternIds = decision == ReviewStatus.APPROVED
-                ? promote(review, selectedFindingIds)
+                ? riskPatternService.promote(review.getId(), findingRepository.findAllById(selectedFindingIds))
                 : List.of();
         return ReviewDecisionResponse.of(review, riskPatternIds);
-    }
-
-    // 승인된 Finding 만 DRAFT 로 만든 뒤 같은 트랜잭션에서 ACTIVE 로 올린다.
-    // 승격 이력은 finding_id · review_id 로 원본까지 역추적할 수 있다.
-    private List<Long> promote(Review review, Set<Long> selectedFindingIds) {
-        List<Finding> findings = findingRepository.findAllById(selectedFindingIds);
-        List<RiskPattern> patterns = findings.stream()
-                .map(finding -> RiskPattern.draft(
-                        finding.getId(), review.getId(), finding.getStatement(), finding.getSeverity()))
-                .toList();
-        patterns.forEach(RiskPattern::activate);
-        try {
-            // finding_id UNIQUE 위반(이미 승격된 Finding)을 여기서 드러낸다.
-            return riskPatternRepository.saveAllAndFlush(patterns).stream().map(RiskPattern::getId).toList();
-        } catch (DataIntegrityViolationException e) {
-            throw new BusinessException(ErrorCode.INVALID_FINDING_SELECTION);
-        }
     }
 
     // 결정 조합 검증. 승인은 Finding 선택이, 반려는 사유가 필수다.
