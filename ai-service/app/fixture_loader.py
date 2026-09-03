@@ -12,9 +12,27 @@ class FixtureLoader:
             Path(__file__).resolve().parent.parent / "fixtures"
         )
 
-    def load(self, scenario_code: str) -> dict[str, Any]:
+    def load(self, scenario_code: str, attempt_number: int = 1) -> dict[str, Any]:
         error_config = self._load_error_scenarios().get(scenario_code)
         if error_config is not None:
+            failures_before_success = error_config.get("failuresBeforeSuccess")
+            if failures_before_success is not None:
+                if (
+                    isinstance(failures_before_success, bool)
+                    or not isinstance(failures_before_success, int)
+                    or failures_before_success < 0
+                ):
+                    raise FixtureInvalidError(
+                        f"Invalid failuresBeforeSuccess for scenario '{scenario_code}'"
+                    )
+                success_fixture = error_config.get("successFixture")
+                if not isinstance(success_fixture, str) or not success_fixture:
+                    raise FixtureInvalidError(
+                        f"Missing successFixture for scenario '{scenario_code}'"
+                    )
+                if attempt_number > failures_before_success:
+                    return self._read_json(success_fixture)
+
             raise AiServiceError(
                 error_code=error_config["errorCode"],
                 message=error_config["message"],
@@ -27,6 +45,10 @@ class FixtureLoader:
             raise ScenarioNotFoundError(scenario_code)
 
         return self._read_json(fixture_file)
+
+    def tracks_attempts(self, scenario_code: str) -> bool:
+        error_config = self._load_error_scenarios().get(scenario_code)
+        return error_config is not None and "failuresBeforeSuccess" in error_config
 
     @staticmethod
     def _scenario_files() -> dict[str, str]:

@@ -33,6 +33,10 @@ class RedTeamRuleCode(StrEnum):
     COGNITIVE_ACCESSIBILITY = "COGNITIVE_ACCESSIBILITY"
 
 
+class RedTeamPackCode(StrEnum):
+    CORE_FINANCIAL_RISK_V1 = "CORE_FINANCIAL_RISK_V1"
+
+
 class EvidenceSourceType(StrEnum):
     INTERNAL_POLICY = "INTERNAL_POLICY"
     REGULATION = "REGULATION"
@@ -57,7 +61,7 @@ class RiskAnalysisRequest(ApiModel):
     scenario_code: str = Field(min_length=1, max_length=80)
     confirmed_text: str = Field(min_length=1)
     persona_codes: list[PersonaCode] = Field(min_length=1, max_length=3)
-    red_team_pack_code: str = Field(min_length=1, max_length=80)
+    red_team_pack_code: RedTeamPackCode
     rule_codes: list[RedTeamRuleCode] = Field(min_length=1)
     evidence_documents: list[EvidenceDocument] = Field(min_length=1, max_length=3)
 
@@ -85,6 +89,22 @@ class RiskAnalysisRequest(ApiModel):
         if len(identifiers) != len(set(identifiers)):
             raise ValueError("duplicate evidence document ids are not allowed")
         return value
+
+    @model_validator(mode="after")
+    def scenario_must_match_selected_rules(self) -> "RiskAnalysisRequest":
+        required_rule_by_scenario = {
+            "GUARANTEE_MISUNDERSTANDING_HIGH": RedTeamRuleCode.STABILITY_KEYWORD,
+            "EARLY_TERMINATION_COST_MEDIUM": RedTeamRuleCode.COST_OMISSION,
+            "ACCESSIBILITY_LOW": RedTeamRuleCode.COGNITIVE_ACCESSIBILITY,
+            "PROVIDER_RATE_LIMITED_THEN_SUCCESS": RedTeamRuleCode.STABILITY_KEYWORD,
+        }
+        required_rule = required_rule_by_scenario.get(self.scenario_code)
+        if required_rule is not None and required_rule not in self.rule_codes:
+            raise ValueError(
+                f"scenarioCode '{self.scenario_code}' requires "
+                f"ruleCode '{required_rule.value}'"
+            )
+        return self
 
 
 class EvidenceReference(ApiModel):

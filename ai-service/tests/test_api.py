@@ -29,7 +29,7 @@ def guarantee_request() -> dict:
         "scenarioCode": "GUARANTEE_MISUNDERSTANDING_HIGH",
         "confirmedText": "최근 안정적인 수익률을 기록한 투자상품입니다.",
         "personaCodes": ["FINANCIAL_BEGINNER", "SENIOR"],
-        "redTeamPackCode": "DEFAULT_RED_TEAM_PACK",
+        "redTeamPackCode": "CORE_FINANCIAL_RISK_V1",
         "ruleCodes": ["STABILITY_KEYWORD", "LOSS_SOFTENING"],
         "evidenceDocuments": [
             {
@@ -84,15 +84,19 @@ def test_returns_not_found_for_unknown_scenario() -> None:
     }
 
 
-def test_returns_retryable_error_fixture() -> None:
+def test_retryable_scenario_fails_once_then_succeeds() -> None:
     request = guarantee_request()
+    request["analysisId"] = 9001
     request["scenarioCode"] = "PROVIDER_RATE_LIMITED_THEN_SUCCESS"
 
-    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+    first_response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+    second_response = call_api("POST", "/internal/v1/risk-analyses", json=request)
 
-    assert response.status_code == 503
-    assert response.json()["errorCode"] == "AI_SERVICE_TEMPORARY_FAILURE"
-    assert response.json()["retryable"] is True
+    assert first_response.status_code == 503
+    assert first_response.json()["errorCode"] == "AI_SERVICE_TEMPORARY_FAILURE"
+    assert first_response.json()["retryable"] is True
+    assert second_response.status_code == 200
+    assert second_response.json()["riskScore"] == 82
 
 
 def test_rejects_duplicate_persona_codes() -> None:
@@ -104,6 +108,26 @@ def test_rejects_duplicate_persona_codes() -> None:
     assert response.status_code == 422
     assert response.json()["errorCode"] == "REQUEST_VALIDATION_FAILED"
     assert response.json()["retryable"] is False
+
+
+def test_rejects_unknown_red_team_pack() -> None:
+    request = guarantee_request()
+    request["redTeamPackCode"] = "DEFAULT_RED_TEAM_PACK"
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert response.status_code == 422
+    assert response.json()["errorCode"] == "REQUEST_VALIDATION_FAILED"
+
+
+def test_rejects_scenario_without_required_rule() -> None:
+    request = guarantee_request()
+    request["ruleCodes"] = ["COST_OMISSION"]
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert response.status_code == 422
+    assert response.json()["errorCode"] == "REQUEST_VALIDATION_FAILED"
 
 
 def test_adapts_fixture_to_single_selected_persona() -> None:
@@ -138,6 +162,7 @@ def test_adapts_accessibility_fixture_when_senior_is_not_selected() -> None:
     request = guarantee_request()
     request["scenarioCode"] = "ACCESSIBILITY_LOW"
     request["personaCodes"] = ["FINANCIAL_BEGINNER"]
+    request["ruleCodes"] = ["COGNITIVE_ACCESSIBILITY"]
 
     response = call_api("POST", "/internal/v1/risk-analyses", json=request)
 

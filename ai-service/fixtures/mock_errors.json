@@ -3,7 +3,9 @@
     "httpStatus": 503,
     "errorCode": "AI_SERVICE_TEMPORARY_FAILURE",
     "message": "Mock AI provider is temporarily unavailable.",
-    "retryable": true
+    "retryable": true,
+    "failuresBeforeSuccess": 1,
+    "successFixture": "guarantee_high.json"
   },
   "PROVIDER_RESPONSE_INVALID": {
     "httpStatus": 500,
