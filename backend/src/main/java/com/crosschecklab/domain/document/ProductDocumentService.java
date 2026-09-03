@@ -1,17 +1,22 @@
 package com.crosschecklab.domain.document;
 
+import com.crosschecklab.domain.document.dto.DocumentAcceptedResponse;
 import com.crosschecklab.domain.document.dto.DocumentResponse;
-import com.crosschecklab.domain.document.dto.DocumentUploadResponse;
+import com.crosschecklab.domain.document.dto.DocumentTextUpdateRequest;
 import com.crosschecklab.domain.document.extraction.ExtractionScenarioResolver;
 import com.crosschecklab.domain.document.storage.FileStorage;
 import com.crosschecklab.domain.document.storage.StoredFile;
 import com.crosschecklab.domain.product.Product;
 import com.crosschecklab.domain.product.ProductRepository;
+import com.crosschecklab.domain.user.User;
+import com.crosschecklab.domain.user.UserRepository;
 import com.crosschecklab.global.error.BusinessException;
 import com.crosschecklab.global.error.ErrorCode;
 import com.crosschecklab.global.error.ErrorResponse;
 import com.crosschecklab.global.security.DemoUser;
 import com.crosschecklab.global.security.OwnershipChecker;
+import java.time.Clock;
+import java.time.OffsetDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -33,15 +38,17 @@ public class ProductDocumentService {
 
     private final ProductRepository productRepository;
     private final ProductDocumentRepository productDocumentRepository;
+    private final UserRepository userRepository;
     private final ExtractionScenarioResolver scenarioResolver;
     private final FileStorage fileStorage;
     private final OwnershipChecker ownershipChecker;
     private final ApplicationEventPublisher eventPublisher;
+    private final Clock clock;
 
     // DOC-001. 저장은 즉시, 추출은 커밋 이후 비동기로 진행된다.
     @Transactional
-    public DocumentUploadResponse upload(Long productId, MultipartFile file,
-                                         String requestedScenario, DemoUser currentUser) {
+    public DocumentAcceptedResponse upload(Long productId, MultipartFile file,
+                                           String requestedScenario, DemoUser currentUser) {
         Product product = productRepository.findWithOwnerById(productId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
         // 문서 업로드는 쓰기 작업이라 담당자 본인만 가능하다 (검토자도 올릴 수 없다).
@@ -58,9 +65,9 @@ public class ProductDocumentService {
                 product, fileName, mediaType.contentType(),
                 stored.size(), stored.checksum(), stored.storageKey()));
 
-        eventPublisher.publishEvent(new DocumentUploadedEvent(document.getId()));
+        eventPublisher.publishEvent(new DocumentExtractionRequestedEvent(document.getId()));
 
-        return DocumentUploadResponse.from(document);
+        return DocumentAcceptedResponse.from(document);
     }
 
     // DOC-002. 폴링용 조회. 어떤 상태도 변경하지 않는다.
@@ -69,6 +76,58 @@ public class ProductDocumentService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND));
         ownershipChecker.requireOwnerOrReviewer(document.getOwnerId(), currentUser);
         return DocumentResponse.from(document);
+    }
+
+    // DOC-003. 추출 텍스트 수정과 확인. READY 상태에서만 허용한다.
+    @Transactional
+    public DocumentResponse updateText(Long documentId, DocumentTextUpdateRequest request, DemoUser currentUser) {
+        ProductDocument document = getOwnedDocument(documentId, currentUser);
+        if (!document.isReady()) {
+            // 추출 중이거나 실패한 텍스트를 고치면 이후 추출 결과에 덮어써진다.
+            throw new BusinessException(ErrorCode.DOCUMENT_NOT_READY);
+        }
+
+        // confirmed_by 는 FK 라서 영속 상태의 User 가 필요하다. 해제 요청이면 조회하지 않는다.
+        User editor = request.confirmed() ? loadCurrentUser(currentUser) : null;
+        document.updateExtractedText(request.extractedText(), request.confirmed(),
+                editor, OffsetDateTime.now(clock));
+
+        return DocumentResponse.from(document);
+    }
+
+    // DOC-004. 실패한 추출만 다시 돌린다.
+    // 상태 확인과 전이 사이에 다른 요청이 끼어들면 같은 문서의 추출이 두 번 돌아가므로,
+    // 상태를 읽기 전에 문서 행을 잠근다. (버튼 연타만으로도 재현된다)
+    // 잠금 조회를 가장 먼저 해야 한다. 엔티티가 이미 영속성 컨텍스트에 있으면
+    // 잠금을 걸어도 메모리에 있는 이전 상태가 그대로 쓰인다.
+    @Transactional
+    public DocumentAcceptedResponse retryExtraction(Long documentId, DemoUser currentUser) {
+        ProductDocument document = productDocumentRepository.findByIdForUpdate(documentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND));
+        ownershipChecker.requireOwner(document.getOwnerId(), currentUser);
+
+        // 먼저 통과한 요청이 이미 EXTRACTING 으로 옮겨 두었으므로 뒤이은 요청은 여기서 409 가 된다.
+        if (!document.isFailed()) {
+            throw new BusinessException(ErrorCode.DOCUMENT_NOT_RETRYABLE);
+        }
+
+        document.markExtracting();
+        eventPublisher.publishEvent(new DocumentExtractionRequestedEvent(documentId));
+
+        return DocumentAcceptedResponse.from(document);
+    }
+
+    // 쓰기 작업용 조회. 담당자 본인이 아니면 403 이다 (검토자도 수정·재시도는 할 수 없다).
+    private ProductDocument getOwnedDocument(Long documentId, DemoUser currentUser) {
+        ProductDocument document = productDocumentRepository.findWithProductOwnerById(documentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND));
+        ownershipChecker.requireOwner(document.getOwnerId(), currentUser);
+        return document;
+    }
+
+    private User loadCurrentUser(DemoUser currentUser) {
+        return userRepository.findById(currentUser.id())
+                .orElseThrow(() -> new BusinessException(ErrorCode.DEMO_USER_NOT_FOUND));
     }
 
     private DocumentMediaType validate(MultipartFile file, String fileName) {

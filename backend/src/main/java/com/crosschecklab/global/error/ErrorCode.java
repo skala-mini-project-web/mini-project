@@ -40,6 +40,8 @@ public enum ErrorCode {
 
     // --- 409 Conflict ---
     DOCUMENT_NOT_CONFIRMED(HttpStatus.CONFLICT, "추출 텍스트 확인 후 분석을 요청하세요."),
+    DOCUMENT_NOT_READY(HttpStatus.CONFLICT, "추출이 완료(READY)된 문서만 수정할 수 있습니다."),
+    DOCUMENT_NOT_RETRYABLE(HttpStatus.CONFLICT, "추출에 실패(FAILED)한 문서만 재시도할 수 있습니다."),
     ANALYSIS_ALREADY_RUNNING(HttpStatus.CONFLICT, "이미 진행 중인 분석입니다."),
     ANALYSIS_NOT_RETRYABLE(HttpStatus.CONFLICT, "재시도할 수 없는 분석입니다."),
     ANALYSIS_NOT_COMPLETED(HttpStatus.CONFLICT, "분석이 완료된 후에 조회할 수 있습니다."),
