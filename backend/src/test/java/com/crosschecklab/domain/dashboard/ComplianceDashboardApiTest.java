@@ -3,6 +3,7 @@ package com.crosschecklab.domain.dashboard;
 import static com.crosschecklab.global.security.DemoAuthenticationFilter.ROLE_HEADER;
 import static com.crosschecklab.global.security.DemoAuthenticationFilter.USER_ID_HEADER;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -112,7 +113,7 @@ class ComplianceDashboardApiTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("검토 대기·HIGH Finding·활성 패턴·오늘 결정 건수를 함께 돌려준다")
+    @DisplayName("검토 대기·HIGH Finding·활성 패턴·기간 내 결정 건수를 함께 돌려준다")
     void summarizesReviewWorkload() throws Exception {
         insertReviewChain("대기 상품 A", "PENDING", null, "HIGH", "HIGH", "LOW");
         insertReviewChain("대기 상품 B", "PENDING", null, "HIGH");
@@ -126,7 +127,7 @@ class ComplianceDashboardApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.summary.pendingReviews").value(2))
                 .andExpect(jsonPath("$.summary.highFindings").value(3))
                 .andExpect(jsonPath("$.summary.activeRiskPatterns").value(1))
-                .andExpect(jsonPath("$.summary.decidedToday").value(1));
+                .andExpect(jsonPath("$.summary.decidedInRange").value(1));
     }
 
     @Test
@@ -187,20 +188,20 @@ class ComplianceDashboardApiTest extends IntegrationTestSupport {
 
         mockMvc.perform(asReviewer(get("/api/dashboard/compliance")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.summary.decidedToday").value(1));
+                .andExpect(jsonPath("$.summary.decidedInRange").value(1));
 
         // to 는 양끝 포함이라 오늘까지 지정하면 오늘 결정도 함께 잡힌다.
         mockMvc.perform(asReviewer(get("/api/dashboard/compliance")
                         .param("from", today.minusDays(1).toString())
                         .param("to", today.toString())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.summary.decidedToday").value(2));
+                .andExpect(jsonPath("$.summary.decidedInRange").value(2));
 
         mockMvc.perform(asReviewer(get("/api/dashboard/compliance")
                         .param("from", today.minusDays(1).toString())
                         .param("to", today.minusDays(1).toString())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.summary.decidedToday").value(1));
+                .andExpect(jsonPath("$.summary.decidedInRange").value(1));
     }
 
     @Test
@@ -230,8 +231,18 @@ class ComplianceDashboardApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.summary.pendingReviews").value(0))
                 .andExpect(jsonPath("$.summary.highFindings").value(0))
                 .andExpect(jsonPath("$.summary.activeRiskPatterns").value(0))
-                .andExpect(jsonPath("$.summary.decidedToday").value(0))
+                .andExpect(jsonPath("$.summary.decidedInRange").value(0))
                 .andExpect(jsonPath("$.priorityReviews").isEmpty());
+    }
+
+    @Test
+    @DisplayName("인증된 대시보드 응답은 캐시에 저장되지 않는다")
+    void doesNotAllowCaching() throws Exception {
+        // Spring Security 기본 헤더 정책이 전역으로 no-store 를 붙인다.
+        // 정책을 끄면 검토 업무 집계가 브라우저·중간 캐시에 남으므로 여기서 고정한다.
+        mockMvc.perform(asReviewer(get("/api/dashboard/compliance")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")));
     }
 
     @Test

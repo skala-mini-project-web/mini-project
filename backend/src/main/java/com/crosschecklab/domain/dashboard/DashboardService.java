@@ -42,7 +42,7 @@ public class DashboardService {
     }
 
     // DASH-002. 검토 업무 전체를 집계한다. 소유자 개념이 없어 검토자 전용이다.
-    // from·to 는 결정 건수(decidedToday)의 조회 창이며, 생략하면 오늘 하루다.
+    // from·to 는 결정 건수(decidedInRange)의 조회 창이며, 생략하면 오늘 하루다.
     // priorityReviews 는 지금 남은 대기열이라 기간과 무관하게 항상 현재 PENDING 을 보여준다.
     public ComplianceDashboardResponse summarizeCompliance(LocalDate from, LocalDate to, DemoUser currentUser) {
         // 검토자 전용이다. 상품 담당자가 호출하면 403.

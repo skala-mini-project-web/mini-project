@@ -33,7 +33,7 @@ public class DashboardController {
     @GetMapping("/compliance")
     @Operation(summary = "DASH-002 검토자 대시보드 요약",
             description = "검토 대기·HIGH Finding·활성 패턴·기간 내 결정 건수를 집계하고 우선 검토 목록을 함께 내려준다. "
-                    + "from·to(yyyy-MM-dd, 양끝 포함)는 결정 건수의 조회 기간이며 생략하면 오늘 하루다. "
+                    + "from·to(yyyy-MM-dd, 양끝 포함)는 decidedInRange 의 조회 기간이며 생략하면 오늘 하루다. "
                     + "어떤 상태도 변경하지 않는다.")
     public ResponseEntity<ComplianceDashboardResponse> summarizeCompliance(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,

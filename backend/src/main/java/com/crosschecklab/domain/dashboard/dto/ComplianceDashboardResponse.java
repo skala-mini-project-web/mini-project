@@ -16,12 +16,13 @@ public record ComplianceDashboardResponse(
         return new ComplianceDashboardResponse(Summary.from(row), priorityReviews);
     }
 
-    // decidedToday 는 조회 기간(from~to) 안에서 결정된 검토 수다. 기간을 주지 않으면 기본값이 오늘 하루라 이름 그대로 동작한다.
+    // decidedInRange 는 조회 기간(from~to) 안에서 결정된 검토 수다. 기간을 생략하면 오늘 하루가 기본값이다.
+    // from·to 를 주면 오늘이 아닌 그 기간의 값이므로 이름에 Today 를 쓰지 않는다.
     public record Summary(
             long pendingReviews,
             long highFindings,
             long activeRiskPatterns,
-            long decidedToday
+            long decidedInRange
     ) {
 
         public static Summary from(ComplianceSummaryRow row) {
