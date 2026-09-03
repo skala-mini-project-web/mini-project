@@ -142,6 +142,15 @@ public class Analysis extends BaseTimeEntity {
         }
     }
 
+    // REV-001. 검토 요청이 생성되면 COMPLETED → IN_REVIEW 로 넘어간다.
+    // 이미 IN_REVIEW 면 검토가 이미 있다는 뜻이라 여기까지 오지 않는다(REVIEW_ALREADY_EXISTS 로 걸린다).
+    public void markInReview() {
+        if (status != AnalysisStatus.COMPLETED) {
+            throw new BusinessException(ErrorCode.ANALYSIS_NOT_COMPLETED);
+        }
+        this.status = AnalysisStatus.IN_REVIEW;
+    }
+
     public void requireCompleted() {
         if (status != AnalysisStatus.COMPLETED && status != AnalysisStatus.IN_REVIEW) {
             throw new BusinessException(ErrorCode.ANALYSIS_NOT_COMPLETED);
