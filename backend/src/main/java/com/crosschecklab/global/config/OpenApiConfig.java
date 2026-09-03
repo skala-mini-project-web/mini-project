@@ -5,6 +5,8 @@ import com.crosschecklab.global.security.DemoUser;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.media.IntegerSchema;
+import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import java.util.Arrays;
 import org.springdoc.core.customizers.OperationCustomizer;
@@ -34,22 +36,27 @@ public class OpenApiConfig {
                         .description("AI 기반 금융 상품 판매 리스크 사전 검증 Digital Twin 시뮬레이션 플랫폼 API")
                         .version("v0.3"))
                 .components(new Components()
+                        // schema 가 없으면 OpenAPI 스펙상 불완전한 Parameter 라
+                        // Swagger UI 가 입력칸 타입을 알 수 없다. users.id 는 bigint 라 int64.
                         .addParameters("X-Demo-User-Id", new Parameter()
                                 .in("header")
                                 .name("X-Demo-User-Id")
                                 .required(true)
+                                .schema(new IntegerSchema().format("int64"))
                                 .description("현재 데모 사용자 ID (users.id)")
                         )
                         .addParameters("X-Demo-Role", new Parameter()
                                 .in("header")
                                 .name("X-Demo-Role")
                                 .required(true)
+                                .schema(new StringSchema())
                                 .description("PRODUCT_MANAGER 또는 COMPLIANCE_REVIEWER (서버가 DB 값으로 재검증)")
                         )
                         .addParameters("X-Trace-Id", new Parameter()
                                 .in("header")
                                 .name("X-Trace-Id")
                                 .required(false)
+                                .schema(new StringSchema())
                                 .description("요청 추적 ID, 미전달 시 서버 생성")
                         )
                 );

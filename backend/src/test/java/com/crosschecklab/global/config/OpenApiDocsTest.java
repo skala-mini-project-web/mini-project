@@ -30,6 +30,19 @@ class OpenApiDocsTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.components.parameters['X-Demo-Role'].required").value(true));
     }
 
+    // schema 가 빠진 Parameter 는 OpenAPI 스펙상 불완전해서
+    // Swagger UI 가 입력칸 타입을 결정하지 못한다.
+    @Test
+    @DisplayName("헤더 파라미터에 schema 가 정의되어 있다")
+    void definesSchemaForEveryHeaderParameter() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.components.parameters['X-Demo-User-Id'].schema.type").value("integer"))
+                .andExpect(jsonPath("$.components.parameters['X-Demo-User-Id'].schema.format").value("int64"))
+                .andExpect(jsonPath("$.components.parameters['X-Demo-Role'].schema.type").value("string"))
+                .andExpect(jsonPath("$.components.parameters['X-Trace-Id'].schema.type").value("string"));
+    }
+
     @Test
     @DisplayName("인증이 필요 없는 데모 세션 발급에는 데모 헤더가 붙지 않는다")
     void omitsDemoHeadersOnPublicOperation() throws Exception {
