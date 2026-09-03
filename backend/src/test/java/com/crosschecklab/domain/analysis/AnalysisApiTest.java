@@ -361,6 +361,17 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("소유자가 아니면 재시도할 수 없다 (403)")
+    void cannotRetryOthersAnalysis() throws Exception {
+        ((FakeRiskAnalysisProvider) provider).failWith(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true);
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asReviewer(post("/api/analyses/{id}/retry", analysisId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN_OWNERSHIP"));
+    }
+
+    @Test
     @DisplayName("없는 분석을 조회하면 404")
     void notFound() throws Exception {
         mockMvc.perform(asPm(get("/api/analyses/{id}", 999999L)))
