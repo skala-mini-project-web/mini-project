@@ -14,6 +14,10 @@ public interface ProductDocumentRepository extends JpaRepository<ProductDocument
     // 밑줄로 연관관계 탐색 경로(product.id)를 명시한다.
     Optional<ProductDocument> findFirstByProduct_IdOrderByIdDesc(Long productId);
 
+    // 문서 상세. 소유권 검증에 product.owner 까지 필요하므로 함께 읽는다.
+    @Query("select d from ProductDocument d join fetch d.product p join fetch p.owner where d.id = :id")
+    Optional<ProductDocument> findWithProductOwnerById(@Param("id") Long id);
+
     // 목록 응답용. 상품마다 조회하면 N+1 이 되므로 한 페이지분을 한 번에 가져온다.
     @Query("""
             select d from ProductDocument d
