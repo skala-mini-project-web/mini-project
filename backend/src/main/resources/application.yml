@@ -26,6 +26,14 @@ spring:
       max-file-size: 10MB
       max-request-size: 10MB
 
+# 외부 ai-service(FastAPI Mock) 호출 설정. Provider 교체 시 여기만 바꾼다.
+ai-service:
+  base-url: ${AI_SERVICE_URL:http://localhost:8000}
+  connect-timeout: 2s
+  read-timeout: 20s
+  # X-Demo-Scenario 헤더가 없을 때 사용할 기본 Fixture 시나리오
+  default-scenario-code: GUARANTEE_MISUNDERSTANDING_HIGH
+
 server:
   port: 8080
 

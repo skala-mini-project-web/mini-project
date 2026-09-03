@@ -1,0 +1,107 @@
+package com.crosschecklab.analysis.provider.http;
+
+import com.crosschecklab.analysis.provider.ProviderException;
+import com.crosschecklab.analysis.provider.RiskAnalysisProvider;
+import com.crosschecklab.analysis.provider.dto.AnalysisRequest;
+import com.crosschecklab.analysis.provider.dto.AnalysisResult;
+import com.crosschecklab.analysis.provider.dto.FindingPayload;
+import com.crosschecklab.global.common.enums.Severity;
+import com.crosschecklab.global.error.ErrorCode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClient;
+
+// ai-service(FastAPI Mock) HTTP 어댑터.
+// ai-service 는 동기 응답이라 이 호출 하나가 곧 분석 실행이다. 비동기 처리는 호출자(@Async)가 담당한다.
+@Slf4j
+@Component
+public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
+
+    private static final String ANALYZE_PATH = "/internal/v1/risk-analyses";
+
+    private final RestClient restClient;
+    private final ObjectMapper objectMapper;
+
+    public HttpRiskAnalysisProvider(AiServiceProperties properties, ObjectMapper objectMapper) {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(properties.connectTimeout());
+        requestFactory.setReadTimeout(properties.readTimeout());
+        this.restClient = RestClient.builder()
+                .baseUrl(properties.baseUrl())
+                .requestFactory(requestFactory)
+                .build();
+        this.objectMapper = objectMapper;
+    }
+
+    @Override
+    public AnalysisResult analyze(AnalysisRequest request) {
+        try {
+            AnalysisResult result = restClient.post()
+                    .uri(ANALYZE_PATH)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .onStatus(HttpStatusCode::isError, (req, response) -> {
+                        throw toProviderException(response);
+                    })
+                    .body(AnalysisResult.class);
+            return validate(result);
+        } catch (ResourceAccessException e) {
+            // 연결 실패 / 읽기 타임아웃 — 같은 요청을 그대로 재시도할 수 있다.
+            throw new ProviderException(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true,
+                    "ai-service 연결 실패: " + e.getMessage());
+        }
+    }
+
+    private ProviderException toProviderException(ClientHttpResponse response) throws IOException {
+        HttpStatusCode status = response.getStatusCode();
+        AiErrorResponse error = readErrorBody(response);
+        // 응답 본문의 retryable 을 우선 신뢰하고, 본문을 못 읽으면 5xx 만 재시도 가능으로 본다.
+        boolean retryable = error != null ? error.retryable() : status.is5xxServerError();
+        String detail = error != null ? error.errorCode() + " / " + error.message() : "본문 없음";
+        log.warn("ai-service 오류 응답 status={} {}", status.value(), detail);
+        return new ProviderException(
+                retryable ? ErrorCode.AI_SERVICE_TEMPORARY_FAILURE : ErrorCode.PROVIDER_RESPONSE_INVALID,
+                retryable, detail);
+    }
+
+    private AiErrorResponse readErrorBody(ClientHttpResponse response) {
+        try {
+            return objectMapper.readValue(response.getBody(), AiErrorResponse.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // 계약 위반은 재시도해도 같은 결과이므로 retryable=false 로 끊는다.
+    private AnalysisResult validate(AnalysisResult result) {
+        if (result == null || result.findings() == null || result.findings().isEmpty()) {
+            throw invalid("findings 가 비어 있음");
+        }
+        if (result.riskScore() < 0 || result.riskScore() > 100) {
+            throw invalid("riskScore 범위 초과: " + result.riskScore());
+        }
+        for (FindingPayload finding : result.findings()) {
+            if (finding.severity() == Severity.HIGH
+                    && (finding.evidenceReferences() == null || finding.evidenceReferences().isEmpty())) {
+                throw invalid("HIGH Finding 에 근거 인용이 없음");
+            }
+        }
+        return result;
+    }
+
+    private ProviderException invalid(String detail) {
+        return new ProviderException(ErrorCode.PROVIDER_RESPONSE_INVALID, false, detail);
+    }
+
+    // ai-service 오류 응답 스키마
+    private record AiErrorResponse(String errorCode, String message, boolean retryable) {
+    }
+}

@@ -42,10 +42,14 @@ public enum ErrorCode {
     REVIEW_ALREADY_DECIDED(HttpStatus.CONFLICT, "이미 결정이 완료된 검토입니다."),
     RISK_PATTERN_NOT_ACTIVE(HttpStatus.CONFLICT, "활성 상태(ACTIVE)인 리스크 패턴이 아닙니다."),
     ACTION_ALREADY_FINALIZED(HttpStatus.CONFLICT, "승인 완료된 액션은 수정할 수 없습니다."),
+    DUPLICATE_ANALYSIS_REQUEST(HttpStatus.CONFLICT, "동일한 입력으로 진행 중이거나 완료된 분석이 이미 있습니다."),
 
     // --- 503 Service Unavailable ---
     // 외부 ai-service 응답이 계약을 어긴 경우 (스키마 불일치, HIGH Finding 근거 0건 등)
     PROVIDER_RESPONSE_INVALID(HttpStatus.SERVICE_UNAVAILABLE, "분석 결과가 형식 요건을 충족하지 않습니다."),
+
+    // ai-service 연결 실패/타임아웃/5xx. 같은 요청을 그대로 재시도할 수 있다.
+    AI_SERVICE_TEMPORARY_FAILURE(HttpStatus.SERVICE_UNAVAILABLE, "분석 서비스가 일시적으로 응답하지 않습니다."),
 
     // --- 500 Internal Server Error ---
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 내부 오류가 발생했습니다.");
