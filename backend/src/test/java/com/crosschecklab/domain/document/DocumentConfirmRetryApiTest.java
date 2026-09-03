@@ -14,11 +14,23 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.crosschecklab.domain.product.ProductRepository;
 import com.crosschecklab.global.common.enums.ExtractStatus;
+import com.crosschecklab.global.common.enums.UserRole;
+import com.crosschecklab.global.error.BusinessException;
+import com.crosschecklab.global.error.ErrorCode;
+import com.crosschecklab.global.security.DemoUser;
 import com.crosschecklab.support.IntegrationTestSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -47,6 +59,10 @@ class DocumentConfirmRetryApiTest extends IntegrationTestSupport {
 
     @Autowired
     private ProductDocumentRepository productDocumentRepository;
+
+    // 동시성 검증은 MockMvc 를 거치지 않고 서비스를 직접 호출한다 (스레드마다 별도 트랜잭션이 필요하다).
+    @Autowired
+    private ProductDocumentService productDocumentService;
 
     @BeforeEach
     @AfterEach
@@ -309,6 +325,52 @@ class DocumentConfirmRetryApiTest extends IntegrationTestSupport {
             mockMvc.perform(asPm(post("/api/documents/{documentId}/retry", documentId)))
                     .andExpect(status().isConflict())
                     .andExpect(jsonPath("$.errorCode").value("DOCUMENT_NOT_RETRYABLE"));
+        }
+
+        @Test
+        @DisplayName("동시에 재시도해도 한 건만 성공하고 나머지는 409 다")
+        void allowsOnlyOneConcurrentRetry() throws Exception {
+            long documentId = failedDocument();
+            // requireOwner 가 id 만 보므로 시드 담당자와 같은 id 면 충분하다.
+            DemoUser pm = new DemoUser(1L, "pm_park", "박서준 대리", UserRole.PRODUCT_MANAGER);
+
+            int concurrency = 4;
+            CountDownLatch ready = new CountDownLatch(concurrency);
+            CountDownLatch start = new CountDownLatch(1);
+            ExecutorService pool = Executors.newFixedThreadPool(concurrency);
+
+            try {
+                // 성공이면 null, 거절이면 그 ErrorCode 를 돌려준다.
+                List<Future<ErrorCode>> submitted = new ArrayList<>();
+                for (int i = 0; i < concurrency; i++) {
+                    submitted.add(pool.submit(() -> {
+                        ready.countDown();
+                        start.await();
+                        try {
+                            productDocumentService.retryExtraction(documentId, pm);
+                            return null;
+                        } catch (BusinessException e) {
+                            return e.getErrorCode();
+                        }
+                    }));
+                }
+
+                // 모든 스레드가 대기선에 선 뒤에 한꺼번에 출발시킨다.
+                assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+                start.countDown();
+
+                List<ErrorCode> outcomes = new ArrayList<>();
+                for (Future<ErrorCode> result : submitted) {
+                    outcomes.add(result.get(10, TimeUnit.SECONDS));
+                }
+
+                assertThat(outcomes.stream().filter(Objects::isNull).count()).isEqualTo(1);
+                assertThat(outcomes.stream().filter(Objects::nonNull).toList())
+                        .hasSize(concurrency - 1)
+                        .containsOnly(ErrorCode.DOCUMENT_NOT_RETRYABLE);
+            } finally {
+                pool.shutdownNow();
+            }
         }
 
         @Test

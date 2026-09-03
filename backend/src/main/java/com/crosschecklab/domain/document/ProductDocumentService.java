@@ -96,14 +96,21 @@ public class ProductDocumentService {
     }
 
     // DOC-004. 실패한 추출만 다시 돌린다.
+    // 상태 확인과 전이 사이에 다른 요청이 끼어들면 같은 문서의 추출이 두 번 돌아가므로,
+    // 상태를 읽기 전에 문서 행을 잠근다. (버튼 연타만으로도 재현된다)
+    // 잠금 조회를 가장 먼저 해야 한다. 엔티티가 이미 영속성 컨텍스트에 있으면
+    // 잠금을 걸어도 메모리에 있는 이전 상태가 그대로 쓰인다.
     @Transactional
     public DocumentAcceptedResponse retryExtraction(Long documentId, DemoUser currentUser) {
-        ProductDocument document = getOwnedDocument(documentId, currentUser);
+        ProductDocument document = productDocumentRepository.findByIdForUpdate(documentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND));
+        ownershipChecker.requireOwner(document.getOwnerId(), currentUser);
+
+        // 먼저 통과한 요청이 이미 EXTRACTING 으로 옮겨 두었으므로 뒤이은 요청은 여기서 409 가 된다.
         if (!document.isFailed()) {
             throw new BusinessException(ErrorCode.DOCUMENT_NOT_RETRYABLE);
         }
 
-        // 여기서 EXTRACTING 으로 옮겨 두면 같은 문서에 대한 두 번째 재시도가 409 로 막힌다.
         document.markExtracting();
         eventPublisher.publishEvent(new DocumentExtractionRequestedEvent(documentId));
 
