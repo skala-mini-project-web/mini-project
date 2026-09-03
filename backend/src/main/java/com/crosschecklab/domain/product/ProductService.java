@@ -1,7 +1,10 @@
 package com.crosschecklab.domain.product;
 
+import com.crosschecklab.domain.analysis.AnalysisRepository;
+import com.crosschecklab.domain.analysis.ProductLatestAnalysis;
 import com.crosschecklab.domain.document.ProductDocument;
 import com.crosschecklab.domain.document.ProductDocumentRepository;
+import com.crosschecklab.domain.product.dto.LatestAnalysisResponse;
 import com.crosschecklab.domain.product.dto.LatestDocumentResponse;
 import com.crosschecklab.domain.product.dto.ProductCreateRequest;
 import com.crosschecklab.domain.product.dto.ProductResponse;
@@ -31,6 +34,7 @@ public class ProductService {
 
     private final ProductRepository productRepository;
     private final ProductDocumentRepository productDocumentRepository;
+    private final AnalysisRepository analysisRepository;
     private final UserRepository userRepository;
     private final OwnershipChecker ownershipChecker;
 
@@ -46,8 +50,8 @@ public class ProductService {
         Product product = productRepository.save(
                 Product.create(owner, request.name(), request.productType(), request.description()));
 
-        // 방금 만든 상품이라 문서가 있을 수 없다.
-        return ProductResponse.of(product, null);
+        // 방금 만든 상품이라 문서도 분석도 있을 수 없다.
+        return ProductResponse.of(product, null, null);
     }
 
     // PROD-002. 소유자 본인 또는 검토자만 조회할 수 있다.
@@ -61,7 +65,10 @@ public class ProductService {
                 .map(LatestDocumentResponse::from)
                 .orElse(null);
 
-        return ProductResponse.of(product, latestDocument);
+        // 상세도 목록과 같은 질의를 쓴다. 상품 하나짜리 목록으로 넘겨 최신 판정 규칙을 한 곳에만 둔다.
+        LatestAnalysisResponse latestAnalysis = loadLatestAnalyses(List.of(productId)).get(productId);
+
+        return ProductResponse.of(product, latestDocument, latestAnalysis);
     }
 
     // 목록. 담당자는 본인 상품만, 검토자는 전체를 본다.
@@ -71,19 +78,30 @@ public class ProductService {
         Page<Product> products = productRepository.findPage(
                 ownerFilter, PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id")));
 
-        Map<Long, LatestDocumentResponse> latestDocuments = loadLatestDocuments(products.getContent());
+        List<Long> productIds = products.getContent().stream().map(Product::getId).toList();
+        Map<Long, LatestDocumentResponse> latestDocuments = loadLatestDocuments(productIds);
+        Map<Long, LatestAnalysisResponse> latestAnalyses = loadLatestAnalyses(productIds);
 
-        return PageResponse.of(products,
-                product -> ProductSummaryResponse.of(product, latestDocuments.get(product.getId())));
+        return PageResponse.of(products, product -> ProductSummaryResponse.of(product,
+                latestDocuments.get(product.getId()), latestAnalyses.get(product.getId())));
     }
 
     // 상품마다 최신 문서를 조회하면 N+1 이 되므로 페이지 전체를 한 번에 읽는다.
-    private Map<Long, LatestDocumentResponse> loadLatestDocuments(List<Product> products) {
-        if (products.isEmpty()) {
+    private Map<Long, LatestDocumentResponse> loadLatestDocuments(List<Long> productIds) {
+        if (productIds.isEmpty()) {
             return Map.of();
         }
-        List<Long> productIds = products.stream().map(Product::getId).toList();
         return productDocumentRepository.findLatestByProductIds(productIds).stream()
                 .collect(Collectors.toMap(ProductDocument::getProductId, LatestDocumentResponse::from));
+    }
+
+    // 최신 분석도 같은 이유로 한 번에 읽는다. 분석 이력이 없는 상품은 결과에 아예 들어오지 않고,
+    // 호출부의 map.get 이 null 을 돌려주어 응답에서 latestAnalysis 가 null 이 된다.
+    private Map<Long, LatestAnalysisResponse> loadLatestAnalyses(List<Long> productIds) {
+        if (productIds.isEmpty()) {
+            return Map.of();
+        }
+        return analysisRepository.findLatestByProductIds(productIds).stream()
+                .collect(Collectors.toMap(ProductLatestAnalysis::productId, LatestAnalysisResponse::from));
     }
 }

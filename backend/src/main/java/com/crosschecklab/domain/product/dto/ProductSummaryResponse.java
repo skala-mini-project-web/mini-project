@@ -16,7 +16,8 @@ public record ProductSummaryResponse(
         OffsetDateTime createdAt
 ) {
 
-    public static ProductSummaryResponse of(Product product, LatestDocumentResponse latestDocument) {
+    public static ProductSummaryResponse of(Product product, LatestDocumentResponse latestDocument,
+                                            LatestAnalysisResponse latestAnalysis) {
         return new ProductSummaryResponse(
                 product.getId(),
                 product.getName(),
@@ -24,7 +25,7 @@ public record ProductSummaryResponse(
                 product.getOwner().getId(),
                 product.getOwner().getName(),
                 latestDocument,
-                null,
+                latestAnalysis,
                 product.getCreatedAt()
         );
     }
