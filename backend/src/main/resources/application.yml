@@ -3,9 +3,9 @@ spring:
     name: crosschecklab
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/crosschecklab
-    username: ${DB_USERNAME:crosschecklab}
-    password: ${DB_PASSWORD:crosschecklab}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:crosschecklab}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -19,7 +19,7 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    baseline-on-migrate: true
+    baseline-on-migrate: false
 
   servlet:
     multipart:
