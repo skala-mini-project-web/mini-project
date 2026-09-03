@@ -1,3 +1,5 @@
+from threading import Lock
+
 from pydantic import ValidationError
 
 from app.errors import FixtureInvalidError
@@ -13,9 +15,12 @@ from app.schemas import (
 class RiskAnalysisService:
     def __init__(self, fixture_loader: FixtureLoader | None = None) -> None:
         self.fixture_loader = fixture_loader or FixtureLoader()
+        self._attempts: dict[tuple[int, str], int] = {}
+        self._attempt_lock = Lock()
 
     def analyze(self, request: RiskAnalysisRequest) -> RiskAnalysisResponse:
-        payload = self.fixture_loader.load(request.scenario_code)
+        attempt_number = self._next_attempt(request)
+        payload = self.fixture_loader.load(request.scenario_code, attempt_number)
         try:
             response = RiskAnalysisResponse.model_validate(payload)
         except ValidationError as error:
@@ -24,6 +29,16 @@ class RiskAnalysisService:
             ) from error
 
         return self._adapt_to_request_selections(request, response)
+
+    def _next_attempt(self, request: RiskAnalysisRequest) -> int:
+        if not self.fixture_loader.tracks_attempts(request.scenario_code):
+            return 1
+
+        key = (request.analysis_id, request.scenario_code)
+        with self._attempt_lock:
+            attempt_number = self._attempts.get(key, 0) + 1
+            self._attempts[key] = attempt_number
+            return attempt_number
 
     @staticmethod
     def _adapt_to_request_selections(

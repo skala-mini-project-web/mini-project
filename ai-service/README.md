@@ -28,8 +28,12 @@ Spring Boot 백엔드의 책임이며 이 서비스는 DB에 직접 접근하지
 - `GUARANTEE_MISUNDERSTANDING_HIGH`
 - `EARLY_TERMINATION_COST_MEDIUM`
 - `ACCESSIBILITY_LOW`
-- `PROVIDER_RATE_LIMITED_THEN_SUCCESS` (재시도 가능한 503 오류)
+- `PROVIDER_RATE_LIMITED_THEN_SUCCESS` (같은 `analysisId`의 첫 호출은 503, 다음 호출부터 성공)
 - `PROVIDER_RESPONSE_INVALID` (재시도 불가능한 500 오류)
+
+`redTeamPackCode`는 DB 기준 데이터와 동일한 `CORE_FINANCIAL_RISK_V1`만
+허용합니다. 정상 분석 시나리오는 관련 `ruleCodes`가 선택되어 있어야 하며,
+조합이 맞지 않으면 Fixture를 읽기 전에 422를 반환합니다.
 
 ## 로컬 실행
 
