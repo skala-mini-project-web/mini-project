@@ -1,0 +1,18 @@
+# 테스트 전용 설정.
+# 실제 접속 정보는 Testcontainers의 @ServiceConnection이 주입하므로
+# 여기서는 main의 ${DB_USERNAME}/${DB_PASSWORD} placeholder만 해소한다.
+spring:
+  datasource:
+    username: test
+    password: test
+
+  jpa:
+    properties:
+      hibernate:
+        format_sql: false
+
+logging:
+  level:
+    org.hibernate.SQL: warn
+    org.testcontainers: warn
+    com.github.dockerjava: warn
