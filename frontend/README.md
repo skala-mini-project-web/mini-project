@@ -19,7 +19,7 @@ npm run build
 ```
 
 - 기본 개발 주소: `http://localhost:5173`
-- 진입 화면의 역할 선택으로 데모 세션 시작
+- 진입 화면에서 역할을 선택해 세션 시작
   - 상품 담당자: `USER-PM-001`
   - 컴플라이언스 검토자: `USER-CR-001`
 
@@ -33,6 +33,8 @@ npm run build
   - GuardFit `LABEL/WARNING/QUESTION/COMPARISON`, `DRAFT/APPROVED`
 - 숫자 ID Golden Fixture가 기본 Mock store
 - 기존 문자열 ID 대량 seed는 `VITE_DEMO_BULK_SEED=true`에서만 활성화
+- 같은 origin의 다른 탭에서 변경한 Mock store는 `storage` 이벤트로 동기화되어 검토자 대기 알림에 반영
+- Mock의 멱등성 저장소는 브라우저 새로고침을 넘어서 보존되지 않는다. 운영 환경에서는 백엔드 영속 저장소가 책임진다.
 
 ## 프론트엔드 구현 범위
 
@@ -46,10 +48,15 @@ npm run build
   - VERIFIED 공식 상품 사실, 근거 추적, Provenance
 - 점수는 서버 정책으로 계산하며 AI 산출물은 승인 전 후보로만 취급
 - 검토: 재현율·Run·공식 사실·규칙·판매 원문·근거·사례 추적, 선택 Finding만 Risk Pattern으로 승격
-- GuardFit: AI Suggestion을 DRAFT 초깃값으로 사용하고 검토자가 별도로 APPROVED 처리; 상품 담당자는 승인본만 조회
-- SHA-256 `input_hash`: 확정 텍스트, Red Team Pack, 정렬된 Persona/근거 ID로 계산해 동일 문서·동일 입력의 중복 Analysis를 409로 차단
-- 알림: 추출·분석·검토 완료 폴링, 토스트, 상품별 읽음 상태
-- 공통 상태: 로딩, 빈 상태, 인라인 오류, 오류 계약(400/401/403/404/409/413/503)
+- 검토함은 `PENDING` 작업 큐를 기본으로 표시하고, 승인·반려 이력은 상태 필터로 조회
+- Risk Library는 승인 Finding의 재사용 지식이며, 검토 승인 후 바로 이동해 GuardFit 초안을 생성
+- GuardFit은 DRAFT 작업 큐와 APPROVED/ALL 이력을 분리한다. 상품 담당자는 승인본만 Before/After 가이드로 조회
+- SHA-256 `input_hash`: 확정 텍스트, 검증 사실 스냅샷, Red Team Pack, 정렬된 Persona/근거 ID로 계산해 동일 문서·동일 입력의 중복 Analysis를 409로 차단
+- 분석 완료 결과는 입력·공식 사실·생성 시각·Provider/Model 정보를 스냅샷으로 보존
+- PM 리소스는 상품 소유자 기준으로 접근을 제한하며, 검토자는 검토 업무에 필요한 결과만 조회
+- 알림: 추출·분석·검토 완료 폴링, 상품별 읽음 상태, 검토자 검토함 대기 건수 배지와 새 요청 토스트
+- 입력 제한: 상품명 100자, 설명 500자, 확정 텍스트 10,000자, 검토 의견 500자, GuardFit 라벨·배치 위치 각 100자. 초과 입력은 실시간 카운터·토스트·API 검증으로 차단
+- 공통 상태: 로딩, 성공한 빈 상태, 재시도 가능한 로드 오류, 오류 계약(400/401/403/404/409/413/503)
 - 접근성: 포커스 링, 모달 포커스 트랩, `prefers-reduced-motion` 대응
 
 ## 임시 구현물과 격리 경계
@@ -86,9 +93,9 @@ scripts/          Mock Golden E2E, RAG·가드레일, Local AI 확인
 
 - `npm run build` 통과
 - `VITE_USE_MOCK=false npm run build` 통과
-- `node scripts/smoke.mjs`: Mock 계약 및 Golden E2E 33/33
-  - 상품 → 문서 → 공식 사실 확인 → 분석 1건 → 전체 결과 → 검토 승인 → Risk Pattern → GuardFit DRAFT/APPROVED
-  - score 82, 상태 전이, RBAC, 멱등성, SHA-256 중복 409, 실패 재시도
+- `node scripts/smoke.mjs`: Mock 계약 및 Golden E2E 113/113
+  - 상품 → 문서 → 공식 사실 확인 → 분석 1건 → PM 검토 요청 → 검토 승인/반려 → Risk Pattern → GuardFit DRAFT/APPROVED → PM 적용 가이드 → 감사 로그
+  - score 82, 상태 전이, 소유권 RBAC, 멱등성 재시도/충돌, 입력 길이 검증, 사실 스냅샷, 최신 분석 검토, SHA-256 중복 409, 실패 재시도
 - `node scripts/ai-test.mjs`: RAG·Finding 가드레일 5/5
 - `node scripts/analyze-live.mjs`: Ollama opt-in 환경의 Local AI 확인용
 

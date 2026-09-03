@@ -14,8 +14,12 @@ import GSeverityBadge from '@/components/ui/GSeverityBadge.vue'
 import GBadge from '@/components/ui/GBadge.vue'
 import GProgress from '@/components/ui/GProgress.vue'
 import GSpinner from '@/components/ui/GSpinner.vue'
+import GModal from '@/components/ui/GModal.vue'
+import GField from '@/components/ui/GField.vue'
+import GTextarea from '@/components/ui/GTextarea.vue'
 
 const props = defineProps({ analysisId: { type: String, required: true } })
+const REVIEW_SUBMISSION_COMMENT_MAXIMUM_COUNT = 500
 const router = useRouter()
 const session = useSessionStore()
 const toast = useToastStore()
@@ -23,10 +27,13 @@ const toast = useToastStore()
 const status = ref(null)
 const result = ref(null)
 const loading = ref(true)
+const loadError = ref(null)
 const retrying = ref(false)
 const requesting = ref(false)
 const reviewRequested = ref(false)
 const reviewInfo = ref(null)
+const showReviewRequest = ref(false)
+const submissionComment = ref('')
 const STAGE_LABEL = {
   PREPARING: '분석 준비 중',
   PERSONA_SIMULATION: 'Persona 반복 실험 중',
@@ -48,32 +55,83 @@ const band = computed(() => {
 })
 
 const { polling, timedOut, start } = usePolling(() => api.getAnalysis(props.analysisId), {
-  onResult: async (res, err) => { if (err) return toast.fromError(err); status.value = res; if (res.status === 'COMPLETED') await loadResult() },
+  onResult: async (res, err) => {
+    if (err) {
+      loadError.value = err
+      return toast.fromError(err)
+    }
+    status.value = res
+    if (res.status === 'COMPLETED') {
+      try {
+        await loadResult()
+        loadError.value = null
+      } catch (e) {
+        loadError.value = e
+        toast.fromError(e)
+      }
+    } else {
+      loadError.value = null
+    }
+  },
 })
 
-onMounted(async () => {
+onMounted(load)
+async function load() {
+  loading.value = true
   try {
-    status.value = await api.getAnalysis(props.analysisId)
+    const nextStatus = await api.getAnalysis(props.analysisId)
+    status.value = nextStatus
     if (isRunning.value) start((r) => ['COMPLETED', 'FAILED'].includes(r.status))
     else if (isDone.value) await loadResult()
-  } catch (e) { toast.fromError(e) } finally { loading.value = false }
-})
-async function loadResult() { try { result.value = await api.getAnalysisResult(props.analysisId); reviewInfo.value = await api.getReviewByAnalysis(props.analysisId).catch(() => null) } catch (e) { toast.fromError(e) } }
+    loadError.value = null
+  } catch (e) {
+    loadError.value = e
+    toast.fromError(e)
+  } finally {
+    loading.value = false
+  }
+}
+async function loadResult() {
+  const nextResult = await api.getAnalysisResult(props.analysisId)
+  let nextReview
+  try {
+    nextReview = await api.getReviewByAnalysis(props.analysisId)
+  } catch (e) {
+    if (e?.status === 404 && e?.errorCode === 'REVIEW_NOT_FOUND') nextReview = null
+    else throw e
+  }
+  result.value = nextResult
+  reviewInfo.value = nextReview
+}
 async function retry() {
   retrying.value = true
   try { await api.retryAnalysis(props.analysisId); toast.info('분석 재시도'); status.value = await api.getAnalysis(props.analysisId); start((r) => ['COMPLETED', 'FAILED'].includes(r.status)) }
   catch (e) { toast.fromError(e) } finally { retrying.value = false }
 }
+function openReviewRequest() {
+  submissionComment.value = ''
+  showReviewRequest.value = true
+}
+function closeReviewRequest() {
+  if (!requesting.value) showReviewRequest.value = false
+}
 async function requestReview() {
+  if (submissionComment.value.length > REVIEW_SUBMISSION_COMMENT_MAXIMUM_COUNT) {
+    return toast.push({ type: 'error', title: '제출 의견 입력 오류', message: `제출 의견은 ${REVIEW_SUBMISSION_COMMENT_MAXIMUM_COUNT}자 이하로 입력하세요.` })
+  }
   requesting.value = true
   try {
-    const res = await api.createReview({ analysisId: props.analysisId, submissionComment: '검토 요청' })
+    const res = await api.createReview({ analysisId: props.analysisId, submissionComment: submissionComment.value.trim() })
     reviewRequested.value = true
     reviewInfo.value = { status: 'PENDING' }
+    showReviewRequest.value = false
     toast.success('검토 요청됨', res.reviewId)
     useJobsStore().track({ kind: 'review', id: res.reviewId, name: result.value?.sourceDocument?.fileName || props.analysisId })
   } catch (e) {
-    if (e?.errorCode === 'REVIEW_ALREADY_EXISTS') reviewRequested.value = true
+    if (e?.errorCode === 'REVIEW_ALREADY_EXISTS') {
+      reviewRequested.value = true
+      showReviewRequest.value = false
+    }
     toast.fromError(e)
   } finally {
     requesting.value = false
@@ -94,6 +152,17 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
     </header>
 
     <div v-if="loading" class="pad"><GSpinner :size="24" /></div>
+
+    <div v-else-if="loadError && !result" class="fail" role="alert">
+      <PhWarningCircle :size="22" class="fail-i" />
+      <div class="grow">
+        <p class="t-base fw-semibold">분석 결과를 불러오지 못했습니다</p>
+        <p class="t-sm soft">잠시 후 다시 시도해 주세요.</p>
+      </div>
+      <GButton variant="secondary" size="sm" @click="load">
+        <template #icon><PhArrowClockwise :size="15" /></template>다시 시도
+      </GButton>
+    </div>
 
     <!-- Running -->
     <div v-else-if="isRunning" class="run">
@@ -121,6 +190,17 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 
     <!-- Completed -->
     <template v-else-if="isDone && result">
+      <div v-if="loadError" class="fail" role="alert">
+        <PhWarningCircle :size="22" class="fail-i" />
+        <div class="grow">
+          <p class="t-base fw-semibold">분석 결과를 새로 불러오지 못했습니다</p>
+          <p class="t-sm soft">이전에 불러온 내용을 유지합니다.</p>
+        </div>
+        <GButton variant="secondary" size="sm" @click="load">
+          <template #icon><PhArrowClockwise :size="15" /></template>다시 시도
+        </GButton>
+      </div>
+
       <div class="score" :class="`b-${band.tone}`">
         <div class="score-num">
           <span class="mono sn">{{ result.riskScore }}</span>
@@ -135,11 +215,11 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
           </div>
         </div>
         <div v-if="session.isPM" class="score-act">
-          <template v-if="!reviewInfo">
+          <template v-if="!reviewInfo && !reviewRequested">
             <p class="t-xs mute act-note">사람 승인 전까지 승격되지 않습니다.</p>
-            <GButton variant="primary" :loading="requesting" @click="requestReview"><template #icon><PhClipboardText :size="15" /></template>검토 요청</GButton>
+            <GButton variant="primary" @click="openReviewRequest"><template #icon><PhClipboardText :size="15" /></template>검토 요청</GButton>
           </template>
-          <span v-else-if="reviewInfo.status === 'PENDING'" class="requested" style="color:var(--ink-mute)"><PhClipboardText :size="16" /> 검토 대기 중</span>
+          <span v-else-if="reviewRequested || reviewInfo.status === 'PENDING'" class="requested" style="color:var(--ink-mute)"><PhClipboardText :size="16" /> 검토 대기 중</span>
           <span v-else-if="reviewInfo.status === 'APPROVED'" class="requested"><PhCheckCircle :size="16" weight="fill" /> 승인됨</span>
           <span v-else class="requested" style="color:var(--risk-high)"><PhXCircle :size="16" weight="fill" /> 반려됨</span>
         </div>
@@ -278,6 +358,18 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
         <p class="mono t-xs soft"><template v-if="result.provenance.providerType !== 'MOCK'">{{ result.provenance.providerType }} · {{ result.provenance.modelVersion }} · </template>prompt {{ result.provenance.promptVersion }} · schema {{ result.provenance.outputSchemaVersion }} · score {{ result.provenance.scorePolicyVersion }} · taxonomy {{ result.provenance.taxonomyVersion }}</p>
       </section>
     </template>
+
+    <GModal v-if="showReviewRequest" title="검토 요청" @close="closeReviewRequest">
+      <form @submit.prevent="requestReview">
+        <GField label="제출 의견" hint="검토자가 참고할 내용을 선택적으로 입력하세요." for-id="submission-comment" :current-count="submissionComment.length" :maximum-count="REVIEW_SUBMISSION_COMMENT_MAXIMUM_COUNT">
+          <GTextarea id="submission-comment" v-model="submissionComment" :rows="4" :maximum-count="REVIEW_SUBMISSION_COMMENT_MAXIMUM_COUNT" placeholder="검토 배경이나 확인이 필요한 내용을 입력하세요" />
+        </GField>
+      </form>
+      <template #footer>
+        <GButton variant="ghost" :disabled="requesting" @click="closeReviewRequest">취소</GButton>
+        <GButton variant="primary" :loading="requesting" :disabled="requesting" @click="requestReview">검토 요청</GButton>
+      </template>
+    </GModal>
   </div>
 </template>
 

@@ -33,7 +33,11 @@ onMounted(async () => { try { items.value = (await api.listAuditLogs({})).items 
       <div v-for="log in shown" :key="log.auditId" class="trow">
         <span class="mono cell dt">{{ formatDateTime(log.createdAt) }}</span>
         <span class="cell"><GBadge :tone="tone(log.action)">{{ log.action }}</GBadge></span>
-        <span class="mono cell">{{ log.resourceType }} · {{ log.resourceId }}</span>
+        <span class="cell resource">
+          <strong v-if="log.resourceLabel">{{ log.resourceLabel }}</strong>
+          <span class="mono">{{ log.resourceType }} · {{ log.resourceId }}</span>
+          <span v-if="log.analysisId" class="mono analysis">분석 · {{ log.analysisId }}</span>
+        </span>
         <span class="mono cell">{{ log.actorId }}</span>
         <span class="mono cell mute">{{ log.traceId }}</span>
       </div>
@@ -53,6 +57,10 @@ onMounted(async () => { try { items.value = (await api.listAuditLogs({})).items 
 .trow:last-child { border-bottom: 0; }
 .trow:hover { background: var(--surface-2); }
 .cell { overflow: hidden; text-overflow: ellipsis; }
+.resource { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.resource strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--fw-semibold); }
+.resource .mono { color: var(--ink-soft); font-size: var(--text-xs); }
+.resource .analysis { color: var(--accent); }
 .dt { color: var(--ink-soft); }
 .pager { padding: var(--s-28) 0 var(--s-8); }
 @media (max-width: 820px) { .thead { display: none; } .trow { grid-template-columns: 1fr; gap: 6px; } }

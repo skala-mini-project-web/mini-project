@@ -23,8 +23,31 @@ validateGoldenFixture()
 const GOLDEN_OUTCOME = buildGoldenOutcome()
 const INCLUDE_BULK_SEED = import.meta.env?.VITE_DEMO_BULK_SEED === 'true'
 
+const RISK_PATTERN_TITLES = {
+  PRINCIPAL_PROTECTION_MISUNDERSTANDING: '원금 보장 오인',
+  RETURN_FRAMING: '수익 프레이밍',
+  LOSS_SOFTENING: '손실 위험 축소',
+  COST_OMISSION: '비용 정보 누락',
+  STABILITY_KEYWORD: '안정성 표현 오인',
+  FORMAL_CONFIRMATION: '형식적 확인',
+  COGNITIVE_ACCESSIBILITY: '인지 접근성',
+}
+const FINDING_TYPE_TITLES = {
+  FRAMING: '오인 유발 표현',
+  OMISSION: '필수 정보 누락',
+  MISUNDERSTANDING: '소비자 오인',
+  ACCESSIBILITY: '정보 접근성',
+}
+export function riskPatternTitle(finding) {
+  return RISK_PATTERN_TITLES[finding.categoryCode || finding.aiDetail?.categoryCode]
+    || RISK_PATTERN_TITLES[finding.ruleCode || finding.aiDetail?.ruleCode]
+    || FINDING_TYPE_TITLES[finding.findingType || finding.aiDetail?.findingType]
+    || '기타 위험 패턴'
+}
+
 export const USERS = [
   { id: 'USER-PM-001', name: '박서준 대리', role: 'PRODUCT_MANAGER', active: true },
+  { id: 'USER-PM-002', name: '김민지 과장', role: 'PRODUCT_MANAGER', active: true },
   { id: 'USER-CR-001', name: '정하윤 수석', role: 'COMPLIANCE_REVIEWER', active: true },
 ]
 
@@ -126,6 +149,11 @@ const CORE_PRODUCTS = [
   { productId: 'PROD-003', ownerId: 'USER-PM-001', name: '생활든든 신용대출', productType: 'LOAN', description: '직장인 대상 신용대출', status: 'DRAFT', createdAt: '2026-09-02T08:10:00+09:00' },
   { productId: 'PROD-004', ownerId: 'USER-PM-001', name: '안심 정기예금', productType: 'SAVINGS', description: '원금 보장형 정기예금', status: 'DRAFT', createdAt: '2026-09-01T11:00:00+09:00' },
 ]
+const PM_B_PRODUCT = {
+  productId: 'PROD-PM-B-001', ownerId: 'USER-PM-002', name: 'PM B 전용 투자상품',
+  productType: 'INVESTMENT', description: '수평 권한 검증용 상품', status: 'IN_REVIEW',
+  createdAt: '2026-09-03T10:00:00+09:00',
+}
 
 // Bulk demo products so list scale (search, filter, pagination) is exercised.
 const PREFIX = ['스마트', '프리미엄', '든든한', '글로벌', '내일의', '해바라기', '그린', '다임', '토니', '퍼스트', '애브니', '로엔', '샤인', '위드', '오로라', '세이프']
@@ -152,7 +180,7 @@ const EXTRA_PRODUCTS = Array.from({ length: 22 }, (_, i) => {
   }
 })
 
-export const PRODUCTS = [GOLDEN_PRODUCT, ...(INCLUDE_BULK_SEED ? [...CORE_PRODUCTS, ...EXTRA_PRODUCTS] : [])]
+export const PRODUCTS = [GOLDEN_PRODUCT, PM_B_PRODUCT, ...(INCLUDE_BULK_SEED ? [...CORE_PRODUCTS, ...EXTRA_PRODUCTS] : [])]
 
 // ---- Coherent children for bulk products (so none are hollow shells) --------
 const SEV_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1 }
@@ -250,7 +278,7 @@ function buildBulk() {
       const hi = findings.find((f) => f.severity === 'HIGH') || findings[0]
       const rpId = `RISK-9${idn}`
       reviews.push({ reviewId, analysisId, productId: p.productId, productName: p.name, maxSeverity: maxSev, status: 'APPROVED', submittedBy: 'USER-PM-001', ownerName: '박서준 대리', submittedAt: p.createdAt, submissionComment: '검토 요청', reviewerId: 'USER-CR-001', decidedAt: p.createdAt, comment: '승인 처리', selectedFindingIds: [hi.findingId], riskPatternIds: [rpId] })
-      risk.push({ riskPatternId: rpId, name: hi.statement.slice(0, 20), severity: hi.severity, ruleCode: hi.ruleCode, affectedPersonaCodes: hi.affectedPersonaCodes, sourceFindingId: hi.findingId, sourceReviewId: reviewId, status: 'ACTIVE', createdAt: p.createdAt, sourceExcerpt: hi.sourceReferences[0]?.excerpt || '', recommendation: hi.recommendation })
+      risk.push({ riskPatternId: rpId, title: riskPatternTitle(hi), findingStatement: hi.statement, severity: hi.severity, ruleCode: hi.ruleCode, affectedPersonaCodes: hi.affectedPersonaCodes, sourceFindingId: hi.findingId, sourceReviewId: reviewId, sourceAnalysisId: analysisId, status: 'ACTIVE', createdAt: p.createdAt, sourceExcerpt: hi.sourceReferences[0]?.excerpt || '', recommendation: hi.recommendation })
       const at = GF_TYPES[i % GF_TYPES.length]
       guardfit.push({ actionId: `GFA-9${idn}`, riskPatternId: rpId, actionType: at.actionType, label: at.label, placement: at.placement, required: i % 3 !== 0, status: 'APPROVED', createdBy: 'USER-CR-001', updatedBy: 'USER-CR-001', updatedAt: p.createdAt })
     } else if (p.status === 'NEEDS_FIX') {
@@ -263,6 +291,16 @@ const BULK = INCLUDE_BULK_SEED ? buildBulk() : { docs: [], analyses: [], reviews
 
 export const PRODUCT_DOCUMENTS = [
   GOLDEN_DOCUMENT,
+  {
+    documentId: 'PDOC-PM-B-001', productId: PM_B_PRODUCT.productId, fileName: 'PM_B_상품설명서.pdf',
+    mediaType: 'application/pdf', fileSize: 102400,
+    storageKey: 'local://uploads/PDOC-PM-B-001/seed.pdf',
+    checksumSha256: 'b'.repeat(64), extractStatus: 'READY', extractMethod: 'pdf-text',
+    rawExtractedText: 'PM B 상품은 시장 상황에 따라 원금 손실이 발생할 수 있습니다.',
+    verifiedText: 'PM B 상품은 시장 상황에 따라 원금 손실이 발생할 수 있습니다.',
+    confirmed: true, confirmedBy: 'USER-PM-002', confirmedAt: '2026-09-03T10:02:00+09:00',
+    attemptCount: 1, error: null, clockDriven: false,
+  },
   {
     documentId: 'PDOC-001', productId: 'PROD-001', fileName: '스마트인컴_상품설명서.pdf',
     mediaType: 'application/pdf', fileSize: 2516582,
@@ -284,10 +322,22 @@ export const PRODUCT_DOCUMENTS = [
     attemptCount: 1, error: null, clockDriven: false,
   },
   ...BULK.docs,
-].filter((item) => INCLUDE_BULK_SEED || typeof item.documentId === 'number')
+].filter((item) => INCLUDE_BULK_SEED || typeof item.documentId === 'number' || item.documentId === 'PDOC-PM-B-001')
 
 export const ANALYSES = [
   { ...GOLDEN_ANALYSIS, ...GOLDEN_OUTCOME },
+  {
+    analysisId: 'ANL-PM-B-001', productDocumentId: 'PDOC-PM-B-001', productId: PM_B_PRODUCT.productId,
+    status: 'COMPLETED', riskScore: 60, providerType: 'MOCK',
+    scenarioCode: 'GUARANTEE_MISUNDERSTANDING_HIGH', evidenceDocumentIds: [21],
+    personaIds: [41], redTeamPackId: 51,
+    findings: [{
+      ...DEMO_FINDINGS[0],
+      findingId: 'FND-PM-B-001',
+      sourceReferences: [{ documentId: 'PDOC-PM-B-001', page: 1, excerpt: '원금 손실이 발생할 수 있습니다.' }],
+    }],
+    attemptCount: 1, error: null, clockDriven: false, createdAt: '2026-09-03T10:05:00+09:00',
+  },
   {
     analysisId: 'ANL-001', productDocumentId: 'PDOC-001', productId: 'PROD-001',
     status: 'COMPLETED', riskScore: 82, providerType: 'MOCK',
@@ -308,10 +358,17 @@ export const ANALYSES = [
     createdAt: '2026-09-02T09:20:00+09:00',
   },
   ...BULK.analyses,
-].filter((item) => INCLUDE_BULK_SEED || typeof item.analysisId === 'number')
+].filter((item) => INCLUDE_BULK_SEED || typeof item.analysisId === 'number' || item.analysisId === 'ANL-PM-B-001')
 
 export const REVIEWS = [
   GOLDEN_REVIEW,
+  {
+    reviewId: 'REV-PM-B-001', analysisId: 'ANL-PM-B-001', productId: PM_B_PRODUCT.productId,
+    productName: PM_B_PRODUCT.name, maxSeverity: 'HIGH', status: 'PENDING',
+    submittedBy: 'USER-PM-002', ownerName: '김민지 과장',
+    submittedAt: '2026-09-03T10:10:00+09:00', submissionComment: 'PM B 검토 요청',
+    reviewerId: null, decidedAt: null, comment: null, selectedFindingIds: [],
+  },
   {
     reviewId: 'REV-001', analysisId: 'ANL-001', productId: 'PROD-001', productName: '스마트 인컴 투자상품',
     maxSeverity: 'HIGH', status: 'PENDING',
@@ -320,23 +377,32 @@ export const REVIEWS = [
     reviewerId: null, decidedAt: null, comment: null, selectedFindingIds: [],
   },
   ...BULK.reviews,
-].filter((item) => INCLUDE_BULK_SEED || typeof item.reviewId === 'number')
+].filter((item) => INCLUDE_BULK_SEED || typeof item.reviewId === 'number' || item.reviewId === 'REV-PM-B-001')
 
-export const GROUND_TRUTH_FACTS = GOLDEN_FACTS
+export const GROUND_TRUTH_FACTS = [
+  ...GOLDEN_FACTS,
+  {
+    factId: 'FACT-PM-B-001', documentId: 'PDOC-PM-B-001', factType: 'PRINCIPAL_LOSS',
+    label: '원금손실 가능성', value: '시장 상황에 따라 원금 손실 가능',
+    importance: 'CRITICAL', verificationStatus: 'VERIFIED',
+    sourceReferences: [{ evidenceDocumentId: 21, page: 1, excerpt: '원금 손실이 발생할 수 있습니다.' }],
+    extractionSource: 'MOCK_FIXTURE', verifiedBy: 'USER-PM-002', verifiedAt: '2026-09-03T10:03:00+09:00',
+  },
+]
 
 // Pre-approved pattern history so the reviewer library and PM guardfit view
 // are populated on first load.
 export const RISK_PATTERNS = [
   {
-    riskPatternId: 'RISK-900', name: '수익 확정 오인', severity: 'HIGH', ruleCode: 'RETURN_FRAMING',
+    riskPatternId: 'RISK-900', title: '수익 프레이밍', findingStatement: '기대 수익이 확정 수익처럼 전달되어 미래 성과를 보장하는 것으로 오인될 수 있습니다.', severity: 'HIGH', ruleCode: 'RETURN_FRAMING',
     affectedPersonaCodes: ['FINANCIAL_BEGINNER'], sourceFindingId: 'FND-900',
-    sourceReviewId: 'REV-900', status: 'ACTIVE', createdAt: '2026-09-01T16:00:00+09:00',
+    sourceReviewId: 'REV-900', sourceAnalysisId: 'ANL-900', status: 'ACTIVE', createdAt: '2026-09-01T16:00:00+09:00',
     sourceExcerpt: '연 5% 수익을 기대할 수 있는 상품입니다.', recommendation: '과거 수익은 미래 성과를 보장하지 않는다는 문구를 인접 표시하세요.',
   },
   {
-    riskPatternId: 'RISK-901', name: '비용 정보 누락', severity: 'MEDIUM', ruleCode: 'COST_OMISSION',
+    riskPatternId: 'RISK-901', title: '비용 정보 누락', findingStatement: '총비용과 수수료 정보가 수익 표현과 인접한 위치에 충분히 안내되지 않았습니다.', severity: 'MEDIUM', ruleCode: 'COST_OMISSION',
     affectedPersonaCodes: ['FINANCIAL_BEGINNER', 'LOW_LITERACY'], sourceFindingId: 'FND-901',
-    sourceReviewId: 'REV-900', status: 'ACTIVE', createdAt: '2026-09-01T16:05:00+09:00',
+    sourceReviewId: 'REV-900', sourceAnalysisId: 'ANL-900', status: 'ACTIVE', createdAt: '2026-09-01T16:05:00+09:00',
     sourceExcerpt: '수수료 안내', recommendation: '총비용 예시를 수익 표현과 함께 제시하세요.',
   },
   ...BULK.risk,

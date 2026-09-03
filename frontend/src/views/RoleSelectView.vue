@@ -53,7 +53,7 @@ async function enter(r) {
 
       <!-- role entry: two hairline-divided cells, not cards -->
       <section class="enter">
-        <p class="mono enter-label">역할을 선택해 데모 세션 시작</p>
+        <p class="mono enter-label">역할 선택</p>
         <div v-if="loading" class="roles-loading"><GSpinner :size="20" /></div>
         <div v-else class="roles">
           <button v-for="r in roles" :key="r.role" class="role" :disabled="!r.user || entering" @click="enter(r)">
@@ -111,19 +111,19 @@ async function enter(r) {
 .roles-loading { display: grid; place-items: center; padding: var(--s-32); border-top: 1px solid var(--line-strong); }
 .roles { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line-strong); }
 .role {
-  display: flex; align-items: center; gap: var(--s-16);
-  text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--line);
+  position: relative; display: flex; align-items: center; justify-content: center;
+  text-align: center; background: transparent; border: 0; border-bottom: 1px solid var(--line);
   padding: var(--s-24) var(--s-12); cursor: pointer; transition: background var(--fast) var(--ease);
 }
 .role:first-child { border-right: 1px solid var(--line); }
 .role:hover:not(:disabled) { background: var(--surface-2); }
 .role:disabled { opacity: 0.5; cursor: progress; }
-.role-body { display: flex; flex-direction: column; gap: var(--s-6); min-width: 0; }
+.role-body { display: flex; flex-direction: column; align-items: center; gap: var(--s-6); min-width: 0; }
 .role-title { letter-spacing: -0.02em; }
 .role-line { max-width: 34ch; }
 .role-id { font-size: 11px; color: var(--ink-mute); margin-top: 2px; }
 .role-arrow {
-  display: grid; place-items: center; width: 40px; height: 40px; flex: none;
+  position: absolute; right: var(--s-20); display: grid; place-items: center; width: 40px; height: 40px;
   border-radius: var(--r-pill); border: 1px solid var(--line-strong); color: var(--ink);
   transition: transform var(--base) var(--ease), background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease);
 }

@@ -1,15 +1,24 @@
 <script setup>
-defineProps({
+import { computed } from 'vue'
+
+const props = defineProps({
   modelValue: { type: [String, Number], default: '' },
   id: String, placeholder: String, type: { type: String, default: 'text' },
   invalid: Boolean, disabled: Boolean,
+  maximumCount: { type: Number, default: null },
 })
 defineEmits(['update:modelValue'])
+
+const isInvalid = computed(() => {
+  const isOverLimit = props.maximumCount !== null
+    && String(props.modelValue).length > props.maximumCount
+  return props.invalid || isOverLimit
+})
 </script>
 
 <template>
-  <input :id="id" class="input" :class="{ invalid }" :type="type" :value="modelValue"
-    :placeholder="placeholder" :disabled="disabled"
+  <input :id="id" class="input" :class="{ invalid: isInvalid }" :type="type" :value="modelValue"
+    :placeholder="placeholder" :disabled="disabled" :aria-invalid="isInvalid"
     @input="$emit('update:modelValue', $event.target.value)" />
 </template>
 

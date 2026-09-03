@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { PhArrowUpRight, PhClipboardText } from '@phosphor-icons/vue'
 import { api } from '@/api'
@@ -18,8 +18,10 @@ const loading = ref(true)
 const items = ref([])
 const page = ref(0)
 const total = ref(0)
-const filter = ref('ALL')
+const filter = ref('PENDING')
 const filters = [{ v: 'ALL', l: '전체' }, { v: 'PENDING', l: '대기' }, { v: 'APPROVED', l: '승인' }, { v: 'REJECTED', l: '반려' }]
+const emptyTitle = computed(() => filter.value === 'PENDING' ? '대기 중인 검토가 없습니다' : '선택한 이력에 검토 기록이 없습니다')
+const emptyDescription = computed(() => filter.value === 'PENDING' ? '새 검토 요청이 접수되면 여기에 표시됩니다.' : '다른 상태 필터에서 검토 이력을 확인해 주세요.')
 
 async function load() {
   loading.value = true
@@ -47,7 +49,7 @@ onMounted(load)
     <p class="lead t-sm mute">위험도 내림차순, 제출시간 오름차순으로 정렬됩니다. <span class="mono" v-if="!loading">· 총 {{ total }}건</span></p>
 
     <div v-if="loading" class="list"><div v-for="i in 6" :key="i" class="sk"><GSkeleton h="18px" w="35%" /><GSkeleton h="13px" w="20%" /></div></div>
-    <GEmptyState v-else-if="!items.length" title="검토 항목이 없습니다"><template #icon><PhClipboardText :size="20" /></template></GEmptyState>
+    <GEmptyState v-else-if="!items.length" :title="emptyTitle" :description="emptyDescription"><template #icon><PhClipboardText :size="20" /></template></GEmptyState>
     <template v-else>
       <ul class="list">
         <li v-for="r in items" :key="r.reviewId" class="row" tabindex="0" @click="router.push(`/reviews/${r.reviewId}`)" @keyup.enter="router.push(`/reviews/${r.reviewId}`)">

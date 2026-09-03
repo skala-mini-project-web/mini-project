@@ -1,17 +1,23 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   PhGauge, PhStack, PhScales, PhShieldCheck, PhFingerprint, PhFolders,
   PhSignOut, PhArrowsLeftRight,
 } from '@phosphor-icons/vue'
+import { api } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useJobsStore } from '@/stores/jobs'
+import { useToastStore } from '@/stores/toast'
 
 const session = useSessionStore()
 const jobs = useJobsStore()
+const toast = useToastStore()
 const router = useRouter()
 const route = useRoute()
+const pendingReviews = ref(null)
+let reviewPollTimer = null
+let reviewPollInFlight = false
 
 const nav = computed(() =>
   session.isPM
@@ -29,6 +35,32 @@ const nav = computed(() =>
       ],
 )
 const isActive = (to) => route.path === to || route.path.startsWith(to + '/')
+async function pollPendingReviews() {
+  if (!session.isReviewer || reviewPollInFlight) return
+  reviewPollInFlight = true
+  try {
+    const { totalElements } = await api.listReviews({ status: 'PENDING', page: 0, size: 1 })
+    if (!session.isReviewer) return
+    const nextCount = Number(totalElements) || 0
+    const previousCount = pendingReviews.value
+    pendingReviews.value = nextCount
+    if (previousCount !== null && nextCount > previousCount) {
+      toast.info('새 검토 요청', `검토 요청 ${nextCount - previousCount}건이 새로 도착했습니다.`)
+    }
+  } catch {
+    // 일시적인 폴링 실패에는 마지막으로 확인한 건수를 유지한다.
+  } finally {
+    reviewPollInFlight = false
+  }
+}
+onMounted(() => {
+  if (!session.isReviewer) return
+  pollPendingReviews()
+  reviewPollTimer = setInterval(pollPendingReviews, 10000)
+})
+onUnmounted(() => {
+  if (reviewPollTimer) clearInterval(reviewPollTimer)
+})
 function leave() {
   session.logout()
   router.push('/')
@@ -48,6 +80,7 @@ function leave() {
         <component :is="item.icon" :size="18" :weight="isActive(item.to) ? 'fill' : 'regular'" />
         <span>{{ item.label }}</span>
         <span v-if="item.to === '/products' && jobs.unread" class="nav-badge mono">{{ jobs.unread }}</span>
+        <span v-if="item.to === '/reviews' && pendingReviews !== null" class="nav-badge mono">{{ pendingReviews }}</span>
       </RouterLink>
     </nav>
 

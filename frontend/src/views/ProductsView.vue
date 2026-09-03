@@ -19,6 +19,8 @@ import GSelect from '@/components/ui/GSelect.vue'
 import GPagination from '@/components/ui/GPagination.vue'
 
 const PAGE = 12
+const PRODUCT_NAME_MAXIMUM_COUNT = 100
+const PRODUCT_DESCRIPTION_MAXIMUM_COUNT = 500
 const router = useRouter()
 const toast = useToastStore()
 const jobs = useJobsStore()
@@ -60,6 +62,14 @@ onMounted(load)
 async function load() { loading.value = true; try { items.value = (await api.listProducts()).items } catch (e) { toast.fromError(e) } finally { loading.value = false } }
 function openCreate() { form.name = ''; form.productType = 'INVESTMENT'; form.description = ''; fieldErrors.value = {}; showCreate.value = true }
 async function submit() {
+  if (form.name.length > PRODUCT_NAME_MAXIMUM_COUNT) {
+    toast.push({ type: 'error', title: '상품명 입력 오류', message: `상품명은 ${PRODUCT_NAME_MAXIMUM_COUNT}자 이하로 입력하세요.` })
+    return
+  }
+  if (form.description.length > PRODUCT_DESCRIPTION_MAXIMUM_COUNT) {
+    toast.push({ type: 'error', title: '상품 설명 입력 오류', message: `상품 설명은 ${PRODUCT_DESCRIPTION_MAXIMUM_COUNT}자 이하로 입력하세요.` })
+    return
+  }
   submitting.value = true; fieldErrors.value = {}
   try { const res = await api.createProduct({ ...form }); toast.success('상품 등록됨', res.productId); showCreate.value = false; router.push(`/products/${res.productId}`) }
   catch (e) { if (e?.fieldErrors?.length) fieldErrors.value = Object.fromEntries(e.fieldErrors.map((f) => [f.field, f.message])); toast.fromError(e) }
@@ -135,9 +145,9 @@ async function submit() {
 
     <GModal v-if="showCreate" title="상품 등록" @close="showCreate = false">
       <form class="form" @submit.prevent="submit">
-        <GField label="상품명" required for-id="pn" :error="fieldErrors.name" hint="1 - 100자"><GTextInput id="pn" v-model="form.name" placeholder="예: 스마트 인컴 투자상품" :invalid="!!fieldErrors.name" /></GField>
+        <GField label="상품명" required for-id="pn" :error="fieldErrors.name" hint="1 - 100자" :current-count="form.name.length" :maximum-count="PRODUCT_NAME_MAXIMUM_COUNT"><GTextInput id="pn" v-model="form.name" placeholder="예: 스마트 인컴 투자상품" :invalid="!!fieldErrors.name" :maximum-count="PRODUCT_NAME_MAXIMUM_COUNT" /></GField>
         <GField label="상품 유형" required for-id="pt"><GSelect id="pt" v-model="form.productType" :options="typeOptions" /></GField>
-        <GField label="설명" for-id="pd" :error="fieldErrors.description" hint="500자 이하"><GTextarea id="pd" v-model="form.description" :rows="3" placeholder="상품 개요" :invalid="!!fieldErrors.description" /></GField>
+        <GField label="설명" for-id="pd" :error="fieldErrors.description" hint="500자 이하" :current-count="form.description.length" :maximum-count="PRODUCT_DESCRIPTION_MAXIMUM_COUNT"><GTextarea id="pd" v-model="form.description" :rows="3" placeholder="상품 개요" :invalid="!!fieldErrors.description" :maximum-count="PRODUCT_DESCRIPTION_MAXIMUM_COUNT" /></GField>
       </form>
       <template #footer><GButton variant="ghost" @click="showCreate = false">취소</GButton><GButton variant="primary" :loading="submitting" @click="submit">등록</GButton></template>
     </GModal>

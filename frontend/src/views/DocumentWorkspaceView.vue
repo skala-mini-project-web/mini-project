@@ -15,6 +15,7 @@ import GTextarea from '@/components/ui/GTextarea.vue'
 import GSpinner from '@/components/ui/GSpinner.vue'
 
 const props = defineProps({ documentId: { type: String, required: true } })
+const VERIFIED_TEXT_MAXIMUM_COUNT = 10000
 const router = useRouter()
 const session = useSessionStore()
 const toast = useToastStore()
@@ -40,6 +41,10 @@ onMounted(async () => {
   catch (e) { toast.fromError(e) } finally { loading.value = false }
 })
 async function saveConfirm() {
+  if (verifiedText.value.length > VERIFIED_TEXT_MAXIMUM_COUNT) {
+    toast.push({ type: 'error', title: '확정 텍스트 입력 오류', message: `확정 텍스트는 ${VERIFIED_TEXT_MAXIMUM_COUNT.toLocaleString()}자 이하로 입력하세요.` })
+    return
+  }
   saving.value = true
   try { const res = await api.patchDocumentText(props.documentId, { verifiedText: verifiedText.value, confirmed: true }); doc.value = { ...doc.value, ...res, verifiedText: verifiedText.value }; textDirty.value = false; toast.success('텍스트 확정됨', '이제 분석을 시작할 수 있습니다') }
   catch (e) { toast.fromError(e) } finally { saving.value = false }
@@ -87,8 +92,8 @@ function goBack() { doc.value?.productId ? router.push(`/products/${doc.value.pr
           </div>
           <div class="col">
             <div class="ml-row"><p class="mono ml">확정 텍스트</p><span v-if="doc.confirmed" class="conf"><PhCheckCircle :size="13" weight="fill" /> 확정됨</span></div>
-            <GField hint="분석에 사용할 최종 텍스트입니다. 원문은 변경되지 않습니다.">
-              <GTextarea v-model="verifiedText" :rows="8" :disabled="!canEdit" placeholder="추출 텍스트를 검토하고 보정하세요" @update:modelValue="textDirty = true" />
+            <GField hint="분석에 사용할 최종 텍스트입니다. 원문은 변경되지 않습니다." :current-count="verifiedText.length" :maximum-count="VERIFIED_TEXT_MAXIMUM_COUNT">
+              <GTextarea v-model="verifiedText" :rows="8" :disabled="!canEdit" :maximum-count="VERIFIED_TEXT_MAXIMUM_COUNT" placeholder="추출 텍스트를 검토하고 보정하세요" @update:modelValue="textDirty = true" />
             </GField>
             <p v-if="doc.confirmedAt" class="mono cmeta">{{ doc.confirmedBy }} · {{ formatDateTime(doc.confirmedAt) }}</p>
           </div>
