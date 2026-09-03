@@ -13,6 +13,7 @@ public enum ErrorCode {
     INVALID_SELECTION_COUNT(HttpStatus.BAD_REQUEST, "선택 개수가 올바르지 않습니다. (1~3개)"),
     INVALID_EVIDENCE_DOCUMENT(HttpStatus.BAD_REQUEST, "사용할 수 없는 근거 문서가 포함되어 있습니다."),
     INVALID_FINDING_SELECTION(HttpStatus.BAD_REQUEST, "승인 시 반영할 Finding 을 1건 이상 선택해야 합니다."),
+    RISK_PATTERN_NAME_REQUIRED(HttpStatus.BAD_REQUEST, "활성화하려면 패턴 이름이 필요합니다."),
     COMMENT_REQUIRED(HttpStatus.BAD_REQUEST, "반려 시 사유(comment)는 필수입니다."),
     INVALID_DATE_RANGE(HttpStatus.BAD_REQUEST, "조회 기간이 올바르지 않습니다."),
     INVALID_FILE_TYPE(HttpStatus.BAD_REQUEST, "PDF 또는 PPTX 파일만 업로드할 수 있습니다."),
@@ -49,6 +50,7 @@ public enum ErrorCode {
     REVIEW_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 검토 요청이 생성된 분석입니다."),
     REVIEW_ALREADY_DECIDED(HttpStatus.CONFLICT, "이미 결정이 완료된 검토입니다."),
     RISK_PATTERN_NOT_ACTIVE(HttpStatus.CONFLICT, "활성 상태(ACTIVE)인 리스크 패턴이 아닙니다."),
+    RISK_PATTERN_ALREADY_ACTIVE(HttpStatus.CONFLICT, "활성화된 리스크 패턴은 DRAFT 로 되돌릴 수 없습니다."),
     ACTION_ALREADY_FINALIZED(HttpStatus.CONFLICT, "승인 완료된 액션은 수정할 수 없습니다."),
     DUPLICATE_ANALYSIS_REQUEST(HttpStatus.CONFLICT, "동일한 입력으로 진행 중이거나 완료된 분석이 이미 있습니다."),
 

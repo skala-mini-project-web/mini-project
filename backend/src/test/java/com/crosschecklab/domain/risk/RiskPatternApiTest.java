@@ -3,6 +3,7 @@ package com.crosschecklab.domain.risk;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -12,6 +13,8 @@ import com.crosschecklab.global.error.BusinessException;
 import com.crosschecklab.global.error.ErrorCode;
 import com.crosschecklab.support.IntegrationTestSupport;
 import java.util.List;
+import java.util.Map;
+import org.springframework.http.MediaType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -245,20 +248,93 @@ class RiskPatternApiTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("승격: 검증을 통과한 패턴만 ACTIVE 가 되고 이름이 비면 DRAFT 로 남는다")
-    void promoteActivatesOnlyValidatedPatterns() {
-        Long blankFindingId = insertFinding(
+    @DisplayName("승격: 검토 승인으로 만들어진 패턴은 항상 DRAFT 다")
+    void promoteAlwaysCreatesDraft() {
+        Long newFindingId = insertFinding(
                 jdbc.queryForObject("SELECT analysis_id FROM findings WHERE id = ?", Long.class, highFindingId),
-                "   ", "MEDIUM");
-        List<Finding> findings = findingRepository.findAllById(List.of(blankFindingId, mediumFindingId));
+                "수수료 안내가 본문과 떨어져 있습니다.", "MEDIUM");
+        List<Finding> findings = findingRepository.findAllById(List.of(newFindingId));
 
-        // mediumFindingId 는 이미 승격돼 있어 finding_id UNIQUE 에 걸린다. 검증만 보기 위해 새 Finding 만 넘긴다.
-        List<Long> promoted = riskPatternService.promote(
-                reviewId, findings.stream().filter(f -> f.getId().equals(blankFindingId)).toList());
+        List<Long> promoted = riskPatternService.promote(reviewId, findings);
 
         assertThat(promoted).hasSize(1);
         assertThat(jdbc.queryForObject("SELECT status FROM risk_patterns WHERE id = ?", String.class, promoted.get(0)))
                 .isEqualTo("DRAFT");
+    }
+
+    @Test
+    @DisplayName("RISK-002: 검토자가 이름을 다듬어 ACTIVE 로 올린다")
+    void reviewerRenamesAndActivates() throws Exception {
+        Long draftPatternId = insertPattern(
+                insertFinding(jdbc.queryForObject(
+                        "SELECT analysis_id FROM findings WHERE id = ?", Long.class, highFindingId),
+                        "안정성 표현이 원금보장으로 오인될 가능성이 있습니다.", "HIGH"),
+                reviewId, "안정성 표현이 원금보장으로 오인될 가능성이 있습니다.", "HIGH", "DRAFT");
+
+        mockMvc.perform(asReviewer(patch("/api/risk-patterns/{id}", draftPatternId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("name", "원금보장 오해", "status", "ACTIVE"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.riskPatternId").value(draftPatternId))
+                .andExpect(jsonPath("$.name").value("원금보장 오해"))
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+
+        // 활성화된 뒤에는 GuardFit 보호조치를 붙일 수 있다.
+        assertThat(riskPatternService.getActive(draftPatternId).getId()).isEqualTo(draftPatternId);
+    }
+
+    @Test
+    @DisplayName("RISK-002: status 없이 이름만 고치면 DRAFT 로 남는다")
+    void renameKeepsDraft() throws Exception {
+        Long draftPatternId = insertPattern(
+                insertFinding(jdbc.queryForObject(
+                        "SELECT analysis_id FROM findings WHERE id = ?", Long.class, highFindingId),
+                        "중도해지 비용이 분산되어 있습니다.", "MEDIUM"),
+                reviewId, "중도해지 비용이 분산되어 있습니다.", "MEDIUM", "DRAFT");
+
+        mockMvc.perform(asReviewer(patch("/api/risk-patterns/{id}", draftPatternId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("name", "중도해지 비용 오인"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("중도해지 비용 오인"))
+                .andExpect(jsonPath("$.status").value("DRAFT"));
+    }
+
+    @Test
+    @DisplayName("RISK-002: ACTIVE 를 DRAFT 로 되돌리면 409")
+    void revertingToDraftIsConflict() throws Exception {
+        mockMvc.perform(asReviewer(patch("/api/risk-patterns/{id}", highPatternId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("status", "DRAFT"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value(ErrorCode.RISK_PATTERN_ALREADY_ACTIVE.name()));
+    }
+
+    @Test
+    @DisplayName("RISK-002: 상품 담당자의 수정 호출은 403")
+    void updateByProductManagerIsForbidden() throws Exception {
+        mockMvc.perform(asPm(patch("/api/risk-patterns/{id}", highPatternId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("name", "임의 변경"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value(ErrorCode.FORBIDDEN.name()));
+    }
+
+    @Test
+    @DisplayName("RISK-001: status 필터로 다듬지 않은 DRAFT 초안만 볼 수 있다")
+    void filtersByStatus() throws Exception {
+        Long draftPatternId = insertPattern(
+                insertFinding(jdbc.queryForObject(
+                        "SELECT analysis_id FROM findings WHERE id = ?", Long.class, highFindingId),
+                        "형식적 확인 절차만 있습니다.", "LOW"),
+                reviewId, "형식적 확인 절차", "LOW", "DRAFT");
+
+        mockMvc.perform(asReviewer(get("/api/risk-patterns").param("status", "DRAFT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.items[0].riskPatternId").value(draftPatternId))
+                .andExpect(jsonPath("$.items[0].status").value("DRAFT"));
     }
 
     @Test

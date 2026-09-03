@@ -1,5 +1,6 @@
 package com.crosschecklab.domain.risk.dto;
 
+import com.crosschecklab.domain.risk.RiskPattern;
 import com.crosschecklab.domain.risk.RiskPatternListRow;
 import com.crosschecklab.global.common.enums.RiskPatternStatus;
 import com.crosschecklab.global.common.enums.Severity;
@@ -14,6 +15,17 @@ public record RiskPatternResponse(
         Severity severity,
         RiskPatternStatus status
 ) {
+
+    // RISK-002 응답. 목록(RISK-001)과 같은 모양을 써서 화면이 갱신된 행을 그대로 갈아끼울 수 있다.
+    public static RiskPatternResponse from(RiskPattern pattern) {
+        return new RiskPatternResponse(
+                pattern.getId(),
+                pattern.getFindingId(),
+                pattern.getReviewId(),
+                pattern.getName(),
+                pattern.getSeverity(),
+                pattern.getStatus());
+    }
 
     public static RiskPatternResponse from(RiskPatternListRow row) {
         return new RiskPatternResponse(

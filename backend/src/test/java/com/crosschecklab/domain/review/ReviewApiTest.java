@@ -210,7 +210,7 @@ class ReviewApiTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("REV-003: 승인하면 선택한 Finding 만 ACTIVE RiskPattern 으로 승격된다")
+    @DisplayName("REV-003: 승인하면 선택한 Finding 만 DRAFT RiskPattern 으로 승격된다")
     void approvePromotesSelectedFindingsOnly() throws Exception {
         Long reviewId = createReview(analysisId);
 
@@ -231,7 +231,9 @@ class ReviewApiTest extends IntegrationTestSupport {
         assertThat(pattern.get("finding_id")).isEqualTo(highFindingId);
         assertThat(pattern.get("review_id")).isEqualTo(reviewId);
         assertThat(pattern.get("severity")).isEqualTo("HIGH");
-        assertThat(pattern.get("status")).isEqualTo("ACTIVE");
+        // 승격은 항상 DRAFT 다. 검토자가 이름을 다듬어 RISK-002 로 활성화해야 GuardFit 을 붙일 수 있다.
+        assertThat(pattern.get("status")).isEqualTo("DRAFT");
+        // 초안 이름은 Finding statement 를 그대로 쓴다.
         assertThat(pattern.get("name")).isEqualTo("안정성 표현이 원금보장으로 오인될 가능성이 있습니다.");
 
         // 선택하지 않은 LOW Finding 은 승격되지 않는다.
