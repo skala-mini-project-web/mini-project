@@ -106,8 +106,22 @@ public class ProductDocument extends BaseTimeEntity {
         this.extractStatus = ExtractStatus.FAILED;
     }
 
-    public boolean isExtractionFinished() {
-        return extractStatus == ExtractStatus.READY || extractStatus == ExtractStatus.FAILED;
+    // DOC-003. 담당자가 추출 텍스트를 고치고 확인 여부를 지정한다.
+    // 확인을 해제하면 누가 언제 확인했는지도 함께 지운다 (분석은 confirmed 문서만 받는다).
+    public void updateExtractedText(String extractedText, boolean confirmed,
+                                    User editor, OffsetDateTime confirmedAt) {
+        this.extractedText = extractedText;
+        this.confirmed = confirmed;
+        this.confirmedBy = confirmed ? editor : null;
+        this.confirmedAt = confirmed ? confirmedAt : null;
+    }
+
+    public boolean isReady() {
+        return extractStatus == ExtractStatus.READY;
+    }
+
+    public boolean isFailed() {
+        return extractStatus == ExtractStatus.FAILED;
     }
 
     public Long getProductId() {

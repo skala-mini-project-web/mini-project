@@ -21,14 +21,14 @@ public class DocumentExtractionRunner {
     private final DocumentExtractionTransitions transitions;
     private final TextExtractionService textExtractionService;
 
-    // 업로드 트랜잭션이 커밋된 뒤에 실행한다. 커밋 전이면 새 트랜잭션에서 문서를 찾지 못한다.
+    // 요청 트랜잭션이 커밋된 뒤에 실행한다. 커밋 전이면 새 트랜잭션에서 문서를 찾지 못한다.
     @Async(AsyncConfig.ANALYSIS_EXECUTOR)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    public void onDocumentUploaded(DocumentUploadedEvent event) {
+    public void onExtractionRequested(DocumentExtractionRequestedEvent event) {
         run(event.documentId());
     }
 
-    // DOC-004 재시도에서도 같은 경로를 태우기 위해 공개 메서드로 둔다.
+    // 업로드와 재시도가 같은 경로를 타도록 공개 메서드로 둔다.
     public void run(Long documentId) {
         Optional<ExtractionTarget> target = transitions.beginExtraction(documentId);
         if (target.isEmpty()) {
