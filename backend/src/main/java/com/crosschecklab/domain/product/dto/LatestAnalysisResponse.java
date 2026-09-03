@@ -9,6 +9,12 @@ public record LatestAnalysisResponse(
         AnalysisStatus status
 ) {
 
+    /**
+     * ProductLatestAnalysis 조회 결과를 API 응답 형태로 변환한다.
+     *
+     * @param latest 상품별 최신 분석 조회 결과
+     * @return API 응답용 DTO
+     */
     public static LatestAnalysisResponse from(ProductLatestAnalysis latest) {
         return new LatestAnalysisResponse(latest.analysisId(), latest.status());
     }

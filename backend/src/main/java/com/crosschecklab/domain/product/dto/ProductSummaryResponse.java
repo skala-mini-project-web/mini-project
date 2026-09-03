@@ -16,6 +16,14 @@ public record ProductSummaryResponse(
         OffsetDateTime createdAt
 ) {
 
+    /**
+     * Product 엔티티와 최신 문서·분석 정보를 조합해 목록 응답을 만든다.
+     *
+     * @param product 상품 엔티티
+     * @param latestDocument 최신 문서 정보 (없으면 null)
+     * @param latestAnalysis 최신 분석 정보 (없으면 null)
+     * @return 상품 목록 항목 DTO
+     */
     public static ProductSummaryResponse of(Product product, LatestDocumentResponse latestDocument,
                                             LatestAnalysisResponse latestAnalysis) {
         return new ProductSummaryResponse(

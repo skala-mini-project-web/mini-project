@@ -48,7 +48,13 @@ class ProductApiTest extends IntegrationTestSupport {
         jdbc.update("DELETE FROM products");
     }
 
-    // 분석은 문서에 달리므로 latestAnalysis 를 만들려면 문서가 먼저 있어야 한다.
+    /**
+     * 테스트용 문서를 직접 DB에 삽입한다.
+     * 분석은 문서에 달리므로 latestAnalysis 를 만들려면 문서가 먼저 있어야 한다.
+     *
+     * @param productId 문서를 등록할 상품 ID
+     * @return 생성된 문서 ID
+     */
     private long insertDocument(long productId) {
         return jdbc.queryForObject("""
                 INSERT INTO product_documents
@@ -59,7 +65,15 @@ class ProductApiTest extends IntegrationTestSupport {
                 RETURNING id""", Long.class, productId);
     }
 
-    // red_team_pack_id 1 은 V2 시드 값이다. input_hash 는 (문서, 해시) 부분 UNIQUE 를 피하려고 호출부가 정한다.
+    /**
+     * 테스트용 분석 레코드를 직접 DB에 삽입한다.
+     * red_team_pack_id 1 은 V2 시드 값이다. input_hash 는 (문서, 해시) 부분 UNIQUE 를 피하려고 호출부가 정한다.
+     *
+     * @param documentId 분석 대상 문서 ID
+     * @param status 분석 상태 (AnalysisStatus enum 값의 문자열)
+     * @param inputHash 중복 방지용 입력 해시 (테스트별로 고유한 값 사용)
+     * @return 생성된 분석 ID
+     */
     private long insertAnalysis(long documentId, String status, String inputHash) {
         return jdbc.queryForObject("""
                 INSERT INTO analyses
@@ -209,6 +223,10 @@ class ProductApiTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.latestAnalysis").value(nullValue()));
         }
 
+        /**
+         * 상품 상세 조회 시 분석 이력이 있을 때 최신 분석 정보가 응답에 포함되는지 검증한다.
+         * 같은 문서에 여러 분석이 있으면 id가 가장 큰(최신) 분석을 반환한다.
+         */
         @Test
         @DisplayName("분석 이력이 있으면 가장 최근 분석 하나가 latestAnalysis 로 나온다")
         void includesLatestAnalysis() throws Exception {
@@ -224,6 +242,10 @@ class ProductApiTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.latestAnalysis.status").value("COMPLETED"));
         }
 
+        /**
+         * 상품에 문서가 여러 개 있고 각각에 분석 이력이 있을 때,
+         * 모든 문서를 통틀어 상품 단위로 가장 최신 분석만 응답에 포함되는지 검증한다.
+         */
         @Test
         @DisplayName("문서를 여러 번 올렸어도 상품 단위로 최신 분석 하나만 나온다")
         void picksLatestAnalysisAcrossDocuments() throws Exception {
@@ -287,6 +309,10 @@ class ProductApiTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.totalElements").value(2));
         }
 
+        /**
+         * 상품 목록 조회 시 각 상품의 최신 분석 정보가 포함되는지 검증한다.
+         * 분석 이력이 없는 상품은 latestAnalysis 필드가 null로 응답된다.
+         */
         @Test
         @DisplayName("목록에도 상품별 최신 분석이 채워지고, 분석이 없는 상품은 null 이다")
         void listsLatestAnalysisPerProduct() throws Exception {

@@ -20,6 +20,14 @@ public record ProductResponse(
         OffsetDateTime updatedAt
 ) {
 
+    /**
+     * Product 엔티티와 최신 문서·분석 정보를 조합해 상세 응답을 만든다.
+     *
+     * @param product 상품 엔티티
+     * @param latestDocument 최신 문서 정보 (없으면 null)
+     * @param latestAnalysis 최신 분석 정보 (없으면 null)
+     * @return 상품 상세 응답 DTO
+     */
     public static ProductResponse of(Product product, LatestDocumentResponse latestDocument,
                                      LatestAnalysisResponse latestAnalysis) {
         return new ProductResponse(
