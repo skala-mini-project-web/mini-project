@@ -86,7 +86,7 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
               <GBadge tone="neutral">{{ FINDING_TYPE_LABEL[f.findingType] || f.findingType }}</GBadge>
               <GBadge tone="neutral">{{ RULE_LABEL[f.ruleCode] || f.ruleCode }}</GBadge>
             </div>
-            <p class="t-lg fmsg">{{ f.message }}</p>
+            <p class="t-lg fmsg">{{ f.statement }}</p>
             <blockquote class="quote"><span class="mono qp">p.{{ f.sourceReference.page ?? '-' }}</span>{{ f.sourceReference.excerpt }}</blockquote>
             <div class="mini">
               <span>{{ f.affectedPersonaCodes.map(personaName).join(', ') }}</span>

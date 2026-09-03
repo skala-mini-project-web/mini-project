@@ -73,7 +73,7 @@ const DEMO_FINDINGS = [
     findingId: 'FND-001',
     findingType: 'FRAMING',
     ruleCode: 'STABILITY_KEYWORD',
-    message: '안정성 표현이 원금보장으로 오인될 가능성이 있습니다.',
+    statement: '안정성 표현이 원금보장으로 오인될 가능성이 있습니다.',
     severity: 'HIGH',
     sourceReference: { documentId: 'PDOC-001', page: 1, excerpt: '최근 안정적인 수익률을 기록한 투자상품입니다.' },
     affectedPersonaCodes: ['FINANCIAL_BEGINNER', 'SENIOR'],
@@ -86,7 +86,7 @@ const DEMO_FINDINGS = [
     findingId: 'FND-002',
     findingType: 'OMISSION',
     ruleCode: 'COST_OMISSION',
-    message: '총비용 및 운용 보수가 인접 위치에 표시되지 않았습니다.',
+    statement: '총비용 및 운용 보수가 인접 위치에 표시되지 않았습니다.',
     severity: 'MEDIUM',
     sourceReference: { documentId: 'PDOC-001', page: 2, excerpt: '운용 보수' },
     affectedPersonaCodes: ['FINANCIAL_BEGINNER'],
@@ -138,38 +138,38 @@ const SEV_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1 }
 const DOC_SAMPLES = {
   INVESTMENT: [
     { text: '본 상품은 최근 3년 연속 안정적인 수익률을 기록한 투자상품입니다. 연 5.8% 수준의 수익을 기대할 수 있으며, 시장 변동과 무관하게 꾸준한 성과를 지향합니다. 운용 보수와 판매 수수료가 부과됩니다.', findings: [
-      { findingType: 'FRAMING', ruleCode: 'STABILITY_KEYWORD', severity: 'HIGH', message: '안정성 표현이 원금보장으로 오인될 수 있습니다.', excerpt: '안정적인 수익률을 기록한', personas: ['FINANCIAL_BEGINNER', 'SENIOR'], ev: 'POLICY-003', reco: '원금 손실 가능성을 같은 영역에 명시하세요.' },
-      { findingType: 'FRAMING', ruleCode: 'RETURN_FRAMING', severity: 'MEDIUM', message: '기대 수익이 확정 수익처럼 표현되었습니다.', excerpt: '연 5.8% 수준의 수익을 기대', personas: ['FINANCIAL_BEGINNER'], ev: 'LAW-014', reco: '기대 수익이 미래 성과를 보장하지 않음을 표시하세요.' },
+      { findingType: 'FRAMING', ruleCode: 'STABILITY_KEYWORD', severity: 'HIGH', statement: '안정성 표현이 원금보장으로 오인될 수 있습니다.', excerpt: '안정적인 수익률을 기록한', personas: ['FINANCIAL_BEGINNER', 'SENIOR'], ev: 'POLICY-003', reco: '원금 손실 가능성을 같은 영역에 명시하세요.' },
+      { findingType: 'FRAMING', ruleCode: 'RETURN_FRAMING', severity: 'MEDIUM', statement: '기대 수익이 확정 수익처럼 표현되었습니다.', excerpt: '연 5.8% 수준의 수익을 기대', personas: ['FINANCIAL_BEGINNER'], ev: 'LAW-014', reco: '기대 수익이 미래 성과를 보장하지 않음을 표시하세요.' },
     ] },
     { text: '글로벌 우량 기업에 분산 투자하여 원금 손실 위험을 최소화한 상품입니다. 배당을 통해 월 지급식 인컴을 추구합니다. 환율 변동에 따라 손실이 발생할 수 있습니다.', findings: [
-      { findingType: 'FRAMING', ruleCode: 'LOSS_SOFTENING', severity: 'HIGH', message: '손실 가능성을 축소하는 표현입니다.', excerpt: '원금 손실 위험을 최소화한', personas: ['LOSS_SENSITIVE', 'FINANCIAL_BEGINNER'], ev: 'POLICY-003', reco: '손실 가능성을 축소 없이 명확히 표시하세요.' },
-      { findingType: 'ACCESSIBILITY', ruleCode: 'COGNITIVE_ACCESSIBILITY', severity: 'LOW', message: '전문용어로 인지 부담이 있습니다.', excerpt: '월 지급식 인컴', personas: ['LOW_LITERACY', 'SENIOR'], ev: null, reco: '핵심 용어에 쉬운 설명을 병기하세요.' },
+      { findingType: 'FRAMING', ruleCode: 'LOSS_SOFTENING', severity: 'HIGH', statement: '손실 가능성을 축소하는 표현입니다.', excerpt: '원금 손실 위험을 최소화한', personas: ['LOSS_SENSITIVE', 'FINANCIAL_BEGINNER'], ev: 'POLICY-003', reco: '손실 가능성을 축소 없이 명확히 표시하세요.' },
+      { findingType: 'ACCESSIBILITY', ruleCode: 'COGNITIVE_ACCESSIBILITY', severity: 'LOW', statement: '전문용어로 인지 부담이 있습니다.', excerpt: '월 지급식 인컴', personas: ['LOW_LITERACY', 'SENIOR'], ev: null, reco: '핵심 용어에 쉬운 설명을 병기하세요.' },
     ] },
     { text: 'AI 기반 자산배분으로 시장을 이기는 성과를 목표로 합니다. 지난 분기 벤치마크 대비 초과 수익을 달성했습니다. 투자에는 원금 손실이 따를 수 있습니다.', findings: [
-      { findingType: 'MISUNDERSTANDING', ruleCode: 'FORMAL_CONFIRMATION', severity: 'MEDIUM', message: '과거 성과가 미래를 보장하는 것으로 오인될 수 있습니다.', excerpt: '초과 수익을 달성', personas: ['FINANCIAL_BEGINNER', 'DIGITAL_NOVICE'], ev: 'POLICY-003', reco: '성과 측정 기간과 기준을 명시하세요.' },
+      { findingType: 'MISUNDERSTANDING', ruleCode: 'FORMAL_CONFIRMATION', severity: 'MEDIUM', statement: '과거 성과가 미래를 보장하는 것으로 오인될 수 있습니다.', excerpt: '초과 수익을 달성', personas: ['FINANCIAL_BEGINNER', 'DIGITAL_NOVICE'], ev: 'POLICY-003', reco: '성과 측정 기간과 기준을 명시하세요.' },
     ] },
   ],
   LOAN: [
     { text: '직장인이라면 누구나 최저 연 3.9% 금리로 간편하게 대출받을 수 있습니다. 복잡한 서류 없이 5분 만에 한도 조회가 가능합니다. 실제 금리는 신용도에 따라 달라집니다.', findings: [
-      { findingType: 'FRAMING', ruleCode: 'RETURN_FRAMING', severity: 'MEDIUM', message: '최저 금리가 일반 조건처럼 강조되었습니다.', excerpt: '최저 연 3.9% 금리', personas: ['FINANCIAL_BEGINNER', 'DIGITAL_NOVICE'], ev: 'LAW-014', reco: '최저금리 적용 조건과 평균금리를 함께 표시하세요.' },
-      { findingType: 'OMISSION', ruleCode: 'COST_OMISSION', severity: 'MEDIUM', message: '중도상환수수료 등 비용 안내가 누락되었습니다.', excerpt: '5분 만에 한도 조회', personas: ['LOW_LITERACY'], ev: 'POLICY-003', reco: '중도상환수수료와 연체이자 등 비용을 안내하세요.' },
+      { findingType: 'FRAMING', ruleCode: 'RETURN_FRAMING', severity: 'MEDIUM', statement: '최저 금리가 일반 조건처럼 강조되었습니다.', excerpt: '최저 연 3.9% 금리', personas: ['FINANCIAL_BEGINNER', 'DIGITAL_NOVICE'], ev: 'LAW-014', reco: '최저금리 적용 조건과 평균금리를 함께 표시하세요.' },
+      { findingType: 'OMISSION', ruleCode: 'COST_OMISSION', severity: 'MEDIUM', statement: '중도상환수수료 등 비용 안내가 누락되었습니다.', excerpt: '5분 만에 한도 조회', personas: ['LOW_LITERACY'], ev: 'POLICY-003', reco: '중도상환수수료와 연체이자 등 비용을 안내하세요.' },
     ] },
     { text: '생활비가 필요할 때 부담 없이 신청하세요. 낮은 금리로 이자 걱정을 덜어드립니다. 연체 시 높은 지연배상금이 부과될 수 있습니다.', findings: [
-      { findingType: 'FRAMING', ruleCode: 'LOSS_SOFTENING', severity: 'MEDIUM', message: '상환 부담을 과도하게 축소했습니다.', excerpt: '이자 걱정을 덜어드립니다', personas: ['LOSS_SENSITIVE'], ev: 'POLICY-003', reco: '상환 부담과 연체 위험을 함께 안내하세요.' },
+      { findingType: 'FRAMING', ruleCode: 'LOSS_SOFTENING', severity: 'MEDIUM', statement: '상환 부담을 과도하게 축소했습니다.', excerpt: '이자 걱정을 덜어드립니다', personas: ['LOSS_SENSITIVE'], ev: 'POLICY-003', reco: '상환 부담과 연체 위험을 함께 안내하세요.' },
     ] },
     { text: '전세자금을 안전하게 마련하세요. 정부 지원 연계로 우대 금리를 제공합니다. 보증 조건 미충족 시 대출이 제한될 수 있습니다.', findings: [
-      { findingType: 'ACCESSIBILITY', ruleCode: 'COGNITIVE_ACCESSIBILITY', severity: 'LOW', message: '우대 조건이 어려운 표현으로 안내되었습니다.', excerpt: '정부 지원 연계로 우대 금리', personas: ['LOW_LITERACY', 'SENIOR'], ev: null, reco: '우대 조건을 쉬운 표현으로 명시하세요.' },
+      { findingType: 'ACCESSIBILITY', ruleCode: 'COGNITIVE_ACCESSIBILITY', severity: 'LOW', statement: '우대 조건이 어려운 표현으로 안내되었습니다.', excerpt: '정부 지원 연계로 우대 금리', personas: ['LOW_LITERACY', 'SENIOR'], ev: null, reco: '우대 조건을 쉬운 표현으로 명시하세요.' },
     ] },
   ],
   SAVINGS: [
     { text: '연 4.0% 확정 금리를 제공하는 안심 정기예금입니다. 원금이 보장되어 안전하게 목돈을 모을 수 있습니다. 중도 해지 시 약정 이율이 적용되지 않습니다.', findings: [
-      { findingType: 'MISUNDERSTANDING', ruleCode: 'STABILITY_KEYWORD', severity: 'HIGH', message: '원금 보장 표현의 보호 범위가 불명확합니다.', excerpt: '원금이 보장되어 안전하게', personas: ['SENIOR', 'FINANCIAL_BEGINNER'], ev: 'POLICY-003', reco: '예금자보호 한도(5천만원) 기준을 명시하세요.' },
+      { findingType: 'MISUNDERSTANDING', ruleCode: 'STABILITY_KEYWORD', severity: 'HIGH', statement: '원금 보장 표현의 보호 범위가 불명확합니다.', excerpt: '원금이 보장되어 안전하게', personas: ['SENIOR', 'FINANCIAL_BEGINNER'], ev: 'POLICY-003', reco: '예금자보호 한도(5천만원) 기준을 명시하세요.' },
     ] },
     { text: '자유롭게 입출금하며 매일 이자가 쌓이는 파킹통장입니다. 조건 없이 높은 금리를 드립니다. 우대 금리는 일정 조건 충족 시 적용됩니다.', findings: [
-      { findingType: 'FRAMING', ruleCode: 'RETURN_FRAMING', severity: 'MEDIUM', message: '조건부 우대금리가 무조건인 것처럼 표현되었습니다.', excerpt: '조건 없이 높은 금리', personas: ['FINANCIAL_BEGINNER', 'DIGITAL_NOVICE'], ev: 'LAW-014', reco: '기본금리와 우대금리 조건을 구분해 표시하세요.' },
+      { findingType: 'FRAMING', ruleCode: 'RETURN_FRAMING', severity: 'MEDIUM', statement: '조건부 우대금리가 무조건인 것처럼 표현되었습니다.', excerpt: '조건 없이 높은 금리', personas: ['FINANCIAL_BEGINNER', 'DIGITAL_NOVICE'], ev: 'LAW-014', reco: '기본금리와 우대금리 조건을 구분해 표시하세요.' },
     ] },
     { text: '목표 금액까지 습관처럼 모으는 적금입니다. 만기까지 유지하면 최고 금리를 받을 수 있습니다. 중도 인출 시 이자가 삭감됩니다.', findings: [
-      { findingType: 'MISUNDERSTANDING', ruleCode: 'FORMAL_CONFIRMATION', severity: 'LOW', message: '최고 금리 달성 조건이 형식적으로 안내되었습니다.', excerpt: '최고 금리를 받을 수 있습니다', personas: ['FINANCIAL_BEGINNER'], ev: 'POLICY-003', reco: '최고금리 달성 조건을 명확히 안내하세요.' },
+      { findingType: 'MISUNDERSTANDING', ruleCode: 'FORMAL_CONFIRMATION', severity: 'LOW', statement: '최고 금리 달성 조건이 형식적으로 안내되었습니다.', excerpt: '최고 금리를 받을 수 있습니다', personas: ['FINANCIAL_BEGINNER'], ev: 'POLICY-003', reco: '최고금리 달성 조건을 명확히 안내하세요.' },
     ] },
   ],
 }
@@ -178,7 +178,7 @@ function mkFinding(docId, t) {
   _fseq += 1
   return {
     findingId: `FND-9${100 + _fseq}`, findingType: t.findingType, ruleCode: t.ruleCode,
-    message: t.message, severity: t.severity,
+    statement: t.statement, severity: t.severity,
     sourceReference: { documentId: docId, page: 1, excerpt: t.excerpt },
     affectedPersonaCodes: t.personas,
     evidenceReferences: t.ev ? [{ documentId: t.ev, excerpt: '근거 준칙 발췌 (데모)', sourceType: 'INTERNAL_POLICY' }] : [],
@@ -227,7 +227,7 @@ function buildBulk() {
       const hi = findings.find((f) => f.severity === 'HIGH') || findings[0]
       const rpId = `RISK-9${idn}`
       reviews.push({ reviewId, analysisId, productId: p.productId, productName: p.name, maxSeverity: maxSev, status: 'APPROVED', decision: 'APPROVED', submittedBy: 'USER-PM-001', ownerName: '박서준 대리', submittedAt: p.createdAt, submissionComment: '검토 요청', reviewerId: 'USER-CR-001', decidedAt: p.createdAt, comment: '승인 처리', selectedFindingIds: [hi.findingId], riskPatternIds: [rpId] })
-      risk.push({ riskPatternId: rpId, name: hi.message.slice(0, 20), severity: hi.severity, ruleCode: hi.ruleCode, affectedPersonaCodes: hi.affectedPersonaCodes, sourceFindingId: hi.findingId, sourceReviewId: reviewId, status: 'ACTIVE', createdAt: p.createdAt, sourceExcerpt: hi.sourceReference.excerpt, recommendation: hi.recommendation })
+      risk.push({ riskPatternId: rpId, name: hi.statement.slice(0, 20), severity: hi.severity, ruleCode: hi.ruleCode, affectedPersonaCodes: hi.affectedPersonaCodes, sourceFindingId: hi.findingId, sourceReviewId: reviewId, status: 'ACTIVE', createdAt: p.createdAt, sourceExcerpt: hi.sourceReference.excerpt, recommendation: hi.recommendation })
       const at = GF_TYPES[i % GF_TYPES.length]
       guardfit.push({ actionId: `GFA-9${idn}`, riskPatternId: rpId, actionType: at.actionType, label: at.label, placement: at.placement, required: i % 3 !== 0, status: 'APPROVED', createdBy: 'USER-CR-001', updatedBy: 'USER-CR-001', updatedAt: p.createdAt })
     } else if (p.status === 'NEEDS_FIX') {

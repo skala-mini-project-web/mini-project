@@ -179,7 +179,7 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
               <GBadge tone="neutral">{{ RULE_LABEL[f.ruleCode] || f.ruleCode }}</GBadge>
               <span class="mono fid">{{ f.findingId }}</span>
             </div>
-            <p class="t-lg fmsg">{{ f.message }}</p>
+            <p class="t-lg fmsg">{{ f.statement }}</p>
 
             <blockquote class="quote">
               <span class="mono qp">p.{{ f.sourceReference.page ?? '-' }}</span>{{ f.sourceReference.excerpt }}

@@ -35,7 +35,7 @@ export function applyGuardrails(rawFindings, ctx) {
       findingType: FINDING_TYPES.includes(f.findingType) ? f.findingType : 'FRAMING',
       ruleCode: f.ruleCode,
       severity,
-      message: String(f.message || '').slice(0, 1000),
+      statement: String(f.statement || '').slice(0, 1000),
       sourceReference: { page: Number.isInteger(f.sourceReference?.page) ? f.sourceReference.page : 1, excerpt },
       affectedPersonaCodes: personas,
       evidenceReferences,

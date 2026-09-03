@@ -21,7 +21,7 @@ function buildUserPrompt(sourceText, personaCodes, ruleCodes, grounding) {
     `[personaCodes]\n${personaCodes.join(', ')}`,
     `[evidence]\n${grounding.map((g) => `- ${g.documentId} (${g.sourceType}): ${g.excerpt}`).join('\n')}`,
     '[출력 스키마]',
-    '{"findings":[{"findingType":"FRAMING|OMISSION|MISUNDERSTANDING|ACCESSIBILITY","ruleCode":"<목록 중>","severity":"HIGH|MEDIUM|LOW","message":"...","sourceReference":{"page":1,"excerpt":"<문서 원문 그대로>"},"affectedPersonaCodes":["..."],"evidenceReferences":[{"documentId":"<evidence 중>","excerpt":"...","sourceType":"INTERNAL_POLICY|LAW"}],"recommendation":"..."}]}',
+    '{"findings":[{"findingType":"FRAMING|OMISSION|MISUNDERSTANDING|ACCESSIBILITY","ruleCode":"<목록 중>","severity":"HIGH|MEDIUM|LOW","statement":"...","sourceReference":{"page":1,"excerpt":"<문서 원문 그대로>"},"affectedPersonaCodes":["..."],"evidenceReferences":[{"documentId":"<evidence 중>","excerpt":"...","sourceType":"INTERNAL_POLICY|LAW"}],"recommendation":"..."}]}',
   ].join('\n\n')
 }
 

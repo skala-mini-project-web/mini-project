@@ -592,7 +592,7 @@ export const mockServer = {
       riskPatternIds = selected.map((fid) => {
         const f = analysis.findings.find((x) => x.findingId === fid)
         const rp = {
-          riskPatternId: nextId('RISK'), name: f.message.slice(0, 24), severity: f.severity,
+          riskPatternId: nextId('RISK'), name: f.statement.slice(0, 24), severity: f.severity,
           ruleCode: f.ruleCode, affectedPersonaCodes: f.affectedPersonaCodes,
           sourceFindingId: f.findingId, sourceReviewId: review.reviewId, status: 'ACTIVE', createdAt: iso(),
           sourceExcerpt: f.sourceReference?.excerpt || '', recommendation: f.recommendation || '',

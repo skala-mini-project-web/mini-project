@@ -33,7 +33,7 @@ export const NORMAL_SCENARIOS = {
     findings: (docId) => [
       finding(docId, {
         findingId: 'FND-001', findingType: 'FRAMING', ruleCode: 'STABILITY_KEYWORD',
-        message: '안정성 표현이 원금보장으로 오인될 가능성이 있습니다.', severity: 'HIGH',
+        statement: '안정성 표현이 원금보장으로 오인될 가능성이 있습니다.', severity: 'HIGH',
         sourceReference: { page: 1, excerpt: '최근 안정적인 수익률을 기록한 투자상품입니다.' },
         affectedPersonaCodes: ['FINANCIAL_BEGINNER', 'SENIOR'],
         evidenceReferences: [{ documentId: 'POLICY-003', excerpt: '원금손실 가능성은 안정성 표현과 인접해 표시해야 합니다.', sourceType: 'INTERNAL_POLICY' }],
@@ -41,7 +41,7 @@ export const NORMAL_SCENARIOS = {
       }),
       finding(docId, {
         findingId: 'FND-002', findingType: 'OMISSION', ruleCode: 'COST_OMISSION',
-        message: '총비용 및 운용 보수가 인접 위치에 표시되지 않았습니다.', severity: 'MEDIUM',
+        statement: '총비용 및 운용 보수가 인접 위치에 표시되지 않았습니다.', severity: 'MEDIUM',
         sourceReference: { page: 2, excerpt: '운용 보수' },
         affectedPersonaCodes: ['FINANCIAL_BEGINNER'],
         evidenceReferences: [{ documentId: 'POLICY-003', excerpt: '비용 정보는 수익 표현과 함께 제시해야 합니다.', sourceType: 'INTERNAL_POLICY' }],
@@ -55,7 +55,7 @@ export const NORMAL_SCENARIOS = {
     findings: (docId) => [
       finding(docId, {
         findingId: 'FND-101', findingType: 'OMISSION', ruleCode: 'COST_OMISSION',
-        message: '수수료 및 총비용 정보가 누락되었습니다.', severity: 'MEDIUM',
+        statement: '수수료 및 총비용 정보가 누락되었습니다.', severity: 'MEDIUM',
         sourceReference: { page: 1, excerpt: '수수료 안내' },
         affectedPersonaCodes: ['FINANCIAL_BEGINNER', 'LOW_LITERACY', 'DIGITAL_NOVICE'],
         evidenceReferences: [{ documentId: 'POLICY-003', excerpt: '비용 정보는 수익 표현과 함께 제시해야 합니다.', sourceType: 'INTERNAL_POLICY' }],
@@ -69,7 +69,7 @@ export const NORMAL_SCENARIOS = {
     findings: (docId) => [
       finding(docId, {
         findingId: 'FND-201', findingType: 'ACCESSIBILITY', ruleCode: 'COGNITIVE_ACCESSIBILITY',
-        message: '전문용어가 많아 저문해 소비자에게 인지 부담이 큽니다.', severity: 'LOW',
+        statement: '전문용어가 많아 저문해 소비자에게 인지 부담이 큽니다.', severity: 'LOW',
         sourceReference: { page: 1, excerpt: '기초자산 변동성' },
         affectedPersonaCodes: ['LOW_LITERACY'],
         evidenceReferences: [],
