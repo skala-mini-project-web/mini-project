@@ -8,8 +8,11 @@ import com.crosschecklab.domain.analysis.dto.AnalysisStatusResponse;
 import com.crosschecklab.global.security.CurrentUser;
 import com.crosschecklab.global.security.DemoUser;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,12 +23,14 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 // ANA-001~004. 서비스 위임만 하고 비즈니스 로직을 두지 않는다.
+@Validated
 @RestController
 @RequestMapping("/api/analyses")
 @RequiredArgsConstructor
 public class AnalysisController {
 
     private static final String SCENARIO_HEADER = "X-Demo-Scenario";
+    private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 
     private final AnalysisService analysisService;
 
@@ -33,9 +38,10 @@ public class AnalysisController {
     @ResponseStatus(HttpStatus.ACCEPTED)
     public AnalysisAcceptedResponse create(
             @Valid @RequestBody AnalysisCreateRequest request,
+            @RequestHeader(IDEMPOTENCY_KEY_HEADER) @NotBlank @Size(max = 255) String idempotencyKey,
             @RequestHeader(value = SCENARIO_HEADER, required = false) String scenarioCode,
             @CurrentUser DemoUser currentUser) {
-        return analysisService.create(request, scenarioCode, currentUser);
+        return analysisService.create(request, idempotencyKey, scenarioCode, currentUser);
     }
 
     @GetMapping("/{analysisId}")

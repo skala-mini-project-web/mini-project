@@ -26,6 +26,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
@@ -84,9 +85,11 @@ class AnalysisApiTest extends IntegrationTestSupport {
     // V2 시드: 1 = pm_park(PRODUCT_MANAGER, 아래 상품의 소유자), 2 = reviewer_kim(COMPLIANCE_REVIEWER)
     private static final String USER_ID_HEADER = "X-Demo-User-Id";
     private static final String ROLE_HEADER = "X-Demo-Role";
+    private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 
     private Long productId;
     private Long confirmedDocumentId;
+    private long idempotencyKeySequence;
 
     private MockHttpServletRequestBuilder asPm(MockHttpServletRequestBuilder builder) {
         return builder.header(USER_ID_HEADER, "1").header(ROLE_HEADER, "PRODUCT_MANAGER");
@@ -94,6 +97,15 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
     private MockHttpServletRequestBuilder asReviewer(MockHttpServletRequestBuilder builder) {
         return builder.header(USER_ID_HEADER, "2").header(ROLE_HEADER, "COMPLIANCE_REVIEWER");
+    }
+
+    private MockHttpServletRequestBuilder withIdempotencyKey(MockHttpServletRequestBuilder builder) {
+        return withIdempotencyKey(builder, "analysis-api-test-" + ++idempotencyKeySequence);
+    }
+
+    private MockHttpServletRequestBuilder withIdempotencyKey(
+            MockHttpServletRequestBuilder builder, String idempotencyKey) {
+        return builder.header(IDEMPOTENCY_KEY_HEADER, idempotencyKey);
     }
 
     private MockHttpServletRequestBuilder traced(MockHttpServletRequestBuilder builder, String traceId) {
@@ -121,6 +133,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
     // 참조 순서대로 지운다 (analyses → product_documents → products).
     private void clearFixtures() {
+        jdbc.update("DELETE FROM idempotency_claims");
         jdbc.update("DELETE FROM analyses");
         jdbc.update("DELETE FROM product_documents");
         jdbc.update("DELETE FROM products");
@@ -155,9 +168,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     private Long createAnalysis(String traceId) throws Exception {
-        MockHttpServletRequestBuilder builder = asPm(post("/api/analyses")
+        MockHttpServletRequestBuilder builder = withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2))));
+                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))));
         if (traceId != null) {
             builder = traced(builder, traceId);
         }
@@ -247,9 +260,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @DisplayName("ANA-001·004: 분석을 생성하면 202로 수락되고 riskScore 82 시나리오가 COMPLETED로 저장된다")
     void createAndComplete() throws Exception {
         String traceId = "analysis-create-success";
-        mockMvc.perform(traced(asPm(post("/api/analyses")
+        mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))), traceId))
+                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2))))), traceId))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status").value("CREATED"))
                 .andExpect(jsonPath("$.statusUrl").exists())
@@ -277,6 +290,174 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
         assertAudit(traceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
         assertAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
+    }
+
+    @Test
+    @DisplayName("#46: 같은 키와 정규화된 같은 요청은 최초 CREATED 응답을 재생하고 부수 효과를 반복하지 않는다")
+    void sameIdempotencyKeyReplaysCreatedResponse() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        AtomicInteger providerCalls = new AtomicInteger();
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    providerCalls.incrementAndGet();
+                    return new AnalysisResult(0, "idempotency-model", "idempotency-prompt", List.of());
+                });
+        String key = "analysis-replay-key";
+        String firstTraceId = "analysis-replay-first";
+        String replayTraceId = "analysis-replay-second";
+
+        String firstBody = mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
+                                .header("X-Demo-Scenario", "  ORIGINAL_SCENARIO  ")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(request(confirmedDocumentId, List.of(2, 1, 2), List.of(2, 1, 2)))),
+                        key), firstTraceId))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("CREATED"))
+                .andReturn().getResponse().getContentAsString();
+
+        // 재생 경로가 현재 문서 상태를 다시 검증하지 않는지 확인한다.
+        jdbc.update("UPDATE product_documents SET confirmed = FALSE WHERE id = ?", confirmedDocumentId);
+        String replayBody = mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
+                                .header("X-Demo-Scenario", "ORIGINAL_SCENARIO")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))),
+                        key), replayTraceId))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("CREATED"))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(objectMapper.readTree(replayBody).get("analysisId").asLong())
+                .isEqualTo(objectMapper.readTree(firstBody).get("analysisId").asLong());
+        assertThat(providerCalls).hasValue(1);
+        assertThat(fake.lastRequest().scenarioCode()).isEqualTo("ORIGINAL_SCENARIO");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM analyses", Long.class)).isEqualTo(1L);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM idempotency_claims", Long.class)).isEqualTo(1L);
+        assertNoAudit(replayTraceId);
+    }
+
+    @Test
+    @DisplayName("#46: 같은 키를 다른 요청 의미에 재사용하면 409 IDEMPOTENCY_KEY_REUSED")
+    void sameIdempotencyKeyWithDifferentFingerprintConflicts() throws Exception {
+        String key = "analysis-conflict-key";
+        mockMvc.perform(withIdempotencyKey(asPm(post("/api/analyses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1)))), key))
+                .andExpect(status().isAccepted());
+
+        String traceId = "analysis-key-reused";
+        mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(request(confirmedDocumentId, List.of(2), List.of(1)))),
+                        key), traceId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("IDEMPOTENCY_KEY_REUSED"));
+
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM analyses", Long.class)).isEqualTo(1L);
+        assertNoAudit(traceId);
+    }
+
+    @Test
+    @DisplayName("#46: 같은 키의 동시 생성 요청은 하나의 분석과 Provider 호출만 만든다")
+    void concurrentSameKeyCreatesOnce() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        AtomicInteger providerCalls = new AtomicInteger();
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    providerCalls.incrementAndGet();
+                    return new AnalysisResult(0, "concurrent-model", "concurrent-prompt", List.of());
+                });
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        String key = "analysis-concurrent-key";
+
+        Function<String, JsonNode> create = traceId -> {
+            ready.countDown();
+            try {
+                if (!start.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("동시 생성 시작 대기 시간이 초과되었습니다.");
+                }
+                String body = mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(request(
+                                                confirmedDocumentId, List.of(1, 2), List.of(1, 2)))),
+                                key), traceId))
+                        .andExpect(status().isAccepted())
+                        .andExpect(jsonPath("$.status").value("CREATED"))
+                        .andReturn().getResponse().getContentAsString();
+                return objectMapper.readTree(body);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+        CompletableFuture<JsonNode> first = CompletableFuture.supplyAsync(
+                () -> create.apply("analysis-concurrent-first"));
+        CompletableFuture<JsonNode> second = CompletableFuture.supplyAsync(
+                () -> create.apply("analysis-concurrent-second"));
+        assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+        start.countDown();
+
+        JsonNode firstResponse = first.orTimeout(10, TimeUnit.SECONDS).join();
+        JsonNode secondResponse = second.orTimeout(10, TimeUnit.SECONDS).join();
+        assertThat(firstResponse.get("analysisId").asLong())
+                .isEqualTo(secondResponse.get("analysisId").asLong());
+        assertThat(providerCalls).hasValue(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM analyses", Long.class)).isEqualTo(1L);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM idempotency_claims", Long.class)).isEqualTo(1L);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM audit_events
+                WHERE trace_id IN ('analysis-concurrent-first', 'analysis-concurrent-second')
+                  AND action = 'ANALYSIS_CREATED'
+                """, Long.class)).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("#46: Idempotency-Key 범위는 요청 actor별로 분리된다")
+    void idempotencyKeyIsActorScoped() throws Exception {
+        String key = "actor-scoped-key";
+        mockMvc.perform(withIdempotencyKey(asPm(post("/api/analyses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1)))), key))
+                .andExpect(status().isAccepted());
+
+        mockMvc.perform(withIdempotencyKey(asReviewer(post("/api/analyses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1)))), key))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM idempotency_claims
+                WHERE actor_id = 1 AND idempotency_key = ?
+                """, Long.class, key)).isEqualTo(1L);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM idempotency_claims
+                WHERE actor_id = 2 AND idempotency_key = ?
+                """, Long.class, key)).isZero();
+    }
+
+    @Test
+    @DisplayName("#46: 생성 요청의 Idempotency-Key는 필수이며 blank 또는 255자를 넘을 수 없다")
+    void createRequiresValidIdempotencyKey() throws Exception {
+        String body = request(confirmedDocumentId, List.of(1), List.of(1));
+
+        mockMvc.perform(asPm(post("/api/analyses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+        mockMvc.perform(withIdempotencyKey(asPm(post("/api/analyses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)), "   "))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+        mockMvc.perform(withIdempotencyKey(asPm(post("/api/analyses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)), "k".repeat(256)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM idempotency_claims", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM analyses", Long.class)).isZero();
     }
 
     @Test
@@ -442,9 +623,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
         Long documentId = insertDocument(false);
         String traceId = "analysis-document-not-confirmed";
 
-        mockMvc.perform(traced(asPm(post("/api/analyses")
+        mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(documentId, List.of(1), List.of(1)))), traceId))
+                        .content(request(documentId, List.of(1), List.of(1))))), traceId))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("DOCUMENT_NOT_CONFIRMED"))
                 .andExpect(jsonPath("$.traceId").isNotEmpty());
@@ -455,9 +636,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @DisplayName("Persona 를 4개 선택하면 400 INVALID_SELECTION_COUNT")
     void invalidSelectionCount() throws Exception {
         String traceId = "analysis-invalid-selection";
-        mockMvc.perform(traced(asPm(post("/api/analyses")
+        mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1, 2, 3, 4)))), traceId))
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1, 2, 3, 4))))), traceId))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_SELECTION_COUNT"));
         assertNoAudit(traceId);
@@ -467,9 +648,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @DisplayName("존재하지 않는 근거 문서를 선택하면 400 INVALID_EVIDENCE_DOCUMENT")
     void invalidEvidenceDocument() throws Exception {
         String traceId = "analysis-invalid-evidence";
-        mockMvc.perform(traced(asPm(post("/api/analyses")
+        mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(999), List.of(1)))), traceId))
+                        .content(request(confirmedDocumentId, List.of(999), List.of(1))))), traceId))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_EVIDENCE_DOCUMENT"));
         assertNoAudit(traceId);
@@ -481,9 +662,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
         createAnalysis();
         String traceId = "analysis-duplicate";
 
-        mockMvc.perform(traced(asPm(post("/api/analyses")
+        mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))), traceId))
+                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2))))), traceId))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("DUPLICATE_ANALYSIS_REQUEST"));
         assertNoAudit(traceId);
@@ -647,9 +828,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
         Long othersDocumentId = insertDocumentOwnedBy(2L);
         String traceId = "analysis-create-others";
 
-        mockMvc.perform(traced(asPm(post("/api/analyses")
+        mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(othersDocumentId, List.of(1), List.of(1)))), traceId))
+                        .content(request(othersDocumentId, List.of(1), List.of(1))))), traceId))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("FORBIDDEN_OWNERSHIP"));
         assertNoAudit(traceId);
@@ -659,9 +840,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @DisplayName("검토자는 분석을 생성할 수 없다 (403)")
     void reviewerCannotCreate() throws Exception {
         String traceId = "analysis-create-wrong-role";
-        mockMvc.perform(traced(asReviewer(post("/api/analyses")
+        mockMvc.perform(traced(withIdempotencyKey(asReviewer(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1)))), traceId))
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1))))), traceId))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
         assertNoAudit(traceId);
@@ -679,7 +860,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("진행 중인 분석은 재시도할 수 없다 (409)")
+    @DisplayName("#46: 재시도는 Idempotency-Key 없이도 기존 잠금 판정으로 RUNNING을 거부한다")
     void cannotRetryWhileRunning() throws Exception {
         Long analysisId = createAnalysis();
         jdbc.update("UPDATE analyses SET status = 'RUNNING', updated_at = NOW() WHERE id = ?", analysisId);

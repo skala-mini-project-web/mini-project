@@ -53,6 +53,7 @@ public enum ErrorCode {
     RISK_PATTERN_ALREADY_ACTIVE(HttpStatus.CONFLICT, "활성화된 리스크 패턴은 DRAFT 로 되돌릴 수 없습니다."),
     ACTION_ALREADY_FINALIZED(HttpStatus.CONFLICT, "승인 완료된 액션은 수정할 수 없습니다."),
     DUPLICATE_ANALYSIS_REQUEST(HttpStatus.CONFLICT, "동일한 입력으로 진행 중이거나 완료된 분석이 이미 있습니다."),
+    IDEMPOTENCY_KEY_REUSED(HttpStatus.CONFLICT, "동일한 멱등성 키가 다른 요청에 사용되었습니다."),
 
     // --- 503 Service Unavailable ---
     // 외부 ai-service 응답이 계약을 어긴 경우 (스키마 불일치, HIGH Finding 근거 0건 등)
