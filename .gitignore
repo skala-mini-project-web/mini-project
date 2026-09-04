@@ -1,7 +1,16 @@
 # Local agent session state
 .gjc/
 
-# Local environment and editor files
+# Local environment, credentials, and editor files
 .env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
 .idea/
 .DS_Store
