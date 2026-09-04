@@ -2,7 +2,7 @@
 
 ## 금융상품 판매 리스크 사전검증 AI 플랫폼
 
-![ARGUS 메인 화면](docs/assets/argus-main-page.png)
+![ARGUS 메인 화면](docs/assets/argus-main-page.gif)
 
 - 판매 문서의 위험 표현을 분석하고, 근거·검토·보호조치 이력을 연결하는 로컬 AI 컴플라이언스 데모
 - 업무 흐름: 상품 담당자(PM) 분석 → 컴플라이언스 reviewer 검토 → Risk Pattern → GuardFit 적용 가이드
