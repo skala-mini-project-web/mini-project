@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -75,6 +76,10 @@ public class Analysis extends BaseTimeEntity {
 
     private OffsetDateTime completedAt;
 
+    // 비동기 실행 회차 식별자. 상태/진행률이 같은 재시도도 새 값으로 바뀌어 이전 worker 결과를 차단한다.
+    @Column(name = "execution_token", nullable = false, length = 36)
+    private String executionToken;
+
     // 동일 입력 재검증 차단용 지문. (product_document_id, input_hash) 부분 UNIQUE 인덱스와 짝을 이룬다.
     @Column(nullable = false, updatable = false, length = 64)
     private String inputHash;
@@ -99,12 +104,14 @@ public class Analysis extends BaseTimeEntity {
         analysis.inputHash = inputHash;
         analysis.status = AnalysisStatus.CREATED;
         analysis.progress = 0;
+        analysis.executionToken = UUID.randomUUID().toString();
         analysis.requiresHumanApproval = true;
         analysis.retryable = false;
         return analysis;
     }
 
     public void markRunning() {
+        this.executionToken = UUID.randomUUID().toString();
         this.status = AnalysisStatus.RUNNING;
         this.progress = RUNNING_PROGRESS;
         this.errorCode = null;

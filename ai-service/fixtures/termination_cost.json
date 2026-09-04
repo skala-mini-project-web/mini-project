@@ -9,11 +9,8 @@
       "affectedPersonaCodes": [
         "SHORT_TERM_LIQUIDITY"
       ],
-      "evidenceReferences": [
-        {
-          "evidenceDocumentId": 2,
-          "excerpt": "중도해지 비용과 불이익은 가입 전 명확하게 안내해야 합니다."
-        }
+      "retrievedContextChunkIds": [
+        12
       ],
       "recommendation": "예상 중도해지 비용을 수익 정보와 동일한 화면에 표시하세요."
     }

@@ -40,13 +40,12 @@ class FakeRiskAnalysisProvider implements RiskAnalysisProvider {
     }
 
     private static AnalysisResult guaranteeHigh(AnalysisRequest request) {
+        AnalysisRequest.RetrievedContextPayload context = request.retrievedContexts().getFirst();
         return new AnalysisResult(82, "mock-risk-v1", "mock-prompt-v1", List.of(new FindingPayload(
                 "안정성 표현이 원금보장으로 오인될 가능성이 있습니다.",
                 Severity.HIGH,
                 List.of(PersonaCode.FINANCIAL_BEGINNER, PersonaCode.SENIOR),
-                List.of(new FindingPayload.EvidenceRefPayload(
-                        request.evidenceDocuments().getFirst().id(),
-                        "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.")),
+                List.of(context.chunkId()),
                 "안정성 표현과 같은 영역에 원금 손실 가능성을 명시하세요.")));
     }
 }

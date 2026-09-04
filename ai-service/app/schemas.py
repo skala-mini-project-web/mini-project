@@ -54,11 +54,21 @@ class Severity(StrEnum):
     LOW = "LOW"
 
 
-class EvidenceDocument(ApiModel):
-    id: int = Field(gt=0)
+class RetrievedContext(ApiModel):
+    chunk_id: int = Field(gt=0)
+    evidence_document_id: int = Field(gt=0)
     source_type: EvidenceSourceType
     title: str = Field(min_length=1, max_length=255)
-    content: str = Field(min_length=1)
+    chunk_text: str = Field(min_length=1)
+    rank: int = Field(gt=0)
+    similarity: float = Field(ge=-1, le=1)
+
+    @field_validator("title", "chunk_text")
+    @classmethod
+    def context_text_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("retrieved context text must not be blank")
+        return value
 
 
 class KnownFact(ApiModel):
@@ -80,7 +90,10 @@ class RiskAnalysisRequest(ApiModel):
     persona_codes: list[PersonaCode] = Field(min_length=1, max_length=3)
     red_team_pack_code: RedTeamPackCode
     rule_codes: list[RedTeamRuleCode] = Field(min_length=1)
-    evidence_documents: list[EvidenceDocument] = Field(min_length=1, max_length=3)
+    selected_evidence_document_ids: list[int] = Field(
+        min_length=1, max_length=3
+    )
+    retrieved_contexts: list[RetrievedContext] = Field(min_length=1)
     known_facts: list[KnownFact] = Field(default_factory=list)
 
     @field_validator("confirmed_text")
@@ -98,14 +111,28 @@ class RiskAnalysisRequest(ApiModel):
             raise ValueError("duplicate codes are not allowed")
         return value
 
-    @field_validator("evidence_documents")
+    @field_validator("selected_evidence_document_ids")
     @classmethod
-    def evidence_documents_must_be_unique(
-        cls, value: list[EvidenceDocument]
-    ) -> list[EvidenceDocument]:
-        identifiers = [document.id for document in value]
-        if len(identifiers) != len(set(identifiers)):
+    def selected_evidence_document_ids_must_be_valid(
+        cls, value: list[int]
+    ) -> list[int]:
+        if any(identifier <= 0 for identifier in value):
+            raise ValueError("evidence document ids must be positive")
+        if len(value) != len(set(value)):
             raise ValueError("duplicate evidence document ids are not allowed")
+        return value
+
+    @field_validator("retrieved_contexts")
+    @classmethod
+    def retrieved_contexts_must_be_ranked(
+        cls, value: list[RetrievedContext]
+    ) -> list[RetrievedContext]:
+        chunk_ids = [context.chunk_id for context in value]
+        if len(chunk_ids) != len(set(chunk_ids)):
+            raise ValueError("duplicate retrieved chunk ids are not allowed")
+        expected_ranks = list(range(1, len(value) + 1))
+        if [context.rank for context in value] != expected_ranks:
+            raise ValueError("retrieved contexts must be ordered by contiguous rank")
         return value
 
     @field_validator("known_facts")
@@ -132,19 +159,22 @@ class RiskAnalysisRequest(ApiModel):
                 f"scenarioCode '{self.scenario_code}' requires "
                 f"ruleCode '{required_rule.value}'"
             )
+        selected = set(self.selected_evidence_document_ids)
+        if any(
+            context.evidence_document_id not in selected
+            for context in self.retrieved_contexts
+        ):
+            raise ValueError(
+                "retrieved contexts must belong to selected evidence documents"
+            )
         return self
-
-
-class EvidenceReference(ApiModel):
-    evidence_document_id: int = Field(gt=0)
-    excerpt: str = Field(min_length=1)
 
 
 class FindingPayload(ApiModel):
     statement: str = Field(min_length=1, max_length=1000)
     severity: Severity
     affected_persona_codes: list[PersonaCode] = Field(min_length=1)
-    evidence_references: list[EvidenceReference] = Field(default_factory=list)
+    retrieved_context_chunk_ids: list[int] = Field(min_length=1)
     known_fact_ids: list[int] = Field(default_factory=list)
     recommendation: str | None = Field(default=None, max_length=1000)
 
@@ -157,18 +187,25 @@ class FindingPayload(ApiModel):
             raise ValueError("duplicate affected persona codes are not allowed")
         return value
 
+    @field_validator("retrieved_context_chunk_ids")
+    @classmethod
+    def retrieved_context_chunk_ids_must_be_valid(
+        cls, value: list[int]
+    ) -> list[int]:
+        if any(identifier <= 0 for identifier in value):
+            raise ValueError("retrieved context chunk ids must be positive")
+        if len(value) != len(set(value)):
+            raise ValueError(
+                "duplicate retrieved context chunk ids are not allowed"
+            )
+        return value
+
     @field_validator("known_fact_ids")
     @classmethod
     def known_fact_ids_must_be_unique(cls, value: list[int]) -> list[int]:
         if len(value) != len(set(value)):
             raise ValueError("duplicate known fact ids are not allowed")
         return value
-
-    @model_validator(mode="after")
-    def high_severity_requires_evidence(self) -> "FindingPayload":
-        if self.severity == Severity.HIGH and not self.evidence_references:
-            raise ValueError("HIGH finding requires at least one evidence reference")
-        return self
 
 
 class RiskAnalysisResponse(ApiModel):

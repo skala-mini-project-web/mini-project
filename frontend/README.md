@@ -1,108 +1,106 @@
-# ARGUS Frontend (MVP)
+# ARGUS Frontend
 
-- 금융상품 설명 문서의 표현 리스크를 분석하고 컴플라이언스 검토와 보호조치(GuardFit)까지 연결하는 워크스페이스
-- 대상 사용자: 상품 담당자(`PRODUCT_MANAGER`), 컴플라이언스 검토자(`COMPLIANCE_REVIEWER`)
-- Vue 3 + Vite 기반 프론트엔드이며 기본 Mock 모드에서는 백엔드 없이 단독 실행 가능
+Vue 3/Vite 기반의 상품 담당자(PM)·컴플라이언스 검토자 워크스페이스입니다. Compose 빌드는 `VITE_USE_MOCK=false`로 실제 Spring API를 사용합니다.
 
-## 스택
+> `data/demo-corpus/`의 PDF, 상품, 기관, 수치, 정책 및 규정은 모두 100% 합성·데모 전용입니다. 실제 법률·금융 권위가 아니며 법률/재무 판단에 사용하면 안 됩니다.
 
-- Vue 3, Vite, Vue Router, Pinia
-- 순수 CSS 디자인 토큰(`src/styles/tokens.css`), Phosphor 아이콘, Pretendard + JetBrains Mono
+## genuine RAG 경계
+
+과거의 선택 근거 프롬프트 주입은 검색이 없었으므로 RAG가 아닙니다. 실제 업무 경로에서는 프론트가 선택한 근거 ID와 확정 상품 문서를 Spring에 보내고, 백엔드가 근거를 청크화하여 Ollama `bge-m3:latest` 임베딩 + PostgreSQL/pgvector로 검색합니다. 검색 청크만 AI 서비스의 `qwen2.5:7b-instruct`에 전달됩니다. 모델은 전달받은 불변 검색 스냅샷의 `chunkId`를 Finding 근거로 선택하고, 백엔드는 ID의 스냅샷 소속을 검증한 뒤 정확한 문서 ID와 청크 원문을 해석해 영속합니다. 프론트는 서버가 반환한 검색 스냅샷과 서버 해석 근거를 표시하며 자체 검색 결과를 섞지 않습니다.
 
 ## 실행
 
+필수 조건은 Docker Desktop과 로컬 Ollama입니다. 저장소 루트에서 사용할 절차는 다음과 같습니다.
+
 ```bash
-npm install
-cp .env.example .env
-npm run dev
-npm run build
+ollama serve
+ollama pull bge-m3:latest
+ollama pull qwen2.5:7b-instruct
+docker compose up --build -d
+docker compose ps
+node frontend/scripts/real-e2e-preflight.mjs
 ```
 
-- 기본 개발 주소: `http://localhost:5173`
-- 진입 화면에서 역할을 선택해 세션 시작
-  - 상품 담당자: `USER-PM-001`
-  - 컴플라이언스 검토자: `USER-CR-001`
+- Frontend: `http://localhost:5173`
+- Backend health/Swagger: `http://localhost:8080/actuator/health`, `http://localhost:8080/swagger-ui/index.html`
+- AI health: `http://localhost:8000/internal/v1/health`
 
-## Mock 모드 / 실제 백엔드 전환 (Interface First)
+Preflight는 Spring/AI health 도달성만 검사하고 모델·검색·업무 흐름을 실행하지 않습니다. 위 명령은 실행 안내이며 이 문서는 성공을 주장하지 않습니다.
 
-- 화면은 `src/api/` 파사드만 호출하며 `.env`로 구현체 전환
-- `VITE_USE_MOCK=true`(기본): 인메모리 Mock 서버로 단독 실행
-- `VITE_USE_MOCK=false`: `/api`를 Spring 백엔드로 프록시(`VITE_API_BASE`)
-- Mock은 API v0.3.1 계약과 AI 전체 흐름(Phase 1~6)을 반영
-  - `statement`, `redTeamPackId`, `categoryCode`, `sourceReferences[]`, `evidenceDocumentId`, Review `status`
-  - GuardFit `LABEL/WARNING/QUESTION/COMPARISON`, `DRAFT/APPROVED`
-- 숫자 ID Golden Fixture가 기본 Mock store
-- 기존 문자열 ID 대량 seed는 `VITE_DEMO_BULK_SEED=true`에서만 활성화
-- 같은 origin의 다른 탭에서 변경한 Mock store는 `storage` 이벤트로 동기화되어 검토자 대기 알림에 반영
-- Mock의 멱등성 저장소는 브라우저 새로고침을 넘어서 보존되지 않는다. 운영 환경에서는 백엔드 영속 저장소가 책임진다.
+프론트만 개발할 때는 `frontend/`에서 `npm install`, `npm run dev`를 사용합니다. `.env`의 `VITE_USE_MOCK=false`와 `VITE_API_BASE=http://localhost:8080`을 사용해야 실제 백엔드 경로입니다. `VITE_USE_MOCK=true`는 인메모리 데모일 뿐 genuine RAG가 아닙니다.
 
-## 프론트엔드 구현 범위
+## 정본 파일
 
-- 화면: 역할 선택, 역할별 대시보드, 상품 목록/등록·상세, 문서 워크스페이스, 분석 요청·결과, 검토함·상세, Risk Library, GuardFit, 감사 로그
-- 상품 목록: 초성 포함 검색, 유형·상태 필터, 숫자 페이지네이션
-- 분석 요청 1회로 Analysis 1건 생성
-  - Persona 이해도 실험: 2 Persona × 동일 조건 3회
-  - Persona와 분리된 Red Team 독립 검증
-  - Evaluator Finding과 선택 `aiDetail`
-  - 반복 재현 취약 패턴 후보와 GuardFit 제안 후보
-  - VERIFIED 공식 상품 사실, 근거 추적, Provenance
-- 점수는 서버 정책으로 계산하며 AI 산출물은 승인 전 후보로만 취급
-- 검토: 재현율·Run·공식 사실·규칙·판매 원문·근거·사례 추적, 선택 Finding만 Risk Pattern으로 승격
-- 검토함은 `PENDING` 작업 큐를 기본으로 표시하고, 승인·반려 이력은 상태 필터로 조회
-- Risk Library는 승인 Finding의 재사용 지식이며, 검토 승인 후 바로 이동해 GuardFit 초안을 생성
-- GuardFit은 DRAFT 작업 큐와 APPROVED/ALL 이력을 분리한다. 상품 담당자는 승인본만 Before/After 가이드로 조회
-- SHA-256 `input_hash`: 확정 텍스트, 검증 사실 스냅샷, Red Team Pack, 정렬된 Persona/근거 ID로 계산해 동일 문서·동일 입력의 중복 Analysis를 409로 차단
-- 분석 완료 결과는 입력·공식 사실·생성 시각·Provider/Model 정보를 스냅샷으로 보존
-- PM 리소스는 상품 소유자 기준으로 접근을 제한하며, 검토자는 검토 업무에 필요한 결과만 조회
-- 알림: 추출·분석·검토 완료 폴링, 상품별 읽음 상태, 검토자 검토함 대기 건수 배지와 새 요청 토스트
-- 입력 제한: 상품명 100자, 설명 500자, 확정 텍스트 10,000자, 검토 의견 500자, GuardFit 라벨·배치 위치 각 100자. 초과 입력은 실시간 카운터·토스트·API 검증으로 차단
-- 공통 상태: 로딩, 성공한 빈 상태, 재시도 가능한 로드 오류, 오류 계약(400/401/403/404/409/413/503)
-- 접근성: 포커스 링, 모달 포커스 트랩, `prefers-reduced-motion` 대응
+PM 업로드 입력:
 
-## 임시 구현물과 격리 경계
+- `data/demo-corpus/documents/product/SMART-INCOME-SALES-v1.pdf`
 
-- Mock API(`src/api/mock/`): Golden Fixture, 결정론적 AI 전체 결과, Clock 기반 상태 전이, RBAC, 오류 계약
-- 기본 업무 경로는 사전 제작 Fixture의 추출 텍스트와 근거를 사용하며 Tesseract/Ollama 없이 동작
-- 브라우저 문서 추출·OCR(`src/lib/extract.js`)은 `VITE_EXPERIMENTAL_CLIENT_EXTRACTION=true`일 때만 opt-in
-  - PDF.js 텍스트, JSZip PPTX XML, Tesseract OCR
-- 직접 Ollama/RAG(`src/lib/{analyze,rag,llm,guardrails}.js`)는 `VITE_DEBUG_AI_CONTROLS=true`일 때만 UI에서 opt-in
-  - 로컬 실행 시 `qwen2.5:7b-instruct`, `bge-m3`, Vite `/ollama` 프록시 필요
-- 운영 문서 추출·OCR·RAG·AI 오케스트레이션의 권위는 백엔드/AI Provider이며 프론트 실험 결과를 실제 API 응답에 섞지 않음
-- 로컬 영속화: Mock store와 알림을 기존 `localStorage` 키로 복구
-- 업로드 사전 검증(`src/lib/upload.js`): PDF/PPTX, 10MB, 기본 매직바이트 검사
+선택할 검색 근거:
 
-## 구조
+- `data/demo-corpus/documents/evidence/SMART-INCOME-PRODUCT-POLICY-v1.pdf`
+- `data/demo-corpus/documents/evidence/IMPORTANT-INFO-DISPLAY-POLICY-v2026.1.pdf`
+- `data/demo-corpus/documents/evidence/FINANCIAL-CONSUMER-EXPLANATION-DUTY-EXCERPT-v1.pdf`
 
-```text
-public/           argus-logo.png, favicon.png
-src/
-  api/            파사드, 실서버 client, Mock 서버·시드·시나리오, fixtures/v1
-  components/ui/  디자인 시스템 프리미티브
-  components/layout/  ARGUS 사이드바와 앱 셸
-  components/     PipelineGraph
-  composables/    Polling·비동기 상태
-  lib/            format, hangul, upload, extract, rag, llm, analyze, guardrails
-  stores/         session, toast, jobs
-  views/          업무 화면
-  styles/         디자인 토큰과 공통 스타일
-docs/             AI Provider 계약, QA 지시서, 구현 결과·Gap 보고서
-scripts/          Mock Golden E2E, RAG·가드레일, Local AI 확인
+해시·출처는 `data/demo-corpus/manifest.v1.json`, 문서/청크 기준은 `metadata/documents.v1.json`과 `metadata/chunks.v1.jsonl`, 기대 비교는 `expected/analysis-cases.v1.json`과 `expected/rag-cases.v1.json`에 있습니다.
+
+## PM → 검토자 수동 검증
+
+### 1. 상품 담당자
+
+1. 역할 선택에서 상품 담당자(`PRODUCT_MANAGER`, 데모 사용자 `USER-PM-001`)로 시작합니다.
+2. 상품을 등록하고 위 `SMART-INCOME-SALES-v1.pdf`를 업로드합니다.
+3. 추출 상태가 준비될 때까지 기다린 뒤 판매 원문을 확인·확정합니다.
+4. 공식 사실 후보를 확인하고 세 근거 문서를 선택합니다.
+5. 분석 요청을 한 번 누르고 상태가 `COMPLETED`가 될 때까지 확인합니다.
+6. 결과의 **RAG 검색 근거**에서 검색 버전, `bge-m3:latest`, 검색 시각, 검색어 해시와 rank별 청크를 확인합니다.
+7. 각 Finding의 문서/인용을 펼쳐 서버가 해석한 `evidenceDocumentId`와 `excerpt`가 모델이 선택한 검색 청크와 일치하는지 대조합니다.
+8. 결과를 컴플라이언스 검토자에게 제출합니다.
+
+### 2. 컴플라이언스 검토자
+
+1. 역할을 컴플라이언스 검토자(`COMPLIANCE_REVIEWER`, 데모 사용자 `USER-CR-001`)로 바꿉니다.
+2. 검토함에서 방금 제출한 분석을 열고 판매 원문 → RAG 검색 청크 → Finding 인용의 연결을 재검사합니다.
+3. 공식 사실, 선택 근거, rank/similarity와 권고문을 확인한 뒤 승인 또는 반려합니다.
+4. 승인 Finding만 Risk Pattern으로 승격되는지 확인합니다.
+5. GuardFit 후보를 DRAFT로 만든 뒤 별도 승인합니다. Review 승인과 GuardFit 승인은 같은 결정이 아닙니다.
+6. PM으로 돌아와 APPROVED GuardFit만 읽기 전용으로 보이는지 확인합니다.
+
+## 검색 추적 감사
+
+분석 결과 화면의 **RAG 검색 근거**는 서버의 `GET /api/analyses/{analysisId}/result` 응답 `retrievalTrace`를 그대로 표시합니다.
+
+- 실행 메타: `queryHash`, `retrievalVersion`, `embeddingModel`, `retrievedAt`
+- 각 검색 결과: `chunkId`, `evidenceDocumentId`, `sourceType`, `title`, `rank`, `similarity`, `excerpt`
+- Finding 근거: `findings[].evidenceReferences[]`
+
+정상 감사 조건은 선택하지 않은 문서가 없고, rank가 연속이며, Finding의 서버 해석 문서 ID와 `excerpt`가 선택된 `retrievalTrace` 청크와 일치하는 것입니다. 모델 출력은 검색 스냅샷의 불변 `chunkId`만 선택하며 raw excerpt를 byte-for-byte 재생성하지 않습니다. 백엔드는 해당 ID가 AI 서비스로 보낸 스냅샷에 포함됐는지 검증하고 정확한 청크 원문을 공개 `evidenceReferences[]`로 제공합니다. similarity는 관련도 신호이지 준법 판정이 아닙니다.
+
+## 실제/Mock 검증 분류
+
+| 확인 | 분류 | 보장하지 않는 것 |
+|---|---|---|
+| 실제 Compose에서 정본 PDF 업로드 → 분석 완료 → `retrievalTrace`/인용 확인 | **genuine RAG E2E** | 법률적 정확성, 모델 결정성 |
+| `node frontend/scripts/real-e2e-preflight.mjs` | 실제 서비스 health 도달성 | 임베딩·검색·채팅·UI E2E |
+| `node frontend/scripts/smoke.mjs` | 프론트 Mock 계약/Golden 흐름 | Spring, pgvector, Ollama |
+| `node frontend/scripts/ai-test.mjs` | 브라우저 RAG/가드레일 단위 확인 | 서버 genuine RAG |
+| `node frontend/scripts/real-adapter-e2e.mjs` | 실서버 어댑터를 로컬 stub 응답으로 확인 | 실제 백엔드/모델 |
+| `node frontend/scripts/analyze-live.mjs` | 프론트의 직접 Ollama 실험 | Spring pgvector 검색 경로 |
+| `npm run build` | 정적 빌드 | 런타임 동작 |
+
+어떤 명령도 이 문서에서 통과했다고 주장하지 않습니다.
+
+## 초기화·재색인과 제한
+
+```bash
+docker compose down
+docker compose down -v
+docker compose up --build -d
 ```
 
-## 검증
+첫 명령은 DB volume을 유지합니다. `down -v`는 상품·분석·검토·감사·검색 청크/스냅샷을 모두 삭제합니다. 재기동 후 새 분석을 요청하면 선택 근거가 다시 색인됩니다. 별도 reindex 버튼이나 명령은 없습니다.
 
-- `npm run build` 통과
-- `VITE_USE_MOCK=false npm run build` 통과
-- `node scripts/smoke.mjs`: Mock 계약 및 Golden E2E 113/113
-  - 상품 → 문서 → 공식 사실 확인 → 분석 1건 → PM 검토 요청 → 검토 승인/반려 → Risk Pattern → GuardFit DRAFT/APPROVED → PM 적용 가이드 → 감사 로그
-  - score 82, 상태 전이, 소유권 RBAC, 멱등성 재시도/충돌, 입력 길이 검증, 사실 스냅샷, 최신 분석 검토, SHA-256 중복 409, 실패 재시도
-- `node scripts/ai-test.mjs`: RAG·Finding 가드레일 5/5
-- `node scripts/analyze-live.mjs`: Ollama opt-in 환경의 Local AI 확인용
-
-## 협업 메모
-
-- API v0.3.1 정합화 Phase 1~6 완료, QA 지시서 완료 기준 충족
-- 항목별 상태·검증 근거: `docs/reports/v1/implementation-result.md`
-- 남은 Gap과 Backend/OpenAPI 합의 항목: `docs/reports/v1/gap-analysis.md`
-- 실제 Backend 확장 필드가 없으면 선택 UI는 숨기며 Mock Fixture를 실제 데이터처럼 혼합하지 않음
-- `main`/`develop` 직접 push 금지. `.env`, `node_modules`, `dist`, 업로드 원문은 커밋 금지
+- 로컬 모델 출력은 비결정적이고 최초 로드가 느릴 수 있습니다.
+- top 6은 선택된 활성 근거 안에서만 검색합니다. 작은 합성 코퍼스는 실제 금융 문서 성능을 대표하지 않습니다.
+- PDF 추출/OCR 품질은 별도 검토 대상이며 업로드 바이너리는 서버에 영구 보존되지 않습니다.
+- `VITE_DEBUG_AI_CONTROLS`의 직접 Ollama/RAG 및 `VITE_EXPERIMENTAL_CLIENT_EXTRACTION`은 격리된 실험 기능입니다. 운영 권위는 백엔드 응답이며 실험 결과를 실제 API 데이터로 취급하면 안 됩니다.
+- 모델/네트워크 오류는 fixture 결과로 대체되지 않습니다. 인증, 개인정보, 원격 운영 배포는 이 로컬 데모 범위 밖입니다.

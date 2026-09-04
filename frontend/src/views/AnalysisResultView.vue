@@ -45,7 +45,7 @@ const STAGE_LABEL = {
 
 const isRunning = computed(() => ['CREATED', 'RUNNING'].includes(status.value?.status))
 const isFailed = computed(() => status.value?.status === 'FAILED')
-const isDone = computed(() => status.value?.status === 'COMPLETED')
+const isDone = computed(() => ['COMPLETED', 'IN_REVIEW'].includes(status.value?.status))
 const band = computed(() => {
   const s = result.value?.riskScore ?? 0
   if (s >= 70) return { tone: 'high', label: '고위험' }
@@ -129,10 +129,17 @@ async function requestReview() {
     useJobsStore().track({ kind: 'review', id: res.reviewId, name: result.value?.sourceDocument?.fileName || props.analysisId })
   } catch (e) {
     if (e?.errorCode === 'REVIEW_ALREADY_EXISTS') {
-      reviewRequested.value = true
-      showReviewRequest.value = false
+      try {
+        reviewInfo.value = await api.getReviewByAnalysis(props.analysisId)
+        reviewRequested.value = false
+        showReviewRequest.value = false
+        toast.info('기존 검토 요청', '이미 생성된 검토의 현재 상태를 불러왔습니다.')
+      } catch (loadExistingError) {
+        toast.fromError(loadExistingError)
+      }
+    } else {
+      toast.fromError(e)
     }
-    toast.fromError(e)
   } finally {
     requesting.value = false
   }
@@ -211,7 +218,7 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
           <GProgress class="score-bar" :value="result.riskScore" :tone="band.tone" />
           <div class="score-src">
             <span class="t-sm soft"><PhFileText :size="14" /> {{ result.sourceDocument?.fileName }}</span>
-            <span class="t-sm mute"><PhScales :size="14" /> 근거 {{ result.groundingDocuments?.length || 0 }}건</span>
+            <span class="t-sm mute"><PhScales :size="14" /> 선택 근거 문서 {{ result.groundingDocuments?.length || 0 }}건</span>
           </div>
         </div>
         <div v-if="session.isPM" class="score-act">
@@ -274,8 +281,30 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
         </article>
       </section>
 
+      <section v-if="result.retrievalTrace" class="grounding retrieval-trace">
+        <div class="fh"><h2 class="d-h3">RAG 검색 근거</h2><span class="mono mute">{{ result.retrievalTrace.contexts.length }}개 청크</span></div>
+        <dl class="trace-meta">
+          <div><dt>검색 버전</dt><dd class="mono">{{ result.retrievalTrace.retrievalVersion }}</dd></div>
+          <div><dt>임베딩 모델</dt><dd class="mono">{{ result.retrievalTrace.embeddingModel }}</dd></div>
+          <div><dt>검색 시각</dt><dd class="mono">{{ result.retrievalTrace.retrievedAt }}</dd></div>
+          <div><dt>검색어 해시</dt><dd class="mono">{{ result.retrievalTrace.queryHash }}</dd></div>
+        </dl>
+        <ol class="trace-contexts">
+          <li v-for="context in result.retrievalTrace.contexts" :key="context.chunkId" class="trace-context">
+            <div class="trace-context-head">
+              <span class="mono trace-rank">#{{ context.rank }}</span>
+              <span class="gt mono">{{ context.sourceType }}</span>
+              <span class="gtitle">{{ context.title }}</span>
+              <span class="mono gscore">유사도 {{ context.similarity }}</span>
+            </div>
+            <p class="mono trace-source">문서 {{ context.evidenceDocumentId }} · 청크 {{ context.chunkId }}</p>
+            <blockquote class="quote trace-excerpt">{{ context.excerpt }}</blockquote>
+          </li>
+        </ol>
+      </section>
+
       <section v-if="result.groundingDocuments?.length" class="grounding">
-        <div class="fh"><h2 class="d-h3">검색된 근거 (RAG)</h2><span class="mono mute">{{ result.groundingDocuments.length }}건</span></div>
+        <div class="fh"><h2 class="d-h3">선택된 근거 문서</h2><span class="mono mute">분석 설정 · {{ result.groundingDocuments.length }}건</span></div>
         <ul class="glist">
           <li v-for="g in result.groundingDocuments" :key="g.documentId" class="grow">
             <span class="mono gt">{{ g.sourceType || '근거' }}</span>
@@ -439,11 +468,21 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .gtitle { font-weight: var(--fw-medium); min-width: 0; }
 .gid { font-size: var(--text-xs); color: var(--ink-faint); }
 .gscore { margin-left: auto; font-size: var(--text-xs); color: var(--accent); flex: none; }
+.trace-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-12) var(--s-24); margin-top: var(--s-16); }
+.trace-meta > div { min-width: 0; }
+.trace-meta dt { color: var(--ink-mute); font-size: var(--text-xs); }
+.trace-meta dd { margin-top: 4px; color: var(--ink-2); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.trace-contexts { list-style: none; margin-top: var(--s-16); }
+.trace-context { padding: var(--s-16) 0; border-bottom: 1px solid var(--line); }
+.trace-context-head { display: flex; align-items: center; gap: var(--s-10); }
+.trace-rank { color: var(--accent); font-size: var(--text-sm); font-weight: var(--fw-semibold); }
+.trace-source { margin-top: var(--s-8); color: var(--ink-faint); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.trace-excerpt { white-space: pre-wrap; overflow-wrap: anywhere; }
 .fmeta { display: grid; grid-template-columns: 1fr 1.4fr; gap: var(--s-28); margin-top: var(--s-20); }
 .fcol { display: flex; flex-direction: column; gap: var(--s-8); }
 .ml { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-mute); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .ev { line-height: 1.55; } .evt { color: var(--ink-mute); margin-right: 5px; font-size: 11px; }
 .reco { margin-top: var(--s-20); display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); font-size: var(--text-sm); line-height: 1.6; }
-@media (max-width: 760px) { .score { grid-template-columns: 1fr; gap: var(--s-20); } .score-act { align-items: flex-start; min-width: 0; } .act-note { white-space: normal; text-align: left; } .fmeta { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .score { grid-template-columns: 1fr; gap: var(--s-20); } .score-act { align-items: flex-start; min-width: 0; } .act-note { white-space: normal; text-align: left; } .fmeta, .trace-meta { grid-template-columns: 1fr; } .trace-context-head { align-items: flex-start; flex-wrap: wrap; } .trace-context-head .gscore { margin-left: 0; } }
 </style>

@@ -2,6 +2,7 @@ package com.crosschecklab.domain.reference;
 
 import static com.crosschecklab.global.security.DemoAuthenticationFilter.ROLE_HEADER;
 import static com.crosschecklab.global.security.DemoAuthenticationFilter.USER_ID_HEADER;
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -12,7 +13,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
-// V2 시드 데이터를 기준으로 검증한다.
+// V10 canonical synthetic corpus 시드 데이터를 기준으로 검증한다.
 // 시드가 바뀌면 이 테스트가 먼저 깨지도록 개수와 id 를 명시적으로 단언한다.
 @DisplayName("기준 데이터 조회 API")
 class ReferenceDataApiTest extends IntegrationTestSupport {
@@ -38,11 +39,30 @@ class ReferenceDataApiTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.items.length()").value(3))
                     .andExpect(jsonPath("$.items[0].evidenceDocumentId").value(1))
                     .andExpect(jsonPath("$.items[0].sourceType").value("INTERNAL_POLICY"))
-                    .andExpect(jsonPath("$.items[0].version").value("DEMO-2026.1"))
-                    .andExpect(jsonPath("$.items[0].content").isNotEmpty())
+                    .andExpect(jsonPath("$.items[0].title").value("중요정보 표시 내부정책 (완전 합성 데모)"))
+                    .andExpect(jsonPath("$.items[0].version").value("2026.1"))
+                    .andExpect(jsonPath("$.items[0].content")
+                            .value(containsString(
+                                    "ARGUS | SYNTHETIC DEMO CORPUS IMPORTANT-INFO-DISPLAY-POLICY-v2026.1")))
+                    .andExpect(jsonPath("$.items[0].content").value(containsString("완전 합성 데모 문서")))
                     .andExpect(jsonPath("$.items[0].active").value(true))
                     .andExpect(jsonPath("$.items[1].evidenceDocumentId").value(2))
-                    .andExpect(jsonPath("$.items[2].evidenceDocumentId").value(3));
+                    .andExpect(jsonPath("$.items[1].sourceType").value("REGULATION"))
+                    .andExpect(jsonPath("$.items[1].title")
+                            .value("합성 금융소비자 설명의무 규정 발췌 (완전 합성 데모)"))
+                    .andExpect(jsonPath("$.items[1].version").value("1.0"))
+                    .andExpect(jsonPath("$.items[1].content")
+                            .value(containsString(
+                                    "ARGUS | SYNTHETIC DEMO CORPUS FINANCIAL-CONSUMER-EXPLANATION-DUTY-EXCERPT-v1")))
+                    .andExpect(jsonPath("$.items[1].content").value(containsString("완전 합성 데모 문서")))
+                    .andExpect(jsonPath("$.items[2].evidenceDocumentId").value(3))
+                    .andExpect(jsonPath("$.items[2].sourceType").value("PRODUCT_POLICY"))
+                    .andExpect(jsonPath("$.items[2].title").value("SMART 인컴 상품 운영정책 (완전 합성 데모)"))
+                    .andExpect(jsonPath("$.items[2].version").value("1.0"))
+                    .andExpect(jsonPath("$.items[2].content")
+                            .value(containsString(
+                                    "ARGUS | SYNTHETIC DEMO CORPUS SMART-INCOME-PRODUCT-POLICY-v1")))
+                    .andExpect(jsonPath("$.items[2].content").value(containsString("완전 합성 데모 문서")));
         }
 
         @Test

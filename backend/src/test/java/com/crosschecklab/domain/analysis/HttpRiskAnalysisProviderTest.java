@@ -35,7 +35,7 @@ class HttpRiskAnalysisProviderTest {
             {"riskScore":82,"modelVersion":"mock-risk-v1","promptVersion":"mock-prompt-v1",
              "findings":[{"statement":"안정성 표현이 원금보장으로 오인될 가능성이 있습니다.","severity":"HIGH",
              "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
-             "evidenceReferences":[{"evidenceDocumentId":1,"excerpt":"원금손실 가능성은 인접 표시"}],
+             "retrievedContextChunkIds":[11],
              "knownFactIds":[7],
              "recommendation":"원금 손실 가능성을 명시하세요."}]}""";
 
@@ -82,8 +82,10 @@ class HttpRiskAnalysisProviderTest {
         return new AnalysisRequest(1L, "GUARANTEE_MISUNDERSTANDING_HIGH", "확정된 상품 설명 텍스트",
                 List.of(PersonaCode.FINANCIAL_BEGINNER), "CORE_FINANCIAL_RISK_V1",
                 List.of(RedTeamRuleCode.STABILITY_KEYWORD),
-                List.of(new AnalysisRequest.EvidenceDocumentPayload(1L, EvidenceSourceType.INTERNAL_POLICY,
-                        "내부준칙", "원금손실 가능성은 인접 표시")),
+                List.of(1L),
+                List.of(new AnalysisRequest.RetrievedContextPayload(
+                        11L, 1L, EvidenceSourceType.INTERNAL_POLICY, "내부준칙",
+                        "원금손실 가능성은 인접 표시", 1, 0.91)),
                 List.of(new AnalysisRequest.KnownFactPayload(7L, "확정된 공식 사실")));
     }
 
@@ -97,14 +99,17 @@ class HttpRiskAnalysisProviderTest {
         assertThat(result.findings()).singleElement().satisfies(finding -> {
             assertThat(finding.severity()).isEqualTo(Severity.HIGH);
             assertThat(finding.affectedPersonaCodes()).containsExactly(PersonaCode.FINANCIAL_BEGINNER);
-            assertThat(finding.evidenceReferences()).isNotEmpty();
+            assertThat(finding.retrievedContextChunkIds()).containsExactly(11L);
             assertThat(finding.knownFactIds()).containsExactly(7L);
         });
         // ai-service 는 extra="forbid" 라 필드명이 정확히 일치해야 한다.
         assertThat(capturedRequest.get())
                 .contains("\"analysisId\":1", "\"scenarioCode\"", "\"confirmedText\"", "\"personaCodes\"",
-                        "\"redTeamPackCode\"", "\"ruleCodes\"", "\"evidenceDocuments\"", "\"sourceType\"");
+                        "\"redTeamPackCode\"", "\"ruleCodes\"", "\"selectedEvidenceDocumentIds\":[1]",
+                        "\"retrievedContexts\"", "\"chunkId\":11", "\"evidenceDocumentId\":1",
+                        "\"sourceType\"", "\"chunkText\":\"원금손실 가능성은 인접 표시\"");
         assertThat(capturedRequest.get()).contains("\"knownFacts\"", "\"factId\":7");
+        assertThat(capturedRequest.get()).doesNotContain("\"evidenceDocuments\"", "\"content\"");
     }
 
     @Test
@@ -141,7 +146,7 @@ class HttpRiskAnalysisProviderTest {
         responseBody = """
                 {"riskScore":82,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"HIGH","affectedPersonaCodes":["SENIOR"],
-                 "evidenceReferences":[],"recommendation":null}]}""";
+                 "retrievedContextChunkIds":[],"recommendation":null}]}""";
 
         assertThatThrownBy(() -> provider().analyze(request()))
                 .isInstanceOfSatisfying(ProviderException.class, e -> {
@@ -172,20 +177,38 @@ class HttpRiskAnalysisProviderTest {
     }
 
     @Test
-    @DisplayName("요청에서 선택하지 않은 근거 문서를 인용하면 계약 위반으로 끊는다")
-    void evidenceOutsideSelectionIsRejected() {
-        // 요청은 근거 문서 1번만 보냈는데 응답이 99번을 인용한다.
+    @DisplayName("요청에서 검색되지 않은 근거 청크를 인용하면 계약 위반으로 끊는다")
+    void contextChunkOutsideRetrievedContextsIsRejected() {
+        // 요청이 검색 근거 청크 11번만 보냈는데 응답이 목록 밖의 99번을 인용한다.
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
-                 "evidenceReferences":[{"evidenceDocumentId":99,"excerpt":"남의 문서"}],
+                 "retrievedContextChunkIds":[99],
                  "recommendation":null}]}""";
 
-        assertThatThrownBy(() -> provider().analyze(request()))
-                .isInstanceOfSatisfying(ProviderException.class, e -> {
-                    assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID);
-                    assertThat(e.isRetryable()).isFalse();
-                });
+        assertInvalidProviderResponse();
+    }
+
+    @Test
+    @DisplayName("null 검색 근거 청크 ID를 인용하면 계약 위반으로 끊는다")
+    void nullContextChunkReferenceIsRejected() {
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "retrievedContextChunkIds":[null],"recommendation":null}]}""";
+
+        assertInvalidProviderResponse();
+    }
+
+    @Test
+    @DisplayName("같은 검색 근거 청크를 중복 인용하면 계약 위반으로 끊는다")
+    void duplicateContextChunkReferenceIsRejected() {
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "retrievedContextChunkIds":[11,11],"recommendation":null}]}""";
+
+        assertInvalidProviderResponse();
     }
 
     @Test
@@ -194,7 +217,7 @@ class HttpRiskAnalysisProviderTest {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
-                 "evidenceReferences":[],"knownFactIds":[99],"recommendation":null}]}""";
+                 "retrievedContextChunkIds":[],"knownFactIds":[99],"recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }
@@ -205,7 +228,7 @@ class HttpRiskAnalysisProviderTest {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
-                 "evidenceReferences":[],"knownFactIds":[null],"recommendation":null}]}""";
+                 "retrievedContextChunkIds":[],"knownFactIds":[null],"recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }
@@ -216,7 +239,7 @@ class HttpRiskAnalysisProviderTest {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
-                 "evidenceReferences":[],"knownFactIds":[7,7],"recommendation":null}]}""";
+                 "retrievedContextChunkIds":[],"knownFactIds":[7,7],"recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }

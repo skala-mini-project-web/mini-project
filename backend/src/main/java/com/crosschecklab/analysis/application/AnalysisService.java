@@ -4,6 +4,8 @@ import com.crosschecklab.analysis.provider.http.AiServiceProperties;
 import com.crosschecklab.domain.analysis.Analysis;
 import com.crosschecklab.domain.analysis.AnalysisGroundTruthFactSnapshot;
 import com.crosschecklab.domain.analysis.AnalysisGroundTruthFactSnapshotRepository;
+import com.crosschecklab.domain.analysis.AnalysisRagRun;
+import com.crosschecklab.domain.analysis.AnalysisRagRunRepository;
 import com.crosschecklab.domain.analysis.AnalysisRepository;
 import com.crosschecklab.domain.analysis.Finding;
 import com.crosschecklab.domain.analysis.FindingRepository;
@@ -58,6 +60,7 @@ public class AnalysisService {
     private final AnalysisRepository analysisRepository;
     private final IdempotencyClaimRepository idempotencyClaimRepository;
     private final AnalysisGroundTruthFactSnapshotRepository factSnapshotRepository;
+    private final AnalysisRagRunRepository ragRunRepository;
     private final FindingRepository findingRepository;
     private final ProductDocumentRepository productDocumentRepository;
     private final EvidenceDocumentRepository evidenceDocumentRepository;
@@ -166,6 +169,9 @@ public class AnalysisService {
         List<Finding> findings = findingRepository.findByAnalysisIdOrderByIdAsc(analysisId);
         List<AnalysisGroundTruthFactSnapshot> groundTruthFacts =
                 factSnapshotRepository.findAllByAnalysisIdOrderByIdAsc(analysisId);
+        AnalysisRagRun ragRun = ragRunRepository.findByAnalysisId(analysisId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "완료된 분석의 RAG 실행 기록이 없습니다: " + analysisId));
 
         Map<Long, PersonaCode> personaCodes = personaTemplateRepository.findAll().stream()
                 .collect(Collectors.toMap(PersonaTemplate::getId, PersonaTemplate::getCode));
@@ -174,7 +180,7 @@ public class AnalysisService {
                 .collect(Collectors.toMap(EvidenceDocument::getId, Function.identity()));
 
         return AnalysisResultResponse.of(
-                analysis, document, groundTruthFacts, findings, personaCodes, evidenceDocuments);
+                analysis, document, groundTruthFacts, findings, personaCodes, evidenceDocuments, ragRun);
     }
 
     // X-Demo-Scenario 헤더가 없으면 설정의 기본 시나리오를 쓴다.

@@ -91,6 +91,28 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 
       <p v-if="review.submissionComment" class="submit-note"><span class="mono ml">제출 의견</span>{{ review.submissionComment }}</p>
 
+      <section v-if="result.retrievalTrace" class="retrieval-trace">
+        <div class="fh"><h2 class="d-h3">RAG 검색 근거</h2><span class="mono mute">{{ result.retrievalTrace.contexts.length }}개 청크</span></div>
+        <dl class="trace-meta">
+          <div><dt>검색 버전</dt><dd class="mono">{{ result.retrievalTrace.retrievalVersion }}</dd></div>
+          <div><dt>임베딩 모델</dt><dd class="mono">{{ result.retrievalTrace.embeddingModel }}</dd></div>
+          <div><dt>검색 시각</dt><dd class="mono">{{ result.retrievalTrace.retrievedAt }}</dd></div>
+          <div><dt>검색어 해시</dt><dd class="mono">{{ result.retrievalTrace.queryHash }}</dd></div>
+        </dl>
+        <ol class="trace-contexts">
+          <li v-for="context in result.retrievalTrace.contexts" :key="context.chunkId" class="trace-context">
+            <div class="trace-context-head">
+              <span class="mono trace-rank">#{{ context.rank }}</span>
+              <span class="mono trace-source-type">{{ context.sourceType }}</span>
+              <span class="trace-title">{{ context.title }}</span>
+              <span class="mono trace-score">유사도 {{ context.similarity }}</span>
+            </div>
+            <p class="mono trace-source">문서 {{ context.evidenceDocumentId }} · 청크 {{ context.chunkId }}</p>
+            <blockquote class="quote trace-excerpt">{{ context.excerpt }}</blockquote>
+          </li>
+        </ol>
+      </section>
+
       <div class="fh">
         <h2 class="d-h3">Finding</h2>
         <span v-if="isPending" class="t-sm mute">체크한 Finding만 <b class="fw-semibold" style="color:var(--ink)">Risk Library</b>로 승격됩니다</span>
@@ -174,6 +196,19 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .submit-note { margin-top: var(--s-24); padding: var(--s-14, 14px) var(--s-16); background: var(--surface-2); border-radius: var(--r); display: flex; flex-direction: column; gap: 6px; font-size: var(--text-sm); }
 .ml { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-mute); }
 .fh { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-12); margin-top: var(--s-40); padding-bottom: var(--s-16); border-bottom: 1px solid var(--line-strong); }
+.trace-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-12) var(--s-24); margin-top: var(--s-16); }
+.trace-meta > div { min-width: 0; }
+.trace-meta dt { color: var(--ink-mute); font-size: var(--text-xs); }
+.trace-meta dd { margin-top: 4px; color: var(--ink-2); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.trace-contexts { list-style: none; margin-top: var(--s-16); }
+.trace-context { padding: var(--s-16) 0; border-bottom: 1px solid var(--line); }
+.trace-context-head { display: flex; align-items: center; gap: var(--s-10); }
+.trace-rank { color: var(--accent); font-size: var(--text-sm); font-weight: var(--fw-semibold); }
+.trace-source-type { color: var(--ink-mute); font-size: var(--text-xs); flex: none; }
+.trace-title { color: var(--ink-2); font-size: var(--text-sm); }
+.trace-score { margin-left: auto; color: var(--accent); font-size: var(--text-xs); flex: none; }
+.trace-source { margin-top: var(--s-8); color: var(--ink-faint); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.trace-excerpt { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .finds { list-style: none; }
 .find { display: grid; grid-template-columns: 56px 1fr; gap: var(--s-16); padding: var(--s-24) 0; border-bottom: 1px solid var(--line); transition: background var(--fast) var(--ease); }
@@ -202,4 +237,5 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .decided .ok { color: var(--ok); } .decided .no { color: var(--risk-high); }
 .decided .dm { margin-left: auto; }
 .decided .dc { flex-basis: 100%; margin-top: 4px; }
+@media (max-width: 760px) { .trace-meta { grid-template-columns: 1fr; } .trace-context-head { align-items: flex-start; flex-wrap: wrap; } .trace-score { margin-left: 0; } }
 </style>

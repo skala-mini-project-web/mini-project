@@ -22,7 +22,7 @@ public abstract class IntegrationTestSupport {
 
     @ServiceConnection
     static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:16-alpine");
+            new PostgreSQLContainer<>("pgvector/pgvector:pg16");
 
     static {
         POSTGRES.start();

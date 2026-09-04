@@ -2,6 +2,9 @@ package com.crosschecklab.domain.analysis;
 
 import static org.awaitility.Awaitility.await;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -13,6 +16,12 @@ import com.crosschecklab.analysis.provider.RiskAnalysisProvider;
 import com.crosschecklab.analysis.provider.dto.AnalysisRequest;
 import com.crosschecklab.analysis.provider.dto.AnalysisResult;
 import com.crosschecklab.analysis.provider.dto.FindingPayload;
+import com.crosschecklab.analysis.rag.EvidenceChunkIndexer;
+import com.crosschecklab.analysis.rag.PgVectorEvidenceRetriever;
+import com.crosschecklab.analysis.rag.RagRetrievedChunk;
+import com.crosschecklab.domain.audit.AuditAction;
+import com.crosschecklab.domain.audit.AuditEvent;
+import com.crosschecklab.domain.audit.AuditEventRepository;
 import com.crosschecklab.global.common.enums.Severity;
 import com.crosschecklab.global.config.AsyncConfig;
 import com.crosschecklab.global.error.ErrorCode;
@@ -20,6 +29,9 @@ import com.crosschecklab.support.IntegrationTestSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -42,6 +54,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.core.task.SyncTaskExecutor;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -50,6 +63,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 // ANA-001~004 통합 검증. 외부 ai-service 없이 테스트 대역으로 전체 흐름을 돌린다.
 @Import(AnalysisApiTest.TestBeans.class)
 class AnalysisApiTest extends IntegrationTestSupport {
+
+    private static final String TEST_CHUNKING_VERSION = "analysis-api-test-v1";
+    private static final String TEST_EMBEDDING_MODEL = "analysis-api-test-embedding";
+    private static final Map<Long, String> TEST_RETRIEVED_CONTEXTS = Map.of(
+            1L, "“안정”, “보장”, “확정”과 같은 표현이 있으면 원금손실 가능성과 변동 수익 정정문을 "
+                    + "같은 페이지, 같은 화면, 같은 음성 구간에 표시한다.",
+            2L, "안정, 보장 또는 확정을 연상시키는 표현을 사용한 경우 동일한 전달 단위에서 "
+                    + "그 표현의 한계와 반대되는 손실 가능성을 명확히 정정한다.");
 
     @TestConfiguration
     static class TestBeans {
@@ -65,6 +86,130 @@ class AnalysisApiTest extends IntegrationTestSupport {
         Executor analysisTaskExecutor() {
             return new SyncTaskExecutor();
         }
+
+        @Bean
+        @Primary
+        EvidenceChunkIndexer testEvidenceChunkIndexer(JdbcTemplate jdbcTemplate) {
+            return new TestEvidenceChunkIndexer(jdbcTemplate);
+        }
+
+        @Bean
+        @Primary
+        PgVectorEvidenceRetriever testEvidenceRetriever(JdbcTemplate jdbcTemplate) {
+            return new TestEvidenceRetriever(jdbcTemplate);
+        }
+    }
+
+    static class TestEvidenceChunkIndexer extends EvidenceChunkIndexer {
+
+        private final JdbcTemplate jdbcTemplate;
+
+        TestEvidenceChunkIndexer(JdbcTemplate jdbcTemplate) {
+            super(jdbcTemplate, null);
+            this.jdbcTemplate = jdbcTemplate;
+        }
+
+        @Override
+        public IndexingResult indexSelected(Collection<Long> selectedEvidenceDocumentIds) {
+            List<Long> selectedIds = normalizedSelectedIds(selectedEvidenceDocumentIds);
+            for (Long evidenceDocumentId : selectedIds) {
+                String chunkText = testContext(evidenceDocumentId);
+                jdbcTemplate.update("""
+                                INSERT INTO evidence_document_chunks (
+                                    evidence_document_id, source_hash, chunk_ordinal, chunking_version,
+                                    chunk_hash, chunk_text, embedding_model, embedding
+                                )
+                                SELECT id, ?, 0, ?, ?, ?, ?,
+                                       array_fill(0.0::real, ARRAY[1024])::vector
+                                FROM evidence_documents
+                                WHERE id = ? AND active = TRUE
+                                ON CONFLICT (
+                                    evidence_document_id, source_hash, chunking_version,
+                                    embedding_model, chunk_ordinal
+                                ) DO UPDATE SET
+                                    chunk_hash = EXCLUDED.chunk_hash,
+                                    chunk_text = EXCLUDED.chunk_text,
+                                    created_at = CURRENT_TIMESTAMP
+                                """,
+                        testSourceHash(evidenceDocumentId),
+                        TEST_CHUNKING_VERSION,
+                        testChunkHash(evidenceDocumentId),
+                        chunkText,
+                        TEST_EMBEDDING_MODEL,
+                        evidenceDocumentId);
+            }
+            return new IndexingResult(selectedIds.size(), 0, selectedIds.size());
+        }
+    }
+
+    static class TestEvidenceRetriever extends PgVectorEvidenceRetriever {
+
+        private final JdbcTemplate jdbcTemplate;
+
+        TestEvidenceRetriever(JdbcTemplate jdbcTemplate) {
+            super(jdbcTemplate, null);
+            this.jdbcTemplate = jdbcTemplate;
+        }
+
+        @Override
+        public List<RagRetrievedChunk> retrieve(
+                String query, Collection<Long> selectedEvidenceDocumentIds) {
+            List<Long> selectedIds = normalizedSelectedIds(selectedEvidenceDocumentIds);
+            List<RagRetrievedChunk> contexts = new java.util.ArrayList<>();
+            for (int index = 0; index < selectedIds.size() && index < TOP_K; index++) {
+                Long evidenceDocumentId = selectedIds.get(index);
+                int rank = index + 1;
+                contexts.add(jdbcTemplate.queryForObject("""
+                                SELECT id AS chunk_id, evidence_document_id, source_hash, chunk_hash,
+                                       chunk_ordinal, chunking_version, embedding_model, chunk_text,
+                                       ?::integer AS rank, ?::double precision AS similarity
+                                FROM evidence_document_chunks
+                                WHERE evidence_document_id = ?
+                                  AND source_hash = ?
+                                  AND chunking_version = ?
+                                  AND embedding_model = ?
+                                """,
+                        (resultSet, rowNumber) -> new RagRetrievedChunk(
+                                resultSet.getLong("chunk_id"),
+                                resultSet.getLong("evidence_document_id"),
+                                resultSet.getString("source_hash"),
+                                resultSet.getString("chunk_hash"),
+                                resultSet.getInt("chunk_ordinal"),
+                                resultSet.getString("chunking_version"),
+                                resultSet.getString("embedding_model"),
+                                resultSet.getString("chunk_text"),
+                                resultSet.getInt("rank"),
+                                resultSet.getDouble("similarity")),
+                        rank,
+                        1.0d - (index * 0.1d),
+                        evidenceDocumentId,
+                        testSourceHash(evidenceDocumentId),
+                        TEST_CHUNKING_VERSION,
+                        TEST_EMBEDDING_MODEL));
+            }
+            return List.copyOf(contexts);
+        }
+    }
+
+    private static List<Long> normalizedSelectedIds(Collection<Long> selectedEvidenceDocumentIds) {
+        return new LinkedHashSet<>(selectedEvidenceDocumentIds).stream().sorted().toList();
+    }
+
+    private static String testContext(Long evidenceDocumentId) {
+        String context = TEST_RETRIEVED_CONTEXTS.get(evidenceDocumentId);
+        if (context == null) {
+            throw new IllegalArgumentException(
+                    "분석 API 테스트 검색 문맥이 없는 근거 문서입니다: " + evidenceDocumentId);
+        }
+        return context;
+    }
+
+    private static String testSourceHash(Long evidenceDocumentId) {
+        return (evidenceDocumentId == 1L ? "1" : "2").repeat(64);
+    }
+
+    private static String testChunkHash(Long evidenceDocumentId) {
+        return (evidenceDocumentId == 1L ? "a" : "b").repeat(64);
     }
 
     @Autowired
@@ -75,6 +220,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
     @Autowired
     private RiskAnalysisProvider provider;
+
+    @MockitoSpyBean
+    private AuditEventRepository auditEventRepository;
 
     @Autowired
     private AnalysisRepository analysisRepository;
@@ -209,6 +357,27 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 """, Long.class, traceId)).isZero();
     }
 
+    private void assertSingleTerminalAudit(
+            String traceId, String action, Long resourceId, Long actorId, Long analysisId) {
+        assertAudit(traceId, action, resourceId, actorId, analysisId);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM audit_events
+                WHERE trace_id = ?
+                  AND action IN ('ANALYSIS_COMPLETED', 'ANALYSIS_FAILED')
+                  AND resource_type = 'ANALYSIS'
+                  AND resource_id = ?
+                """, Long.class, traceId, resourceId)).isEqualTo(1L);
+    }
+
+    private void failTerminalAuditPersistence(String traceId) {
+        doThrow(new IllegalStateException("audit unavailable"))
+                .when(auditEventRepository)
+                .save(argThat((AuditEvent event) ->
+                        traceId.equals(event.getTraceId())
+                                && (event.getAction() == AuditAction.ANALYSIS_COMPLETED
+                                || event.getAction() == AuditAction.ANALYSIS_FAILED)));
+    }
+
     private void assertNoAudit(String traceId) {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM audit_events WHERE trace_id = ?", Long.class, traceId)).isZero();
@@ -246,14 +415,23 @@ class AnalysisApiTest extends IntegrationTestSupport {
         return factId;
     }
 
-    private AnalysisResult resultCiting(Long factId) {
+    private AnalysisResult resultCiting(AnalysisRequest request, Long factId) {
         return new AnalysisResult(82, "fact-aware-model", "fact-aware-prompt", List.of(new FindingPayload(
                 "검증된 사실을 인용한 분석 결과입니다.",
                 Severity.HIGH,
                 List.of(),
-                List.of(),
+                List.of(request.retrievedContexts().getFirst().chunkId()),
                 List.of(factId),
                 "검증된 사실을 기준으로 설명하세요.")));
+    }
+
+    private AnalysisResult resultCitingChunks(List<Long> chunkIds) {
+        return new AnalysisResult(82, "chunk-aware-model", "chunk-aware-prompt", List.of(new FindingPayload(
+                "검색된 근거 청크를 인용한 분석 결과입니다.",
+                Severity.HIGH,
+                List.of(),
+                chunkIds,
+                "검색된 근거를 기준으로 설명하세요.")));
     }
 
     @Test
@@ -286,10 +464,21 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.findings.length()").value(1))
                 .andExpect(jsonPath("$.findings[0].severity").value("HIGH"))
                 .andExpect(jsonPath("$.findings[0].affectedPersonaCodes[0]").value("FINANCIAL_BEGINNER"))
-                .andExpect(jsonPath("$.findings[0].evidenceReferences[0].sourceType").value("INTERNAL_POLICY"));
+                .andExpect(jsonPath("$.findings[0].evidenceReferences[0].sourceType").value("INTERNAL_POLICY"))
+                .andExpect(jsonPath("$.findings[0].evidenceReferences[0].evidenceDocumentId").value(1))
+                .andExpect(jsonPath("$.findings[0].evidenceReferences[0].excerpt")
+                        .value(TEST_RETRIEVED_CONTEXTS.get(1L)));
+        assertThat(jdbc.queryForMap("""
+                SELECT er.evidence_document_id, er.excerpt
+                FROM evidence_references er
+                JOIN findings f ON f.id = er.finding_id
+                WHERE f.analysis_id = ?
+                """, analysisId))
+                .containsEntry("evidence_document_id", 1L)
+                .containsEntry("excerpt", TEST_RETRIEVED_CONTEXTS.get(1L));
 
         assertAudit(traceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
-        assertAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
+        assertSingleTerminalAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
     }
 
     @Test
@@ -474,7 +663,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
         Long analysisId = createAnalysis(traceId);
 
         assertAudit(traceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
-        assertAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
+        assertSingleTerminalAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
         assertNoAudit("async-thread-trace");
     }
 
@@ -489,8 +678,23 @@ class AnalysisApiTest extends IntegrationTestSupport {
         assertThat(request.redTeamPackCode()).isEqualTo("CORE_FINANCIAL_RISK_V1");
         assertThat(request.ruleCodes()).hasSize(6);
         assertThat(request.personaCodes()).hasSize(2);
-        assertThat(request.evidenceDocuments()).hasSize(2)
-                .allSatisfy(evidence -> assertThat(evidence.content()).isNotBlank());
+        assertThat(request.selectedEvidenceDocumentIds()).containsExactly(1L, 2L);
+        assertThat(request.retrievedContexts())
+                .extracting(
+                        AnalysisRequest.RetrievedContextPayload::evidenceDocumentId,
+                        AnalysisRequest.RetrievedContextPayload::chunkText,
+                        AnalysisRequest.RetrievedContextPayload::rank)
+                .containsExactly(
+                        tuple(1L, TEST_RETRIEVED_CONTEXTS.get(1L), 1),
+                        tuple(2L, TEST_RETRIEVED_CONTEXTS.get(2L), 2));
+        assertThat(request.retrievedContexts())
+                .allSatisfy(context -> assertThat(context.chunkId()).isNotNull());
+        JsonNode providerPayload = objectMapper.valueToTree(request);
+        assertThat(providerPayload.has("selectedEvidenceDocumentIds")).isTrue();
+        assertThat(providerPayload.has("retrievedContexts")).isTrue();
+        assertThat(providerPayload.has("evidenceDocuments")).isFalse();
+        assertThat(providerPayload.get("retrievedContexts").get(0).has("chunkText")).isTrue();
+        assertThat(providerPayload.get("retrievedContexts").get(0).has("content")).isFalse();
     }
 
     @Test
@@ -575,7 +779,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
         Long factId = confirmFact("Provider가 인용할 검증된 사실", "VERIFIED");
         FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
         ReflectionTestUtils.setField(fake, "behavior",
-                (Function<AnalysisRequest, AnalysisResult>) request -> resultCiting(factId));
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultCiting(request, factId));
 
         Long analysisId = createAnalysis();
 
@@ -591,7 +795,47 @@ class AnalysisApiTest extends IntegrationTestSupport {
         Long unknownFactId = acceptedFactId + 999_999L;
         FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
         ReflectionTestUtils.setField(fake, "behavior",
-                (Function<AnalysisRequest, AnalysisResult>) request -> resultCiting(unknownFactId));
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultCiting(request, unknownFactId));
+
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.retryable").value(false))
+                .andExpect(jsonPath("$.errorCode").value("PROVIDER_RESPONSE_INVALID"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isZero();
+    }
+
+    @Test
+    @DisplayName("Provider가 검색 결과에 없는 chunkId를 인용하면 결과를 저장하지 않는다")
+    void unretrievedContextChunkReferenceIsRejected() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request ->
+                        resultCitingChunks(List.of(Long.MAX_VALUE)));
+
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.retryable").value(false))
+                .andExpect(jsonPath("$.errorCode").value("PROVIDER_RESPONSE_INVALID"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isZero();
+    }
+
+    @Test
+    @DisplayName("Provider가 같은 검색 chunkId를 중복 인용하면 결과를 저장하지 않는다")
+    void duplicateRetrievedContextChunkReferenceIsRejected() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    Long chunkId = request.retrievedContexts().getFirst().chunkId();
+                    return resultCitingChunks(List.of(chunkId, chunkId));
+                });
 
         Long analysisId = createAnalysis();
 
@@ -697,9 +941,41 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.riskScore").value(82))
                 .andExpect(jsonPath("$.retryable").value(false));
         assertAudit(initialTraceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
-        assertAudit(initialTraceId, "ANALYSIS_FAILED", analysisId, null, analysisId);
+        assertSingleTerminalAudit(
+                initialTraceId, "ANALYSIS_FAILED", analysisId, null, analysisId);
         assertAudit(traceId, "ANALYSIS_RETRIED", analysisId, 1L, analysisId);
-        assertAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
+        assertSingleTerminalAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
+    }
+
+    @Test
+    @DisplayName("완료 감사 저장이 실패하면 완료 상태와 결과도 함께 롤백된다")
+    void completedStateRollsBackWithTerminalAuditFailure() throws Exception {
+        String traceId = "analysis-completed-audit-failure";
+        failTerminalAuditPersistence(traceId);
+
+        Long analysisId = createAnalysis(traceId);
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RUNNING"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isZero();
+        assertNoTerminalAudit(traceId);
+    }
+
+    @Test
+    @DisplayName("실패 감사 저장이 실패하면 FAILED 상태도 함께 롤백된다")
+    void failedStateRollsBackWithTerminalAuditFailure() throws Exception {
+        String traceId = "analysis-failed-audit-failure";
+        ((FakeRiskAnalysisProvider) provider).failWith(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true);
+        failTerminalAuditPersistence(traceId);
+
+        Long analysisId = createAnalysis(traceId);
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RUNNING"));
+        assertNoTerminalAudit(traceId);
     }
 
     @Test
@@ -718,7 +994,8 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("ANALYSIS_NOT_RETRYABLE"));
         assertAudit(failureTraceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
-        assertAudit(failureTraceId, "ANALYSIS_FAILED", analysisId, null, analysisId);
+        assertSingleTerminalAudit(
+                failureTraceId, "ANALYSIS_FAILED", analysisId, null, analysisId);
         assertNoAudit(traceId);
     }
 
@@ -756,6 +1033,10 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
         assertThat(oldProviderEntered.await(5, TimeUnit.SECONDS)).isTrue();
         Long analysisId = currentAnalysisId.get();
+        OffsetDateTime oldUpdatedAt = jdbc.queryForObject(
+                "SELECT updated_at FROM analyses WHERE id = ?", OffsetDateTime.class, analysisId);
+        String oldExecutionToken = jdbc.queryForObject(
+                "SELECT execution_token FROM analyses WHERE id = ?", String.class, analysisId);
         try {
             new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
                 Analysis analysis = analysisRepository.findWithLockById(analysisId).orElseThrow();
@@ -781,6 +1062,11 @@ class AnalysisApiTest extends IntegrationTestSupport {
                               AND resource_type = 'ANALYSIS'
                               AND resource_id = ?
                             """, Long.class, retryTraceId, analysisId)).isEqualTo(1L));
+            assertThat(jdbc.queryForObject(
+                    "SELECT execution_token FROM analyses WHERE id = ?", String.class, analysisId))
+                    .isNotEqualTo(oldExecutionToken);
+            // updated_at 이 이전 실행과 같아져도 전용 token fence가 stale 결과를 차단해야 한다.
+            jdbc.update("UPDATE analyses SET updated_at = ? WHERE id = ?", oldUpdatedAt, analysisId);
         } finally {
             releaseOldProvider.countDown();
         }
@@ -801,7 +1087,8 @@ class AnalysisApiTest extends IntegrationTestSupport {
         assertAudit(oldTraceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
         assertNoTerminalAudit(oldTraceId);
         assertAudit(retryTraceId, "ANALYSIS_RETRIED", analysisId, 1L, analysisId);
-        assertAudit(retryTraceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
+        assertSingleTerminalAudit(
+                retryTraceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
     }
 
     @Test

@@ -2,7 +2,7 @@ name: argus
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: ${DB_NAME:-crosschecklab}
       POSTGRES_USER: ${DB_USERNAME:-crosschecklab}
@@ -23,6 +23,12 @@ services:
   ai-service:
     build:
       context: ./ai-service
+    environment:
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${AI_SERVICE_PORT:-8000}:8000"
     healthcheck:
@@ -50,6 +56,11 @@ services:
       DB_SSLMODE: disable
       AI_SERVICE_URL: http://ai-service:8000
       AI_SERVICE_ALLOW_INSECURE_HTTP: "true"
+      SPRING_PROFILES_ACTIVE: real-extraction
+      RAG_OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      RAG_OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-bge-m3:latest}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     depends_on:
