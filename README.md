@@ -238,6 +238,14 @@ node frontend/scripts/real-rag-full-flow-e2e.mjs
 
 - `data/demo-corpus/documents/product/SMART-INCOME-SALES-v1.pdf`
 
+시연용 상품 자료:
+
+- `data/demo-showcase-pdfs/01-프라임인컴-판매자료-위험표현.pdf`
+- `data/demo-showcase-pdfs/02-그린밸런스-중도해지-안내.pdf`
+- `data/demo-showcase-pdfs/03-클리어세이프-균형설명서.pdf`
+
+세 파일은 실제 브라우저 업로드와 PDFBox 추출에 사용할 수 있는 10MB 이하 Korean text-layer PDF입니다. 파일별 시연 초점·페이지·SHA-256은 `data/demo-showcase-pdfs/README.md`에 있습니다.
+
 RAG 근거 PDF:
 
 - `data/demo-corpus/documents/evidence/SMART-INCOME-PRODUCT-POLICY-v1.pdf`
