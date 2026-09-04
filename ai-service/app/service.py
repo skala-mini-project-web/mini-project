@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from threading import Lock
 from typing import Any
 
@@ -47,7 +48,36 @@ class ProviderResponseInvalidError(AiServiceError):
 
 
 class RiskAnalysisService:
-    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v6"
+    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v10"
+    MAX_REPAIR_EXCERPTS_PER_CHUNK = 3
+    MAX_REPAIR_EXCERPT_CHARS = 400
+    MAX_REPAIR_EXCERPT_BYTES = 12_000
+    REPAIR_METADATA_LINE_PATTERNS = (
+        re.compile(r"^ARGUS\s*\|", re.IGNORECASE),
+        re.compile(r"\bSYNTHETIC DEMO CORPUS\b", re.IGNORECASE),
+        re.compile(r"^(?:문서번호|버전|데모 규정)\b"),
+        re.compile(
+            r"^(?:version|document(?:\s+number)?|section)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(r"^\d+\.\s*[^.!?。！？]+$"),
+        re.compile(r"^제\d+조(?:의\d+)?\s*\([^)]*\)\s*$"),
+    )
+    REPAIR_METADATA_MARKERS = (
+        "완전 합성",
+        "합성 데이터",
+        "합성 문서",
+        "합성 텍스트",
+        "가상 규정",
+        "실제 회사 정책이 아닙니다",
+        "실제 법령",
+        "실제 상품",
+        "법적 효력",
+        "법적 권위",
+        "규제기관 승인",
+        "데모 전용",
+        "demo only",
+    )
 
     def __init__(
         self,
@@ -135,7 +165,11 @@ class RiskAnalysisService:
             "chunkText. Preserve its whitespace, punctuation, and casing. "
             "Every evidence span must refer to a cited chunk, and duplicate "
             "spans are forbidden. "
-            "One well-grounded finding is sufficient. "
+            "Return exactly one fully grounded finding. Its evidenceSpans "
+            "excerpts must each exactly match one of the "
+            "allowedEvidenceExcerptOptions supplied in the user message for "
+            "the same chunkId. Do not combine, shorten, rewrite, or extend an "
+            "allowed option. "
             "Never quote confirmedText or any other product text as evidence. "
             "Do not cite unknown or unretrieved contexts. knownFactIds "
             "may contain only exact factId values supplied in knownFacts; "
@@ -147,6 +181,13 @@ class RiskAnalysisService:
             f"{json.dumps(self.OLLAMA_PROMPT_VERSION)}."
         )
         user_payload = request.model_dump(mode="json", by_alias=True)
+        excerpt_options = self._repair_excerpt_options(request)
+        user_payload["allowedEvidenceExcerptOptions"] = excerpt_options
+        serialized_options = json.dumps(
+            excerpt_options,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         payload: dict[str, Any] = {
             "model": self.ollama_model,
             "messages": [
@@ -165,6 +206,61 @@ class RiskAnalysisService:
             "options": {"temperature": 0, "seed": 42},
         }
 
+        generated_json = self._call_ollama(payload)
+        try:
+            response = RiskAnalysisResponse.model_validate_json(generated_json)
+            if len(response.findings) != 1:
+                raise ValueError(
+                    "An Ollama response must contain exactly one finding."
+                )
+            self._validate_grounding(request, response)
+        except (ValidationError, TypeError, ValueError):
+            payload["messages"].extend(
+                [
+                    {"role": "assistant", "content": generated_json},
+                    {
+                        "role": "user",
+                        "content": (
+                            "The prior JSON failed the required schema or "
+                            "grounding validation. Return a new complete JSON "
+                            "response matching the same supplied schema. "
+                            "Return exactly one finding, retaining the best "
+                            "fully grounded finding from the prior response "
+                            "and removing all others. Its evidenceSpans "
+                            "excerpts must be copied exactly from the allowed "
+                            "source-only options below for their chunkId. "
+                            "Do not combine, shorten, rewrite, or extend an "
+                            "option. Do not invent, alter, or copy evidence "
+                            "from confirmedText or other product text. The "
+                            "allowed options are "
+                            f"{serialized_options}. "
+                            "Apply all other original constraints. Return "
+                            "only the new JSON."
+                        ),
+                    },
+                ]
+            )
+            repaired_json = self._call_ollama(payload)
+            try:
+                response = RiskAnalysisResponse.model_validate_json(
+                    repaired_json
+                )
+                if len(response.findings) != 1:
+                    raise ValueError(
+                        "A repaired response must contain exactly one finding."
+                    )
+                self._validate_grounding(request, response)
+            except (ValidationError, TypeError, ValueError):
+                raise ProviderResponseInvalidError() from None
+
+        return response.model_copy(
+            update={
+                "model_version": self.ollama_model,
+                "prompt_version": self.OLLAMA_PROMPT_VERSION,
+            }
+        )
+
+    def _call_ollama(self, payload: dict[str, Any]) -> str:
         try:
             provider_response = self.http_client.post(
                 f"{self.ollama_base_url}/api/chat",
@@ -181,21 +277,71 @@ class RiskAnalysisService:
 
         try:
             generated_json = provider_response.json()["message"]["content"]
+            if not isinstance(generated_json, str):
+                raise TypeError
+            return generated_json
         except (KeyError, TypeError, ValueError):
             raise ProviderResponseInvalidError() from None
 
-        try:
-            response = RiskAnalysisResponse.model_validate_json(generated_json)
-            self._validate_grounding(request, response)
-        except (ValidationError, TypeError, ValueError):
-            raise ProviderResponseInvalidError() from None
+    @classmethod
+    def _repair_excerpt_options(
+        cls,
+        request: RiskAnalysisRequest,
+    ) -> list[dict[str, Any]]:
+        options: list[dict[str, Any]] = []
+        remaining_bytes = cls.MAX_REPAIR_EXCERPT_BYTES
+        context_count = len(request.retrieved_contexts)
+        for index, context in enumerate(request.retrieved_contexts):
+            excerpts: list[str] = []
+            context_budget = remaining_bytes // (context_count - index)
+            for source_line in context.chunk_text.splitlines():
+                line = source_line.strip()
+                if cls._is_repair_metadata_line(line):
+                    continue
+                candidates = re.findall(
+                    r".+?[.!?。！？]+(?:[\"'”’」』]+)?(?=\s|$)",
+                    line,
+                )
+                for candidate in candidates:
+                    excerpt = candidate.strip()
+                    encoded_size = len(excerpt.encode("utf-8"))
+                    if (
+                        not excerpt
+                        or len(excerpt) > cls.MAX_REPAIR_EXCERPT_CHARS
+                        or encoded_size > context_budget
+                    ):
+                        continue
+                    excerpts.append(excerpt)
+                    context_budget -= encoded_size
+                    remaining_bytes -= encoded_size
+                    if len(excerpts) == cls.MAX_REPAIR_EXCERPTS_PER_CHUNK:
+                        break
+                if len(excerpts) == cls.MAX_REPAIR_EXCERPTS_PER_CHUNK:
+                    break
+                if context_budget == 0:
+                    break
+            if excerpts:
+                options.append(
+                    {"chunkId": context.chunk_id, "excerpts": excerpts}
+                )
+        return options
 
-        return response.model_copy(
-            update={
-                "model_version": self.ollama_model,
-                "prompt_version": self.OLLAMA_PROMPT_VERSION,
-            }
-        )
+    @classmethod
+    def _is_repair_metadata_line(cls, line: str) -> bool:
+        if not line:
+            return True
+        normalized = line.casefold()
+        if any(
+            marker.casefold() in normalized
+            for marker in cls.REPAIR_METADATA_MARKERS
+        ):
+            return True
+        if any(
+            pattern.search(line)
+            for pattern in cls.REPAIR_METADATA_LINE_PATTERNS
+        ):
+            return True
+        return not re.search(r"[.!?。！？]", line)
 
     @staticmethod
     def _validate_grounding(

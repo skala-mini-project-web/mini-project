@@ -363,6 +363,14 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
         expected_analysis_request = RiskAnalysisRequest.model_validate(
             request
         ).model_dump(mode="json", by_alias=True)
+        expected_analysis_request["allowedEvidenceExcerptOptions"] = [
+            {
+                "chunkId": 11,
+                "excerpts": [
+                    "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다."
+                ],
+            }
+        ]
         assert user_payload == expected_analysis_request
         assert "evidenceDocuments" not in user_payload
         assert "citationCatalog" not in user_payload
@@ -387,7 +395,12 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
         assert "citationCatalog" not in system_prompt
         assert "candidateExcerpts" not in system_prompt
         assert "evidenceReference" not in system_prompt
-        assert "One well-grounded finding is sufficient." in system_prompt
+        assert "Return exactly one fully grounded finding." in system_prompt
+        assert (
+            "allowedEvidenceExcerptOptions supplied in the user message"
+            in system_prompt
+        )
+        assert "Do not combine, shorten, rewrite, or extend" in system_prompt
         assert (
             "Never quote confirmedText or any other product text as evidence."
             in system_prompt
@@ -407,6 +420,266 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
     response = call_api("POST", "/internal/v1/risk-analyses", json=request)
 
     assert response.status_code == 200
+
+
+def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    valid_finding = {
+        "statement": "안정성 표현이 원금 손실 가능성을 가릴 수 있습니다.",
+        "severity": "HIGH",
+        "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+        "retrievedContextChunkIds": [11],
+        "evidenceSpans": [
+            {
+                "chunkId": 11,
+                "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
+            }
+        ],
+        "knownFactIds": [],
+        "recommendation": "원금 손실 가능성을 함께 고지하세요.",
+    }
+    unsupported_finding = {
+        **valid_finding,
+        "statement": "상품 문구를 근거로 삼은 지원되지 않는 지적입니다.",
+        "evidenceSpans": [
+            {
+                "chunkId": 11,
+                "excerpt": "최근 안정적인 수익률을 기록한 투자상품입니다.",
+            }
+        ],
+    }
+    first_output = {
+        "riskScore": 82,
+        "modelVersion": "ignored-provider-version",
+        "promptVersion": "ignored-prompt-version",
+        "findings": [valid_finding, unsupported_finding],
+    }
+    repaired_output = {
+        **first_output,
+        "findings": [valid_finding],
+    }
+    provider_requests: list[dict[str, Any]] = []
+
+    def provider_response(provider_request: httpx.Request) -> httpx.Response:
+        provider_requests.append(json.loads(provider_request.content))
+        output = first_output if len(provider_requests) == 1 else repaired_output
+        return httpx.Response(
+            200,
+            json={"message": {"content": json.dumps(output)}},
+        )
+
+    monkeypatch.setattr(analysis_service, "provider", AnalysisProvider.OLLAMA)
+    monkeypatch.setattr(
+        analysis_service,
+        "http_client",
+        httpx.Client(transport=httpx.MockTransport(provider_response)),
+    )
+
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["findings"] == [
+        {
+            **valid_finding,
+            "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+        }
+    ]
+    assert len(provider_requests) == 2
+    repair_messages = provider_requests[1]["messages"]
+    assert repair_messages[-2] == {
+        "role": "assistant",
+        "content": json.dumps(first_output),
+    }
+    repair_prompt = repair_messages[-1]["content"]
+    assert "Return exactly one finding" in repair_prompt
+    assert (
+        '"chunkId":11,"excerpts":'
+        '["원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다."]'
+    ) in repair_prompt
+    assert (
+        "Do not combine, shorten, rewrite, or extend an option."
+        in repair_prompt
+    )
+    assert "Do not invent, alter, or copy evidence" in repair_prompt
+
+
+def test_rejects_ollama_output_that_remains_invalid_after_one_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invalid_output = {
+        "riskScore": 82,
+        "modelVersion": "ignored-provider-version",
+        "promptVersion": "ignored-prompt-version",
+        "findings": [
+            {
+                "statement": "상품 문구를 근거로 삼은 지원되지 않는 지적입니다.",
+                "severity": "HIGH",
+                "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+                "retrievedContextChunkIds": [11],
+                "evidenceSpans": [
+                    {
+                        "chunkId": 11,
+                        "excerpt": "최근 안정적인 수익률을 기록한 투자상품입니다.",
+                    }
+                ],
+                "knownFactIds": [],
+                "recommendation": "원금 손실 가능성을 함께 고지하세요.",
+            }
+        ],
+    }
+    grounded_finding = deepcopy(invalid_output["findings"][0])
+    grounded_finding["evidenceSpans"] = [
+        {
+            "chunkId": 11,
+            "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
+        }
+    ]
+    invalid_repair_output = {
+        **invalid_output,
+        "findings": [grounded_finding, deepcopy(grounded_finding)],
+    }
+    call_count = 0
+
+    def provider_response(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        output = invalid_output if call_count == 1 else invalid_repair_output
+        return httpx.Response(
+            200,
+            json={"message": {"content": json.dumps(output)}},
+        )
+
+    monkeypatch.setattr(analysis_service, "provider", AnalysisProvider.OLLAMA)
+    monkeypatch.setattr(
+        analysis_service,
+        "http_client",
+        httpx.Client(transport=httpx.MockTransport(provider_response)),
+    )
+
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+    )
+
+    assert call_count == 2
+    assert response.status_code == 500
+    assert response.json()["errorCode"] == "AI_PROVIDER_RESPONSE_INVALID"
+    assert response.json()["retryable"] is False
+
+
+def test_ollama_repair_excerpt_options_are_bounded_and_exact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = guarantee_request()
+    request["retrievedContexts"][0]["chunkText"] = (
+        "ARGUS | SYNTHETIC DEMO CORPUS POLICY-v1 · 1/2\n"
+        "중요정보 표시 내부정책\n"
+        "문서번호 SYN-DISC-2026-1 · 버전 2026.1\n"
+        "완전 합성 내부 표시기준 — 실제 법령이나 업계 표준이 아닙니다.\n"
+        "2. 동일 화면 원칙\n"
+        f"{'가' * 401}.\n"
+        "“안정”, “보장” 표현이 있으면 원금손실 가능성을 같은 화면에 "
+        "표시한다. 각 고지는 홍보 문구보다 늦게 나타나면 안 된다.\n"
+        "제13조(강조 표현의 정정)\n"
+        "안정 또는 확정을 연상시키는 표현의 한계를 명확히 정정한다.\n"
+        "비권위 선언\n"
+        "네 번째 정책 문장은 선택 한도를 넘어 제외된다.\n"
+        "완전 합성 데모 문서 · 실제 상품이나 법령을 나타내지 않음"
+    )
+    invalid_output = {
+        "riskScore": 82,
+        "modelVersion": "ignored-provider-version",
+        "promptVersion": "ignored-prompt-version",
+        "findings": [
+            {
+                "statement": "지원되지 않는 지적입니다.",
+                "severity": "HIGH",
+                "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+                "retrievedContextChunkIds": [11],
+                "evidenceSpans": [
+                    {"chunkId": 11, "excerpt": "상품 원문의 잘못된 근거"}
+                ],
+                "knownFactIds": [],
+                "recommendation": "근거를 수정하세요.",
+            }
+        ],
+    }
+    repaired_output = deepcopy(invalid_output)
+    repaired_output["findings"][0]["evidenceSpans"] = [
+        {
+            "chunkId": 11,
+            "excerpt": (
+                "“안정”, “보장” 표현이 있으면 원금손실 가능성을 "
+                "같은 화면에 표시한다."
+            ),
+        }
+    ]
+    provider_requests: list[dict[str, Any]] = []
+
+    def provider_response(provider_request: httpx.Request) -> httpx.Response:
+        provider_requests.append(json.loads(provider_request.content))
+        output = (
+            invalid_output if len(provider_requests) == 1 else repaired_output
+        )
+        return httpx.Response(
+            200,
+            json={"message": {"content": json.dumps(output)}},
+        )
+
+    monkeypatch.setattr(analysis_service, "provider", AnalysisProvider.OLLAMA)
+    monkeypatch.setattr(
+        analysis_service,
+        "http_client",
+        httpx.Client(transport=httpx.MockTransport(provider_response)),
+    )
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert response.status_code == 200
+    initial_user_payload = json.loads(
+        provider_requests[0]["messages"][1]["content"]
+    )
+    initial_options = initial_user_payload["allowedEvidenceExcerptOptions"]
+    assert initial_options == [
+        {
+            "chunkId": 11,
+            "excerpts": [
+                (
+                    "“안정”, “보장” 표현이 있으면 원금손실 가능성을 "
+                    "같은 화면에 표시한다."
+                ),
+                "각 고지는 홍보 문구보다 늦게 나타나면 안 된다.",
+                "안정 또는 확정을 연상시키는 표현의 한계를 명확히 정정한다.",
+            ],
+        }
+    ]
+    assert request["confirmedText"] not in json.dumps(
+        initial_options,
+        ensure_ascii=False,
+    )
+    repair_prompt = provider_requests[1]["messages"][-1]["content"]
+    assert (
+        '"chunkId":11,"excerpts":'
+        '["“안정”, “보장” 표현이 있으면 원금손실 가능성을 같은 화면에 '
+        '표시한다.","각 고지는 홍보 문구보다 늦게 나타나면 안 된다.",'
+        '"안정 또는 확정을 연상시키는 표현의 한계를 명확히 정정한다."]'
+    ) in repair_prompt
+    assert "ARGUS | SYNTHETIC DEMO CORPUS" not in repair_prompt
+    assert "문서번호 SYN-DISC-2026-1" not in repair_prompt
+    assert "완전 합성 내부 표시기준" not in repair_prompt
+    assert "2. 동일 화면 원칙" not in repair_prompt
+    assert "제13조(강조 표현의 정정)" not in repair_prompt
+    assert "비권위 선언" not in repair_prompt
+    assert ("가" * 401) not in repair_prompt
+    assert "네 번째 정책 문장은 선택 한도를 넘어 제외된다." not in repair_prompt
+    assert "완전 합성 데모 문서" not in repair_prompt
+    assert request["confirmedText"] not in repair_prompt
 
 
 def test_rejects_ollama_output_omitting_retrieved_chunk_ids(
