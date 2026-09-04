@@ -1,0 +1,1900 @@
+{
+  "info": {
+    "_postman_id": "53fdbb4c-c351-4a20-a8d2-6f2819eb40f1",
+    "name": "ARGUS Postman Mock Collection",
+    "description": "ARGUS local API examples derived from MVP API v0.3.2 and current Spring controllers. All identities and business data are synthetic. Examples support Postman Mock Server demonstrations; they are not observed Docker responses.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "pmUserId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "pmRole",
+      "value": "PRODUCT_MANAGER",
+      "type": "string"
+    },
+    {
+      "key": "reviewerUserId",
+      "value": "2",
+      "type": "string"
+    },
+    {
+      "key": "reviewerRole",
+      "value": "COMPLIANCE_REVIEWER",
+      "type": "string"
+    },
+    {
+      "key": "demoScenario",
+      "value": "GUARANTEE_MISUNDERSTANDING_HIGH",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Operations",
+      "item": [
+        {
+          "name": "Backend health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            },
+            "description": "Spring Boot Actuator health endpoint used by Docker Compose."
+          },
+          "response": [
+            {
+              "name": "200 Backend UP",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/actuator/health",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "actuator",
+                    "health"
+                  ]
+                },
+                "description": "Spring Boot Actuator health endpoint used by Docker Compose."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"status\": \"UP\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Product Manager Flow",
+      "item": [
+        {
+          "name": "Create product",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{pmUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{pmRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"합성 스마트 인컴 상품\",\n  \"productType\": \"INVESTMENT\",\n  \"description\": \"데모 검증용 합성 상품\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "201 Synthetic product created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{pmUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{pmRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"합성 스마트 인컴 상품\",\n  \"productType\": \"INVESTMENT\",\n  \"description\": \"데모 검증용 합성 상품\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"productId\": 101,\n  \"name\": \"합성 스마트 인컴 상품\",\n  \"productType\": \"INVESTMENT\",\n  \"description\": \"데모 검증용 합성 상품\",\n  \"ownerId\": 1,\n  \"ownerName\": \"합성 상품 담당자\",\n  \"latestDocument\": null,\n  \"latestAnalysis\": null,\n  \"createdAt\": \"2026-09-03T09:00:00+09:00\",\n  \"updatedAt\": \"2026-09-03T09:00:00+09:00\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "List products",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{pmUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{pmRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products?page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 PM-owned products",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{pmUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{pmRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products?page=0&size=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "0"
+                    },
+                    {
+                      "key": "size",
+                      "value": "20"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"items\": [\n    {\n      \"productId\": 101,\n      \"name\": \"합성 스마트 인컴 상품\",\n      \"productType\": \"INVESTMENT\",\n      \"ownerId\": 1,\n      \"ownerName\": \"합성 상품 담당자\",\n      \"latestDocument\": null,\n      \"latestAnalysis\": null,\n      \"createdAt\": \"2026-09-03T09:00:00+09:00\"\n    }\n  ],\n  \"page\": 0,\n  \"size\": 20,\n  \"totalElements\": 1,\n  \"totalPages\": 1\n}"
+            }
+          ]
+        },
+        {
+          "name": "Upload product document",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{pmUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{pmRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/101/documents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "101",
+                "documents"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Choose a synthetic PDF or PPTX (10 MB maximum). Scanned-PDF OCR is unsupported."
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "202 Extraction accepted",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{pmUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{pmRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/101/documents",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "101",
+                    "documents"
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "file",
+                      "type": "file",
+                      "src": "",
+                      "description": "Choose a synthetic PDF or PPTX (10 MB maximum). Scanned-PDF OCR is unsupported."
+                    }
+                  ]
+                }
+              },
+              "status": "Accepted",
+              "code": 202,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"documentId\": 201,\n  \"productId\": 101,\n  \"extractStatus\": \"UPLOADED\",\n  \"statusUrl\": \"/api/documents/201\",\n  \"fileName\": \"synthetic-product-guide.pdf\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Confirm extracted text",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{pmUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{pmRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/documents/201/text",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "documents",
+                "201",
+                "text"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"extractedText\": \"이 합성 투자상품은 원금 손실 가능성이 있으며 수익률은 보장되지 않습니다.\",\n  \"confirmed\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 Text confirmed",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{pmUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{pmRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/documents/201/text",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "documents",
+                    "201",
+                    "text"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"extractedText\": \"이 합성 투자상품은 원금 손실 가능성이 있으며 수익률은 보장되지 않습니다.\",\n  \"confirmed\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"documentId\": 201,\n  \"productId\": 101,\n  \"fileName\": \"synthetic-product-guide.pdf\",\n  \"mediaType\": \"application/pdf\",\n  \"fileSize\": 4096,\n  \"checksum\": \"a07f2aa9b06145f1e5997d5d75d4f8513946743278fd4b293595071ca7a2ca13\",\n  \"extractStatus\": \"READY\",\n  \"extractedText\": \"이 합성 투자상품은 원금 손실 가능성이 있으며 수익률은 보장되지 않습니다.\",\n  \"confirmed\": true,\n  \"confirmedBy\": 1,\n  \"confirmedAt\": \"2026-09-03T09:02:00+09:00\",\n  \"createdAt\": \"2026-09-03T09:01:00+09:00\",\n  \"updatedAt\": \"2026-09-03T09:02:00+09:00\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create analysis",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{pmUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{pmRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyses",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analyses"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productDocumentId\": 201,\n  \"evidenceDocumentIds\": [\n    1,\n    2\n  ],\n  \"personaIds\": [\n    1,\n    2\n  ],\n  \"redTeamPackId\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "202 PM analysis accepted",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{pmUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{pmRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/analyses",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "analyses"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"productDocumentId\": 201,\n  \"evidenceDocumentIds\": [\n    1,\n    2\n  ],\n  \"personaIds\": [\n    1,\n    2\n  ],\n  \"redTeamPackId\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Accepted",
+              "code": 202,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"analysisId\": 301,\n  \"status\": \"CREATED\",\n  \"statusUrl\": \"/api/analyses/301\",\n  \"resultUrl\": \"/api/analyses/301/result\"\n}"
+            },
+            {
+              "name": "409 Document not confirmed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{pmUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{pmRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/analyses",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "analyses"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"productDocumentId\": 201,\n  \"evidenceDocumentIds\": [\n    1,\n    2\n  ],\n  \"personaIds\": [\n    1,\n    2\n  ],\n  \"redTeamPackId\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"status\": 409,\n  \"errorCode\": \"DOCUMENT_NOT_CONFIRMED\",\n  \"message\": \"추출 텍스트 확인 후 분석을 요청하세요.\",\n  \"fieldErrors\": [],\n  \"retryable\": false,\n  \"traceId\": \"trc-synthetic-unconfirmed\",\n  \"timestamp\": \"2026-09-03T09:03:12+09:00\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Poll analysis status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{pmUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{pmRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyses/301",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analyses",
+                "301"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 Analysis running",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{pmUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{pmRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/analyses/301",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "analyses",
+                    "301"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"analysisId\": 301,\n  \"status\": \"RUNNING\",\n  \"progress\": 65,\n  \"riskScore\": null,\n  \"requiresHumanApproval\": true,\n  \"retryable\": false,\n  \"errorCode\": null,\n  \"updatedAt\": \"2026-09-03T09:03:02+09:00\"\n}"
+            },
+            {
+              "name": "200 Analysis completed",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{pmUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{pmRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/analyses/301",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "analyses",
+                    "301"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"analysisId\": 301,\n  \"status\": \"COMPLETED\",\n  \"progress\": 100,\n  \"riskScore\": 82,\n  \"requiresHumanApproval\": true,\n  \"retryable\": false,\n  \"errorCode\": null,\n  \"updatedAt\": \"2026-09-03T09:04:30+09:00\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get analysis result and RAG trace",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{pmUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{pmRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyses/301/result",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analyses",
+                "301",
+                "result"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 PM analysis result with RAG trace",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{pmUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{pmRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/analyses/301/result",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "analyses",
+                    "301",
+                    "result"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"analysisId\": 301,\n  \"status\": \"COMPLETED\",\n  \"riskScore\": 82,\n  \"sourceDocument\": {\n    \"documentId\": 201,\n    \"fileName\": \"synthetic-product-guide.pdf\"\n  },\n  \"groundingDocuments\": [\n    {\n      \"documentId\": 1,\n      \"sourceType\": \"INTERNAL_POLICY\",\n      \"title\": \"금융상품 중요정보 표시 내부준칙 (합성 데모)\"\n    }\n  ],\n  \"retrievalTrace\": {\n    \"queryHash\": \"sha256:4ba72f41d314a03a83453b77d8e1016a6ec142ca\",\n    \"retrievalVersion\": \"rag-v1\",\n    \"embeddingModel\": \"bge-m3:latest\",\n    \"retrievedAt\": \"2026-09-03T09:03:40+09:00\",\n    \"contexts\": [\n      {\n        \"chunkId\": 11,\n        \"evidenceDocumentId\": 1,\n        \"sourceType\": \"INTERNAL_POLICY\",\n        \"title\": \"금융상품 중요정보 표시 내부준칙 (합성 데모)\",\n        \"rank\": 1,\n        \"similarity\": 0.8732,\n        \"excerpt\": \"원금 손실 가능성은 안정성 표현과 인접해 표시해야 합니다.\"\n      }\n    ]\n  },\n  \"groundTruthFacts\": [\n    {\n      \"factId\": 51,\n      \"label\": \"원금 보장 여부\",\n      \"value\": \"보장되지 않음\"\n    }\n  ],\n  \"findings\": [\n    {\n      \"findingId\": 401,\n      \"statement\": \"안정성 표현이 원금보장으로 오인될 가능성이 있습니다.\",\n      \"severity\": \"HIGH\",\n      \"affectedPersonaCodes\": [\n        \"FINANCIAL_BEGINNER\",\n        \"SENIOR\"\n      ],\n      \"evidenceReferences\": [\n        {\n          \"evidenceDocumentId\": 1,\n          \"sourceType\": \"INTERNAL_POLICY\",\n          \"excerpt\": \"원금 손실 가능성은 안정성 표현과 인접해 표시해야 합니다.\"\n        }\n      ],\n      \"recommendation\": \"안정성 표현과 같은 영역에 원금 손실 가능성을 명시하세요.\"\n    }\n  ]\n}"
+            },
+            {
+              "name": "403 Analysis access denied",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{pmUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{pmRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/analyses/301/result",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "analyses",
+                    "301",
+                    "result"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"status\": 403,\n  \"errorCode\": \"FORBIDDEN_OWNERSHIP\",\n  \"message\": \"본인이 담당하는 리소스만 접근할 수 있습니다.\",\n  \"fieldErrors\": [],\n  \"retryable\": false,\n  \"traceId\": \"trc-synthetic-denied\",\n  \"timestamp\": \"2026-09-03T09:05:00+09:00\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Request compliance review",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{pmUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{pmRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/reviews",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reviews"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"analysisId\": 301,\n  \"submissionComment\": \"합성 분석 결과에 대한 준법 검토를 요청합니다.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "201 Review requested",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{pmUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{pmRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/reviews",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "reviews"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"analysisId\": 301,\n  \"submissionComment\": \"합성 분석 결과에 대한 준법 검토를 요청합니다.\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"reviewId\": 501,\n  \"analysisId\": 301,\n  \"status\": \"PENDING\",\n  \"createdAt\": \"2026-09-03T09:10:00+09:00\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Compliance Review Flow",
+      "item": [
+        {
+          "name": "Get review detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{reviewerUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{reviewerRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/reviews/501",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reviews",
+                "501"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 Pending review detail",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{reviewerUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{reviewerRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/reviews/501",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "reviews",
+                    "501"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"reviewId\": 501,\n  \"analysisId\": 301,\n  \"productId\": 101,\n  \"productName\": \"합성 스마트 인컴 상품\",\n  \"ownerId\": 1,\n  \"ownerName\": \"합성 상품 담당자\",\n  \"maxSeverity\": \"HIGH\",\n  \"status\": \"PENDING\",\n  \"submissionComment\": \"합성 분석 결과에 대한 준법 검토를 요청합니다.\",\n  \"reviewerId\": null,\n  \"decidedAt\": null,\n  \"comment\": null,\n  \"selectedFindingIds\": [],\n  \"riskPatternIds\": []\n}"
+            },
+            {
+              "name": "403 Review access denied",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{reviewerUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{reviewerRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/reviews/501",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "reviews",
+                    "501"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"status\": 403,\n  \"errorCode\": \"FORBIDDEN_OWNERSHIP\",\n  \"message\": \"본인이 담당하는 리소스만 접근할 수 있습니다.\",\n  \"fieldErrors\": [],\n  \"retryable\": false,\n  \"traceId\": \"trc-synthetic-review-denied\",\n  \"timestamp\": \"2026-09-03T09:11:00+09:00\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Approve review",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{reviewerUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{reviewerRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/reviews/501/decision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reviews",
+                "501",
+                "decision"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"APPROVED\",\n  \"comment\": \"원금 손실 가능성을 첫 문장에 명시하세요.\",\n  \"selectedFindingIds\": [\n    401\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 Reviewer approval",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{reviewerUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{reviewerRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/reviews/501/decision",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "reviews",
+                    "501",
+                    "decision"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"APPROVED\",\n  \"comment\": \"원금 손실 가능성을 첫 문장에 명시하세요.\",\n  \"selectedFindingIds\": [\n    401\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"reviewId\": 501,\n  \"status\": \"APPROVED\",\n  \"reviewerId\": 2,\n  \"riskPatternIds\": [\n    601\n  ],\n  \"decidedAt\": \"2026-09-03T10:15:00+09:00\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "List Risk Patterns",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{reviewerUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{reviewerRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/risk-patterns?status=ACTIVE&page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "risk-patterns"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "ACTIVE"
+                },
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 Active Risk Patterns",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{reviewerUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{reviewerRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/risk-patterns?status=ACTIVE&page=0&size=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "risk-patterns"
+                  ],
+                  "query": [
+                    {
+                      "key": "status",
+                      "value": "ACTIVE"
+                    },
+                    {
+                      "key": "page",
+                      "value": "0"
+                    },
+                    {
+                      "key": "size",
+                      "value": "20"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"items\": [\n    {\n      \"riskPatternId\": 601,\n      \"findingId\": 401,\n      \"reviewId\": 501,\n      \"name\": \"원금보장 오해\",\n      \"severity\": \"HIGH\",\n      \"status\": \"ACTIVE\"\n    }\n  ],\n  \"page\": 0,\n  \"size\": 20,\n  \"totalElements\": 1,\n  \"totalPages\": 1\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Risk Pattern",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{reviewerUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{reviewerRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/risk-patterns/601",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "risk-patterns",
+                "601"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"원금보장 오해 가능성\",\n  \"status\": \"ACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 Risk Pattern activated",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{reviewerUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{reviewerRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/risk-patterns/601",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "risk-patterns",
+                    "601"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"원금보장 오해 가능성\",\n  \"status\": \"ACTIVE\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"riskPatternId\": 601,\n  \"findingId\": 401,\n  \"reviewId\": 501,\n  \"name\": \"원금보장 오해 가능성\",\n  \"severity\": \"HIGH\",\n  \"status\": \"ACTIVE\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create GuardFit action",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{reviewerUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{reviewerRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/guardfit/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "guardfit",
+                "actions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"riskPatternId\": 601,\n  \"actionType\": \"WARNING\",\n  \"label\": \"원금 손실 가능\",\n  \"placement\": \"상품 상세 상단\",\n  \"required\": true,\n  \"preview\": \"본 합성 상품은 원금 손실이 발생할 수 있습니다.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "201 GuardFit draft created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{reviewerUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{reviewerRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/guardfit/actions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "guardfit",
+                    "actions"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"riskPatternId\": 601,\n  \"actionType\": \"WARNING\",\n  \"label\": \"원금 손실 가능\",\n  \"placement\": \"상품 상세 상단\",\n  \"required\": true,\n  \"preview\": \"본 합성 상품은 원금 손실이 발생할 수 있습니다.\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"actionId\": 701,\n  \"status\": \"DRAFT\",\n  \"createdAt\": \"2026-09-03T10:20:00+09:00\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "List GuardFit actions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{reviewerUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{reviewerRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/guardfit/actions?riskPatternId=601&page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "guardfit",
+                "actions"
+              ],
+              "query": [
+                {
+                  "key": "riskPatternId",
+                  "value": "601"
+                },
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 GuardFit actions",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{reviewerUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{reviewerRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/guardfit/actions?riskPatternId=601&page=0&size=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "guardfit",
+                    "actions"
+                  ],
+                  "query": [
+                    {
+                      "key": "riskPatternId",
+                      "value": "601"
+                    },
+                    {
+                      "key": "page",
+                      "value": "0"
+                    },
+                    {
+                      "key": "size",
+                      "value": "20"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"items\": [\n    {\n      \"actionId\": 701,\n      \"riskPatternId\": 601,\n      \"actionType\": \"WARNING\",\n      \"label\": \"원금 손실 가능\",\n      \"placement\": \"상품 상세 상단\",\n      \"required\": true,\n      \"preview\": \"본 합성 상품은 원금 손실이 발생할 수 있습니다.\",\n      \"status\": \"DRAFT\",\n      \"updatedAt\": \"2026-09-03T10:20:00+09:00\"\n    }\n  ],\n  \"page\": 0,\n  \"size\": 20,\n  \"totalElements\": 1,\n  \"totalPages\": 1\n}"
+            }
+          ]
+        },
+        {
+          "name": "Approve GuardFit action",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-Demo-User-Id",
+                "value": "{{reviewerUserId}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Role",
+                "value": "{{reviewerRole}}",
+                "type": "text"
+              },
+              {
+                "key": "X-Demo-Scenario",
+                "value": "{{demoScenario}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/guardfit/actions/701",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "guardfit",
+                "actions",
+                "701"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actionType\": \"WARNING\",\n  \"label\": \"투자위험 안내\",\n  \"placement\": \"상품 상세 상단\",\n  \"required\": true,\n  \"preview\": \"본 합성 상품은 원금 손실이 발생할 수 있습니다.\",\n  \"status\": \"APPROVED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 GuardFit action approved",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "X-Demo-User-Id",
+                    "value": "{{reviewerUserId}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Role",
+                    "value": "{{reviewerRole}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "X-Demo-Scenario",
+                    "value": "{{demoScenario}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/guardfit/actions/701",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "guardfit",
+                    "actions",
+                    "701"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"actionType\": \"WARNING\",\n  \"label\": \"투자위험 안내\",\n  \"placement\": \"상품 상세 상단\",\n  \"required\": true,\n  \"preview\": \"본 합성 상품은 원금 손실이 발생할 수 있습니다.\",\n  \"status\": \"APPROVED\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=UTF-8"
+                },
+                {
+                  "key": "X-Trace-Id",
+                  "value": "trc-synthetic-0001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"actionId\": 701,\n  \"riskPatternId\": 601,\n  \"actionType\": \"WARNING\",\n  \"label\": \"투자위험 안내\",\n  \"placement\": \"상품 상세 상단\",\n  \"required\": true,\n  \"preview\": \"본 합성 상품은 원금 손실이 발생할 수 있습니다.\",\n  \"status\": \"APPROVED\",\n  \"updatedAt\": \"2026-09-03T10:22:00+09:00\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

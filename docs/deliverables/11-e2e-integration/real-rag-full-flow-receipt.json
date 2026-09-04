@@ -1,0 +1,56 @@
+{
+  "outcome": "PASS",
+  "mode": "real-services-browser",
+  "executedDateKst": "2026-09-04",
+  "services": {
+    "frontend": "http://127.0.0.1:5173",
+    "backend": "http://127.0.0.1:8080",
+    "ai": "http://127.0.0.1:8000"
+  },
+  "actors": {
+    "productManager": { "userId": 1, "role": "PRODUCT_MANAGER" },
+    "reviewer": { "userId": 2, "role": "COMPLIANCE_REVIEWER" },
+    "isolatedBrowserContexts": true
+  },
+  "ids": {
+    "productId": 13,
+    "documentId": 13,
+    "factId": 13,
+    "analysisId": 13,
+    "reviewId": 2,
+    "riskPatternIds": [2],
+    "actionId": 2
+  },
+  "extraction": {
+    "fileName": "SMART-INCOME-SALES-v1.pdf",
+    "bytes": 75747,
+    "checksumSha256": "f7d1b5887dc9e55b58ac7c244e65c23daeeac7be6d017d23e61ec0e4804be0c9",
+    "status": "READY",
+    "confirmed": true,
+    "factExtractionSource": "CONFIRMED_DOCUMENT"
+  },
+  "rag": {
+    "retrievalVersion": "pgvector-cosine-v1",
+    "embeddingModel": "bge-m3:latest@sha256:7907646426070047a77226ac3e684fbbe8410524f7b4a74d02837e43f2146bab",
+    "queryHash": "135850fa9e6b2c507628c0fd951e4e274364a9b1fd1b127cb23c49e932e25746",
+    "contexts": [
+      { "rank": 1, "chunkId": 3, "evidenceDocumentId": 1, "sourceType": "INTERNAL_POLICY", "similarity": 0.7944911938729109 },
+      { "rank": 2, "chunkId": 4, "evidenceDocumentId": 2, "sourceType": "REGULATION", "similarity": 0.7905275986706541 }
+    ]
+  },
+  "findings": { "count": 1, "promotedRiskPatternIds": [2] },
+  "terminalState": {
+    "review": "APPROVED",
+    "riskPattern": "ACTIVE",
+    "guardFit": "APPROVED",
+    "pmVisible": true
+  },
+  "browserSignals": {
+    "apiResponseCount": 88,
+    "pageErrors": [],
+    "requestFailures": [],
+    "unexpectedApiResponses": [],
+    "expectedPreReview404": "GET /api/analyses/13/review returned REVIEW_NOT_FOUND before PM submitted review."
+  },
+  "dataNotice": "All documents, corpus, IDs, policies, and values are synthetic demo data."
+}
