@@ -6,6 +6,7 @@ import com.crosschecklab.domain.document.dto.DocumentTextUpdateRequest;
 import com.crosschecklab.domain.document.extraction.ExtractionScenarioResolver;
 import com.crosschecklab.domain.document.storage.FileStorage;
 import com.crosschecklab.domain.document.storage.StoredFile;
+import com.crosschecklab.domain.groundtruth.GroundTruthFactService;
 import com.crosschecklab.domain.product.Product;
 import com.crosschecklab.domain.product.ProductRepository;
 import com.crosschecklab.domain.user.User;
@@ -38,6 +39,7 @@ public class ProductDocumentService {
 
     private final ProductRepository productRepository;
     private final ProductDocumentRepository productDocumentRepository;
+    private final GroundTruthFactService groundTruthFactService;
     private final UserRepository userRepository;
     private final ExtractionScenarioResolver scenarioResolver;
     private final FileStorage fileStorage;
@@ -81,7 +83,7 @@ public class ProductDocumentService {
     // DOC-003. 추출 텍스트 수정과 확인. READY 상태에서만 허용한다.
     @Transactional
     public DocumentResponse updateText(Long documentId, DocumentTextUpdateRequest request, DemoUser currentUser) {
-        ProductDocument document = getOwnedDocument(documentId, currentUser);
+        ProductDocument document = getOwnedDocumentForUpdate(documentId, currentUser);
         if (!document.isReady()) {
             // 추출 중이거나 실패한 텍스트를 고치면 이후 추출 결과에 덮어써진다.
             throw new BusinessException(ErrorCode.DOCUMENT_NOT_READY);
@@ -91,6 +93,9 @@ public class ProductDocumentService {
         User editor = request.confirmed() ? loadCurrentUser(currentUser) : null;
         document.updateExtractedText(request.extractedText(), request.confirmed(),
                 editor, OffsetDateTime.now(clock));
+        if (request.confirmed()) {
+            groundTruthFactService.refreshFromConfirmedDocument(document, editor);
+        }
 
         return DocumentResponse.from(document);
     }
@@ -118,8 +123,8 @@ public class ProductDocumentService {
     }
 
     // 쓰기 작업용 조회. 담당자 본인이 아니면 403 이다 (검토자도 수정·재시도는 할 수 없다).
-    private ProductDocument getOwnedDocument(Long documentId, DemoUser currentUser) {
-        ProductDocument document = productDocumentRepository.findWithProductOwnerById(documentId)
+    private ProductDocument getOwnedDocumentForUpdate(Long documentId, DemoUser currentUser) {
+        ProductDocument document = productDocumentRepository.findByIdForUpdate(documentId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND));
         ownershipChecker.requireOwner(document.getOwnerId(), currentUser);
         return document;
