@@ -2,7 +2,7 @@
 import { onMounted, ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { PhArrowClockwise, PhStack, PhShieldCheck, PhWarningCircle } from '@phosphor-icons/vue'
-import { api } from '@/api'
+import { api, riskPatternUpdatesAvailable } from '@/api'
 import { useToastStore } from '@/stores/toast'
 import { RULE_LABEL, personaName, ACTION_TYPE_LABEL } from '@/lib/format'
 import GButton from '@/components/ui/GButton.vue'
@@ -17,6 +17,7 @@ import GTextInput from '@/components/ui/GTextInput.vue'
 import GSelect from '@/components/ui/GSelect.vue'
 
 const GUARDFIT_TEXT_MAXIMUM_COUNT = 100
+const RISK_PATTERN_NAME_MAXIMUM_COUNT = 255
 const router = useRouter()
 const toast = useToastStore()
 const loading = ref(true)
@@ -24,9 +25,11 @@ const loadError = ref(null)
 const items = ref([])
 const severity = ref('')
 const submitting = ref(false)
+const updatingPattern = ref(false)
 const showDetail = ref(false)
 const showCreate = ref(false)
 const active = ref(null)
+const patternName = ref('')
 const form = reactive({ actionType: 'WARNING', label: '', placement: '', required: 'true' })
 const actionTypeOptions = Object.entries(ACTION_TYPE_LABEL).map(([value, label]) => ({ value, label: `${label} · ${value}` }))
 const requiredOptions = [{ value: 'true', label: '필수' }, { value: 'false', label: '권장' }]
@@ -48,7 +51,42 @@ async function load() {
 }
 function openDetail(p) {
   active.value = p
+  patternName.value = p.title || p.name || ''
   showDetail.value = true
+}
+function applyPatternUpdate(updated) {
+  const current = active.value
+  const merged = {
+    ...current,
+    ...updated,
+    title: updated.name ?? updated.title ?? current.title,
+    sourceFindingId: updated.findingId ?? updated.sourceFindingId ?? current.sourceFindingId,
+    sourceReviewId: updated.reviewId ?? updated.sourceReviewId ?? current.sourceReviewId,
+  }
+  active.value = merged
+  patternName.value = merged.title
+  const index = items.value.findIndex((item) => item.riskPatternId === merged.riskPatternId)
+  if (index !== -1) items.value[index] = merged
+}
+async function updatePattern(body, successTitle) {
+  updatingPattern.value = true
+  try {
+    const updated = await api.updateRiskPattern(active.value.riskPatternId, body)
+    applyPatternUpdate(updated)
+    toast.success(successTitle, patternName.value)
+  } catch (e) {
+    toast.fromError(e)
+  } finally {
+    updatingPattern.value = false
+  }
+}
+async function savePatternName() {
+  const name = patternName.value.trim()
+  if (!name || name.length > RISK_PATTERN_NAME_MAXIMUM_COUNT) return
+  await updatePattern({ name }, '위험 패턴 이름 저장')
+}
+async function activatePattern() {
+  await updatePattern({ status: 'ACTIVE' }, '위험 패턴 활성화')
 }
 function openCreate(p) {
   const suggestion = p.guardFitSuggestion
@@ -124,6 +162,21 @@ async function submit() {
           <dt>Finding 전체 내용</dt>
           <dd>{{ active?.findingStatement || '-' }}</dd>
         </div>
+        <div v-if="riskPatternUpdatesAvailable">
+          <dt><label for="risk-pattern-name">패턴 이름</label></dt>
+          <dd>
+            <GField
+              :current-count="patternName.length"
+              :maximum-count="RISK_PATTERN_NAME_MAXIMUM_COUNT"
+            >
+              <GTextInput
+                id="risk-pattern-name"
+                v-model="patternName"
+                :maximum-count="RISK_PATTERN_NAME_MAXIMUM_COUNT"
+              />
+            </GField>
+          </dd>
+        </div>
         <div>
           <dt>원문 발췌</dt>
           <dd>{{ active?.sourceExcerpt || '-' }}</dd>
@@ -152,6 +205,23 @@ async function submit() {
       </dl>
       <template #footer>
         <GButton variant="ghost" @click="showDetail = false">닫기</GButton>
+        <GButton
+          v-if="riskPatternUpdatesAvailable"
+          variant="secondary"
+          :loading="updatingPattern"
+          :disabled="!patternName.trim() || patternName.trim().length > RISK_PATTERN_NAME_MAXIMUM_COUNT || patternName.trim() === active?.title"
+          @click="savePatternName"
+        >
+          이름 저장
+        </GButton>
+        <GButton
+          v-if="riskPatternUpdatesAvailable && active?.status === 'DRAFT'"
+          variant="primary"
+          :loading="updatingPattern"
+          @click="activatePattern"
+        >
+          활성화
+        </GButton>
         <GButton variant="primary" :disabled="active?.status !== 'ACTIVE'" @click="openCreate(active)">
           <template #icon><PhShieldCheck :size="15" /></template>보호조치 초안 만들기
         </GButton>
