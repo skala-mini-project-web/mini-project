@@ -54,12 +54,13 @@ function createStore() {
 // data (created products, uploaded docs, analyses, decisions). In Node (smoke
 // tests) localStorage is absent, so it stays a fresh in-memory store.
 const LS_KEY = 'guardlab.store.v1'
+const STORE_SCHEMA_VERSION = 6
 const hasLS = typeof localStorage !== 'undefined'
 function persist() {
   if (!hasLS) return
   try {
     const { idempotency, ...rest } = store
-    localStorage.setItem(LS_KEY, JSON.stringify({ ...rest, __seq: seq, __schemaVersion: 5 }))
+    localStorage.setItem(LS_KEY, JSON.stringify({ ...rest, __seq: seq, __schemaVersion: STORE_SCHEMA_VERSION }))
   } catch {}
 }
 function loadStore() {
@@ -68,7 +69,10 @@ function loadStore() {
       const raw = localStorage.getItem(LS_KEY)
       if (raw) {
         const d = JSON.parse(raw)
-        if (d.__schemaVersion !== 5) return createStore()
+        if (d.__schemaVersion !== STORE_SCHEMA_VERSION) {
+          localStorage.removeItem(LS_KEY)
+          return createStore()
+        }
         if (typeof d.__seq === 'number') seq = d.__seq
         const { __seq, __schemaVersion, ...rest } = d
         return { ...rest, idempotency: new Map() }
@@ -86,7 +90,7 @@ if (hasLS && typeof window !== 'undefined' && typeof window.addEventListener ===
     if (event.storageArea !== localStorage || event.key !== LS_KEY || event.newValue == null) return
     try {
       const d = JSON.parse(event.newValue)
-      if (!d || typeof d !== 'object' || Array.isArray(d) || d.__schemaVersion !== 5) return
+      if (!d || typeof d !== 'object' || Array.isArray(d) || d.__schemaVersion !== STORE_SCHEMA_VERSION) return
       const { __seq, __schemaVersion, ...rest } = d
       const collections = [
         'users', 'personaTemplates', 'redTeamPacks', 'evidenceDocuments',
