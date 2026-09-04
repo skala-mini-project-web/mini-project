@@ -67,8 +67,13 @@ class HttpRiskAnalysisProviderTest {
     }
 
     private HttpRiskAnalysisProvider provider(String baseUrl) {
+        return provider(baseUrl, false);
+    }
+
+    private HttpRiskAnalysisProvider provider(String baseUrl, boolean allowInsecureHttp) {
         return new HttpRiskAnalysisProvider(
-                new AiServiceProperties(baseUrl, Duration.ofMillis(500), Duration.ofSeconds(2), "SCENARIO"),
+                new AiServiceProperties(baseUrl, Duration.ofMillis(500), Duration.ofSeconds(2),
+                        "SCENARIO", allowInsecureHttp),
                 new ObjectMapper());
     }
 
@@ -154,6 +159,12 @@ class HttpRiskAnalysisProviderTest {
     void secureOrLocalBaseUrlIsAllowed() {
         assertThatNoException().isThrownBy(() -> provider("https://ai.example.com"));
         assertThatNoException().isThrownBy(() -> provider("http://127.0.0.1:8000"));
+    }
+
+    @Test
+    @DisplayName("명시적으로 허용하면 로컬 Compose 서비스명의 http base-url을 사용할 수 있다")
+    void composePlaintextBaseUrlIsAllowedOnlyByOptIn() {
+        assertThatNoException().isThrownBy(() -> provider("http://ai-service:8000", true));
     }
 
     @Test

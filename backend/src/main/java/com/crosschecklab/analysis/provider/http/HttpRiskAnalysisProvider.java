@@ -35,7 +35,7 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
     private final ObjectMapper objectMapper;
 
     public HttpRiskAnalysisProvider(AiServiceProperties properties, ObjectMapper objectMapper) {
-        requireSecureTransport(properties.baseUrl());
+        requireSecureTransport(properties.baseUrl(), properties.allowInsecureHttp());
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(properties.connectTimeout());
         requestFactory.setReadTimeout(properties.readTimeout());
@@ -47,10 +47,10 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
     }
 
     // 요청 본문에 확정 텍스트와 근거 문서 원문이 실리므로 평문 전송은 로컬 개발에서만 허용한다.
-    private static void requireSecureTransport(String baseUrl) {
+    private static void requireSecureTransport(String baseUrl, boolean allowInsecureHttp) {
         URI uri = URI.create(baseUrl);
         String host = uri.getHost();
-        if ("https".equalsIgnoreCase(uri.getScheme())
+        if (allowInsecureHttp || "https".equalsIgnoreCase(uri.getScheme())
                 || "localhost".equals(host) || "127.0.0.1".equals(host) || "[::1]".equals(host)) {
             return;
         }
