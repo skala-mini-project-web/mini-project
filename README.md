@@ -47,7 +47,45 @@ AI health 응답의 provider가 `ollama`인지 확인합니다.
 curl -fsS http://localhost:8000/internal/v1/health
 ```
 
-## `Persona + Red Team 분석 시작`은 실제로 무엇을 하나
+## 전체 서비스 이용 흐름
+
+PM과 reviewer는 같은 분석을 서로 다른 권한과 화면에서 이어서 처리합니다. 검토 요청·결정은 backend에 저장되므로 역할을 바꾸거나 새로 접속해도 상태가 유지됩니다.
+
+```text
+PM: 상품 등록 → PDF 업로드 → 텍스트 확정 → 공식 사실 확인
+→ Persona + Red Team 분석 → 결과·RAG 근거 확인 → 검토 요청
+
+reviewer: 검토함 확인 → 원문·Finding·RAG trace 확인
+→ 승인 또는 반려
+```
+
+### 승인 흐름
+
+```text
+review 승인
+→ reviewer가 선택한 Finding만 Risk Pattern으로 승격
+→ Risk Pattern 활성화
+→ GuardFit 초안 생성·승인
+→ PM이 승인된 GuardFit 가이드 확인
+```
+
+AI 결과 전체가 자동 승인되는 구조가 아닙니다. reviewer가 선택한 Finding만 Pattern으로 만들고, GuardFit도 별도 승인해야 PM에게 보입니다.
+
+### 반려 흐름
+
+```text
+review 반려 사유 입력
+→ PM 결과 화면에 “검토 반려 · 수정 필요”와 comment 표시
+→ PM이 문서·사실·표현 수정 후 새 분석 요청
+→ 새 검토 요청
+```
+
+- 반려 사유는 필수입니다.
+- 반려된 Finding은 Risk Pattern이나 GuardFit으로 이어지지 않습니다.
+- 반려된 분석·review는 삭제하지 않고 이력과 감사 근거로 보존합니다.
+- 기존 Risk Pattern도 새 Pattern이 생성됐다고 삭제되지 않습니다. 완료된 항목만 기본 작업 큐에서 제외됩니다.
+
+## `Persona + Red Team 분석 시작`을 누르면 일어나는 일
 
 이 버튼은 화면용 점수 계산이나 Mock 결과 선택이 아닙니다.
 
