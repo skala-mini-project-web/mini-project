@@ -9,10 +9,11 @@ import com.crosschecklab.global.common.enums.Severity;
 import com.crosschecklab.global.error.ErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.net.URI;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.net.URI;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -112,6 +113,8 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
         }
         Set<Long> selected = request.evidenceDocuments().stream()
                 .map(AnalysisRequest.EvidenceDocumentPayload::id).collect(Collectors.toSet());
+        Set<Long> knownFacts = request.knownFacts() == null ? Set.of() : request.knownFacts().stream()
+                .map(AnalysisRequest.KnownFactPayload::factId).collect(Collectors.toSet());
 
         for (FindingPayload finding : result.findings()) {
             if (finding == null || finding.severity() == null) {
@@ -129,6 +132,18 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
                 }
                 if (!selected.contains(reference.evidenceDocumentId())) {
                     throw invalid("선택하지 않은 근거 문서 인용: " + reference.evidenceDocumentId());
+                }
+            }
+            Set<Long> citedFacts = new HashSet<>();
+            for (Long factId : finding.knownFactIds()) {
+                if (factId == null) {
+                    throw invalid("사실 인용에 factId 가 없음");
+                }
+                if (!citedFacts.add(factId)) {
+                    throw invalid("중복된 사실 인용: " + factId);
+                }
+                if (!knownFacts.contains(factId)) {
+                    throw invalid("요청에 없는 사실 인용: " + factId);
                 }
             }
         }

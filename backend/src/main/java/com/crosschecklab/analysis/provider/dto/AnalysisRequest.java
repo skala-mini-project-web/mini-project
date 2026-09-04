@@ -14,8 +14,17 @@ public record AnalysisRequest(
         List<PersonaCode> personaCodes,
         String redTeamPackCode,
         List<RedTeamRuleCode> ruleCodes,
-        List<EvidenceDocumentPayload> evidenceDocuments
+        List<EvidenceDocumentPayload> evidenceDocuments,
+        List<KnownFactPayload> knownFacts
 ) {
+
+    public AnalysisRequest(Long analysisId, String scenarioCode, String confirmedText,
+                           List<PersonaCode> personaCodes, String redTeamPackCode,
+                           List<RedTeamRuleCode> ruleCodes,
+                           List<EvidenceDocumentPayload> evidenceDocuments) {
+        this(analysisId, scenarioCode, confirmedText, personaCodes, redTeamPackCode,
+                ruleCodes, evidenceDocuments, List.of());
+    }
 
     public record EvidenceDocumentPayload(
             Long id,
@@ -23,5 +32,8 @@ public record AnalysisRequest(
             String title,
             String content
     ) {
+    }
+
+    public record KnownFactPayload(Long factId, String text) {
     }
 }

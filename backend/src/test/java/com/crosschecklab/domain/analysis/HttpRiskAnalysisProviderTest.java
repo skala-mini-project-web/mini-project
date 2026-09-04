@@ -36,6 +36,7 @@ class HttpRiskAnalysisProviderTest {
              "findings":[{"statement":"안정성 표현이 원금보장으로 오인될 가능성이 있습니다.","severity":"HIGH",
              "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
              "evidenceReferences":[{"evidenceDocumentId":1,"excerpt":"원금손실 가능성은 인접 표시"}],
+             "knownFactIds":[7],
              "recommendation":"원금 손실 가능성을 명시하세요."}]}""";
 
     private HttpServer server;
@@ -82,7 +83,8 @@ class HttpRiskAnalysisProviderTest {
                 List.of(PersonaCode.FINANCIAL_BEGINNER), "CORE_FINANCIAL_RISK_V1",
                 List.of(RedTeamRuleCode.STABILITY_KEYWORD),
                 List.of(new AnalysisRequest.EvidenceDocumentPayload(1L, EvidenceSourceType.INTERNAL_POLICY,
-                        "내부준칙", "원금손실 가능성은 인접 표시")));
+                        "내부준칙", "원금손실 가능성은 인접 표시")),
+                List.of(new AnalysisRequest.KnownFactPayload(7L, "확정된 공식 사실")));
     }
 
     @Test
@@ -96,11 +98,13 @@ class HttpRiskAnalysisProviderTest {
             assertThat(finding.severity()).isEqualTo(Severity.HIGH);
             assertThat(finding.affectedPersonaCodes()).containsExactly(PersonaCode.FINANCIAL_BEGINNER);
             assertThat(finding.evidenceReferences()).isNotEmpty();
+            assertThat(finding.knownFactIds()).containsExactly(7L);
         });
         // ai-service 는 extra="forbid" 라 필드명이 정확히 일치해야 한다.
         assertThat(capturedRequest.get())
                 .contains("\"analysisId\":1", "\"scenarioCode\"", "\"confirmedText\"", "\"personaCodes\"",
                         "\"redTeamPackCode\"", "\"ruleCodes\"", "\"evidenceDocuments\"", "\"sourceType\"");
+        assertThat(capturedRequest.get()).contains("\"knownFacts\"", "\"factId\":7");
     }
 
     @Test
@@ -177,6 +181,47 @@ class HttpRiskAnalysisProviderTest {
                  "evidenceReferences":[{"evidenceDocumentId":99,"excerpt":"남의 문서"}],
                  "recommendation":null}]}""";
 
+        assertThatThrownBy(() -> provider().analyze(request()))
+                .isInstanceOfSatisfying(ProviderException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID);
+                    assertThat(e.isRetryable()).isFalse();
+                });
+    }
+
+    @Test
+    @DisplayName("요청에 포함되지 않은 공식 사실을 인용하면 계약 위반으로 끊는다")
+    void unknownFactReferenceIsRejected() {
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "evidenceReferences":[],"knownFactIds":[99],"recommendation":null}]}""";
+
+        assertInvalidProviderResponse();
+    }
+
+    @Test
+    @DisplayName("null 공식 사실 ID를 인용하면 계약 위반으로 끊는다")
+    void nullFactReferenceIsRejected() {
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "evidenceReferences":[],"knownFactIds":[null],"recommendation":null}]}""";
+
+        assertInvalidProviderResponse();
+    }
+
+    @Test
+    @DisplayName("같은 공식 사실을 중복 인용하면 계약 위반으로 끊는다")
+    void duplicateFactReferenceIsRejected() {
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "evidenceReferences":[],"knownFactIds":[7,7],"recommendation":null}]}""";
+
+        assertInvalidProviderResponse();
+    }
+
+    private void assertInvalidProviderResponse() {
         assertThatThrownBy(() -> provider().analyze(request()))
                 .isInstanceOfSatisfying(ProviderException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID);

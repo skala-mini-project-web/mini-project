@@ -6,12 +6,10 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
-from app.errors import AiServiceError, FixtureInvalidError
+from app.errors import AiServiceError
 from app.fixture_loader import FixtureLoader
 from app.schemas import (
     AnalysisProvider,
-    EvidenceReference,
-    FindingPayload,
     HealthResponse,
     RiskAnalysisRequest,
     RiskAnalysisResponse,
@@ -28,11 +26,11 @@ class OllamaUnavailableError(AiServiceError):
         )
 
 
-class OllamaResponseInvalidError(AiServiceError):
+class ProviderResponseInvalidError(AiServiceError):
     def __init__(self) -> None:
         super().__init__(
             error_code="AI_PROVIDER_RESPONSE_INVALID",
-            message="The Ollama response does not match the analysis contract.",
+            message="The provider response does not match the analysis contract.",
             retryable=False,
             status_code=500,
         )
@@ -102,12 +100,11 @@ class RiskAnalysisService:
         payload = self.fixture_loader.load(request.scenario_code, attempt_number)
         try:
             response = RiskAnalysisResponse.model_validate(payload)
-        except ValidationError as error:
-            raise FixtureInvalidError(
-                f"Fixture response does not match the contract: {error}"
-            ) from error
+            self._validate_grounding(request, response)
+        except (ValidationError, TypeError, ValueError):
+            raise ProviderResponseInvalidError() from None
 
-        return self._adapt_to_request_selections(request, response)
+        return response
 
     def _analyze_with_ollama(
         self, request: RiskAnalysisRequest
@@ -120,7 +117,10 @@ class RiskAnalysisService:
             "documents in the user message. Do not use unstated facts. Every "
             "finding must cite at least one supplied evidence document, use "
             "its exact positive integer id, and quote an exact non-empty "
-            "excerpt from that document's content. affectedPersonaCodes may "
+            "excerpt from that document's content. knownFactIds may contain "
+            "only exact factId values supplied in knownFacts; leave it empty "
+            "rather than inventing or substituting a fact reference. "
+            "affectedPersonaCodes may "
             "contain only selected personaCodes. Set modelVersion to "
             f"{json.dumps(self.ollama_model)} and promptVersion to "
             f"{json.dumps(self.OLLAMA_PROMPT_VERSION)}."
@@ -151,13 +151,13 @@ class RiskAnalysisService:
         try:
             generated_json = provider_response.json()["message"]["content"]
         except (KeyError, TypeError, ValueError):
-            raise OllamaResponseInvalidError() from None
+            raise ProviderResponseInvalidError() from None
 
         try:
             response = RiskAnalysisResponse.model_validate_json(generated_json)
             self._validate_grounding(request, response)
         except (ValidationError, TypeError, ValueError):
-            raise OllamaResponseInvalidError() from None
+            raise ProviderResponseInvalidError() from None
 
         return response.model_copy(
             update={
@@ -189,6 +189,17 @@ class RiskAnalysisService:
                 content = " ".join(document.content.split())
                 if excerpt not in content:
                     raise ValueError("Evidence excerpt is not a source quote.")
+        RiskAnalysisService._validate_fact_references(request, response)
+
+    @staticmethod
+    def _validate_fact_references(
+        request: RiskAnalysisRequest,
+        response: RiskAnalysisResponse,
+    ) -> None:
+        known_fact_ids = {fact.fact_id for fact in request.known_facts}
+        for finding in response.findings:
+            if not set(finding.known_fact_ids) <= known_fact_ids:
+                raise ValueError("Finding cites an unknown fact.")
 
     def _next_attempt(self, request: RiskAnalysisRequest) -> int:
         if not self.fixture_loader.tracks_attempts(request.scenario_code):
@@ -199,66 +210,3 @@ class RiskAnalysisService:
             attempt_number = self._attempts.get(key, 0) + 1
             self._attempts[key] = attempt_number
             return attempt_number
-
-    @staticmethod
-    def _adapt_to_request_selections(
-        request: RiskAnalysisRequest,
-        response: RiskAnalysisResponse,
-    ) -> RiskAnalysisResponse:
-        selected_personas = set(request.persona_codes)
-        adapted_findings: list[FindingPayload] = []
-
-        for finding in response.findings:
-            affected_personas = [
-                persona
-                for persona in finding.affected_persona_codes
-                if persona in selected_personas
-            ]
-            if not affected_personas:
-                affected_personas = list(request.persona_codes)
-
-            evidence_references = [
-                RiskAnalysisService._evidence_reference_for(
-                    request,
-                    reference_index,
-                    reference,
-                )
-                for reference_index, reference in enumerate(
-                    finding.evidence_references
-                )
-            ]
-            adapted_findings.append(
-                finding.model_copy(
-                    update={
-                        "affected_persona_codes": affected_personas,
-                        "evidence_references": evidence_references,
-                    }
-                )
-            )
-
-        return response.model_copy(update={"findings": adapted_findings})
-
-    @staticmethod
-    def _evidence_reference_for(
-        request: RiskAnalysisRequest,
-        reference_index: int,
-        reference: EvidenceReference,
-    ) -> EvidenceReference:
-        evidence_by_id = {
-            document.id: document for document in request.evidence_documents
-        }
-        document = evidence_by_id.get(reference.evidence_document_id)
-        if document is None:
-            document = request.evidence_documents[
-                reference_index % len(request.evidence_documents)
-            ]
-
-        normalized_excerpt = (
-            " ".join(document.content.split())[:500] or reference.excerpt
-        )
-        return reference.model_copy(
-            update={
-                "evidence_document_id": document.id,
-                "excerpt": normalized_excerpt,
-            }
-        )

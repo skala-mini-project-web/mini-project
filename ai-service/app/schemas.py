@@ -61,6 +61,18 @@ class EvidenceDocument(ApiModel):
     content: str = Field(min_length=1)
 
 
+class KnownFact(ApiModel):
+    fact_id: int = Field(gt=0)
+    text: str = Field(min_length=1)
+
+    @field_validator("text")
+    @classmethod
+    def text_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("known fact text must not be blank")
+        return value
+
+
 class RiskAnalysisRequest(ApiModel):
     analysis_id: int = Field(gt=0)
     scenario_code: str = Field(min_length=1, max_length=80)
@@ -69,6 +81,7 @@ class RiskAnalysisRequest(ApiModel):
     red_team_pack_code: RedTeamPackCode
     rule_codes: list[RedTeamRuleCode] = Field(min_length=1)
     evidence_documents: list[EvidenceDocument] = Field(min_length=1, max_length=3)
+    known_facts: list[KnownFact] = Field(default_factory=list)
 
     @field_validator("confirmed_text")
     @classmethod
@@ -93,6 +106,16 @@ class RiskAnalysisRequest(ApiModel):
         identifiers = [document.id for document in value]
         if len(identifiers) != len(set(identifiers)):
             raise ValueError("duplicate evidence document ids are not allowed")
+        return value
+
+    @field_validator("known_facts")
+    @classmethod
+    def known_facts_must_be_unique(
+        cls, value: list[KnownFact]
+    ) -> list[KnownFact]:
+        identifiers = [fact.fact_id for fact in value]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("duplicate known fact ids are not allowed")
         return value
 
     @model_validator(mode="after")
@@ -122,6 +145,7 @@ class FindingPayload(ApiModel):
     severity: Severity
     affected_persona_codes: list[PersonaCode] = Field(min_length=1)
     evidence_references: list[EvidenceReference] = Field(default_factory=list)
+    known_fact_ids: list[int] = Field(default_factory=list)
     recommendation: str | None = Field(default=None, max_length=1000)
 
     @field_validator("affected_persona_codes")
@@ -131,6 +155,13 @@ class FindingPayload(ApiModel):
     ) -> list[PersonaCode]:
         if len(value) != len(set(value)):
             raise ValueError("duplicate affected persona codes are not allowed")
+        return value
+
+    @field_validator("known_fact_ids")
+    @classmethod
+    def known_fact_ids_must_be_unique(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate known fact ids are not allowed")
         return value
 
     @model_validator(mode="after")

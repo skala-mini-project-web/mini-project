@@ -9,8 +9,23 @@ public record FindingPayload(
         Severity severity,
         List<PersonaCode> affectedPersonaCodes,
         List<EvidenceRefPayload> evidenceReferences,
+        List<Long> knownFactIds,
         String recommendation
 ) {
+
+    public FindingPayload {
+        knownFactIds = knownFactIds == null ? List.of() : knownFactIds;
+    }
+
+    public FindingPayload(
+            String statement,
+            Severity severity,
+            List<PersonaCode> affectedPersonaCodes,
+            List<EvidenceRefPayload> evidenceReferences,
+            String recommendation
+    ) {
+        this(statement, severity, affectedPersonaCodes, evidenceReferences, List.of(), recommendation);
+    }
 
     public record EvidenceRefPayload(Long evidenceDocumentId, String excerpt) {
     }

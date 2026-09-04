@@ -1,10 +1,14 @@
 package com.crosschecklab.analysis.application;
 
 import com.crosschecklab.domain.analysis.Analysis;
+import com.crosschecklab.domain.analysis.AnalysisGroundTruthFactSnapshot;
+import com.crosschecklab.domain.analysis.AnalysisGroundTruthFactSnapshotRepository;
 import com.crosschecklab.domain.document.ProductDocument;
 import com.crosschecklab.domain.document.ProductDocumentRepository;
 import com.crosschecklab.domain.evidence.EvidenceDocument;
 import com.crosschecklab.domain.evidence.EvidenceDocumentRepository;
+import com.crosschecklab.domain.groundtruth.GroundTruthFact.VerificationStatus;
+import com.crosschecklab.domain.groundtruth.GroundTruthFactRepository;
 import com.crosschecklab.domain.persona.PersonaTemplate;
 import com.crosschecklab.domain.persona.PersonaTemplateRepository;
 import com.crosschecklab.domain.redteam.RedTeamPack;
@@ -36,32 +40,72 @@ public class AnalysisInputLoader {
     private final PersonaTemplateRepository personaTemplateRepository;
     private final EvidenceDocumentRepository evidenceDocumentRepository;
     private final RedTeamPackRepository redTeamPackRepository;
+    private final GroundTruthFactRepository groundTruthFactRepository;
+    private final AnalysisGroundTruthFactSnapshotRepository factSnapshotRepository;
 
     public AnalysisInput load(Long productDocumentId, Long redTeamPackId,
                               Collection<Long> personaIds, Collection<Long> evidenceDocumentIds) {
+        return load(lockDocument(productDocumentId), redTeamPackId, personaIds, evidenceDocumentIds);
+    }
+
+    public ProductDocument lockDocument(Long productDocumentId) {
+        return productDocumentRepository.findByIdForUpdate(productDocumentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    }
+
+    public AnalysisInput load(ProductDocument document, Long redTeamPackId,
+                              Collection<Long> personaIds, Collection<Long> evidenceDocumentIds) {
         // 순서 = 오류 우선순위. 문서 상태(409)를 선택 값 오류(400)보다 먼저 판정한다.
-        ProductDocument document = loadDocument(productDocumentId);
+        requireConfirmedDocument(document);
         List<PersonaTemplate> personas = loadPersonas(personaIds);
         List<EvidenceDocument> evidence = loadEvidenceDocuments(evidenceDocumentIds);
         RedTeamPack pack = loadPack(redTeamPackId);
-        return new AnalysisInput(document, personas, evidence, pack, loadRuleCodes(pack));
+        List<AnalysisInput.KnownFact> knownFacts = groundTruthFactRepository
+                .findAllByDocumentIdAndVerificationStatusOrderByIdAsc(
+                        document.getId(), VerificationStatus.VERIFIED).stream()
+                .map(fact -> new AnalysisInput.KnownFact(
+                        fact.getId(), fact.getLabel(), fact.getValue(), fact))
+                .toList();
+        return build(document, personas, evidence, pack, knownFacts);
     }
 
     // 실행·재시도 시점: 이미 저장된 선택을 그대로 다시 읽는다.
     public AnalysisInput load(Analysis analysis) {
-        return load(analysis.getProductDocumentId(), analysis.getRedTeamPackId(),
-                analysis.getPersonaTemplateIds(), analysis.getEvidenceDocumentIds());
+        ProductDocument document = loadDocument(analysis.getProductDocumentId());
+        List<PersonaTemplate> personas = loadPersonas(analysis.getPersonaTemplateIds());
+        List<EvidenceDocument> evidence = loadEvidenceDocuments(analysis.getEvidenceDocumentIds());
+        RedTeamPack pack = loadPack(analysis.getRedTeamPackId());
+        List<AnalysisInput.KnownFact> knownFacts = factSnapshotRepository
+                .findAllByAnalysisIdOrderByIdAsc(analysis.getId()).stream()
+                .map(this::toKnownFact)
+                .toList();
+        return build(document, personas, evidence, pack, knownFacts);
+    }
+
+    private AnalysisInput build(ProductDocument document, List<PersonaTemplate> personas,
+                                List<EvidenceDocument> evidence, RedTeamPack pack,
+                                List<AnalysisInput.KnownFact> knownFacts) {
+        return new AnalysisInput(document, personas, evidence, pack, loadRuleCodes(pack), knownFacts);
+    }
+
+    private AnalysisInput.KnownFact toKnownFact(AnalysisGroundTruthFactSnapshot snapshot) {
+        return new AnalysisInput.KnownFact(
+                snapshot.getGroundTruthFact().getId(), snapshot.getLabel(), snapshot.getValue(), null);
     }
 
     private ProductDocument loadDocument(Long id) {
         ProductDocument document = productDocumentRepository.findById(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        requireConfirmedDocument(document);
+        return document;
+    }
+
+    private void requireConfirmedDocument(ProductDocument document) {
         // 확정된 추출 텍스트만 분석 입력으로 쓴다.
         if (!document.isConfirmed() || document.getExtractStatus() != ExtractStatus.READY
                 || document.getExtractedText() == null || document.getExtractedText().isBlank()) {
             throw new BusinessException(ErrorCode.DOCUMENT_NOT_CONFIRMED);
         }
-        return document;
     }
 
     private List<PersonaTemplate> loadPersonas(Collection<Long> ids) {
