@@ -33,6 +33,7 @@ async function runLocalAnalysis(analysisId, documentId, personaIds) {
 }
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
+export const riskPatternUpdatesAvailable = !USE_MOCK
 const auth = () => getAuth()
 
 // Mock mode: keep the real File so extraction (and retry) can read its bytes.
@@ -64,15 +65,50 @@ const qs = (params) => {
   const s = p.toString()
   return s ? `?${s}` : ''
 }
+const normalizeRiskPattern = (pattern) => ({
+  ...pattern,
+  title: pattern.title ?? pattern.name,
+  sourceFindingId: pattern.sourceFindingId ?? pattern.findingId,
+  sourceReviewId: pattern.sourceReviewId ?? pattern.reviewId,
+  affectedPersonaCodes: pattern.affectedPersonaCodes ?? [],
+})
+const normalizeDocument = (document) => ({
+  ...document,
+  rawExtractedText: document.extractedText,
+})
 
 export const api = {
   // ---- session / users ----
   createSession: (userId, role) =>
     USE_MOCK ? mockServer.createSession({ userId, role }) : http.post('/demo/session', { userId, role }),
-  listUsers: () => (USE_MOCK ? mockServer.listUsers() : http.get('/demo/users')),
+  listUsers: () =>
+    USE_MOCK
+      ? mockServer.listUsers()
+      : http.get('/demo/users').then((users) => users.map(({ userId, name, role }) => ({ id: userId, name, role }))),
 
   // ---- dashboards ----
-  getDashboardMe: () => (USE_MOCK ? mockServer.getDashboardMe(auth()) : http.get('/dashboard/me')),
+  getDashboardMe: async () => {
+    if (USE_MOCK) return mockServer.getDashboardMe(auth())
+    const [dashboard, productsResponse] = await Promise.all([
+      http.get('/dashboard/me'),
+      http.get('/products'),
+    ])
+    const products = productsResponse.items ?? []
+    return {
+      summary: {
+        products: dashboard.myProducts,
+        extracting: products.filter(({ latestDocument }) =>
+          ['UPLOADED', 'EXTRACTING'].includes(latestDocument?.status)).length,
+        runningAnalyses: dashboard.analyzing,
+        pendingReviews: dashboard.pendingReview,
+        approved: dashboard.approved,
+      },
+      recentItems: products
+        .slice()
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 5),
+    }
+  },
   getDashboardCompliance: () =>
     USE_MOCK ? mockServer.getDashboardCompliance(auth()) : http.get('/dashboard/compliance'),
 
@@ -82,7 +118,16 @@ export const api = {
     USE_MOCK
       ? mockServer.createProduct(auth(), body, uuid())
       : http.post('/products', body, { 'Idempotency-Key': uuid() }),
-  getProduct: (id) => (USE_MOCK ? mockServer.getProduct(auth(), id) : http.get(`/products/${id}`)),
+  getProduct: (id) =>
+    USE_MOCK
+      ? mockServer.getProduct(auth(), id)
+      : http.get(`/products/${id}`).then(async (product) => ({
+          ...product,
+          documents: product.latestDocument
+            ? [normalizeDocument(await http.get(`/documents/${product.latestDocument.documentId}`))]
+            : [],
+          analyses: product.latestAnalysis ? [product.latestAnalysis] : [],
+        })),
 
   // ---- documents ----
   uploadDocument: async (productId, file) => {
@@ -92,9 +137,14 @@ export const api = {
     runExtraction(res.documentId, file) // real client-side extraction, resolves via polling
     return res
   },
-  getDocument: (id) => (USE_MOCK ? mockServer.getDocument(auth(), id) : http.get(`/documents/${id}`)),
+  getDocument: (id) =>
+    USE_MOCK ? mockServer.getDocument(auth(), id) : http.get(`/documents/${id}`).then(normalizeDocument),
   patchDocumentText: (id, body) =>
-    USE_MOCK ? mockServer.patchDocumentText(auth(), id, body) : http.patch(`/documents/${id}/text`, body),
+    USE_MOCK
+      ? mockServer.patchDocumentText(auth(), id, body)
+      : http
+          .patch(`/documents/${id}/text`, { extractedText: body.verifiedText, confirmed: body.confirmed })
+          .then(normalizeDocument),
   retryDocument: async (id) => {
     if (!USE_MOCK) return http.post(`/documents/${id}/retry`, { reason: 'USER_RETRY' })
     const res = await mockServer.retryDocument(auth(), id)
@@ -106,9 +156,19 @@ export const api = {
 
   // ---- reference data ----
   listEvidenceDocuments: (params) =>
-    USE_MOCK ? mockServer.listEvidenceDocuments(auth(), params) : http.get(`/evidence-documents${qs(params)}`),
+    USE_MOCK
+      ? mockServer.listEvidenceDocuments(auth(), params)
+      : http.get(`/evidence-documents${qs(params)}`).then((response) => ({
+          ...response,
+          items: response.items.map((document) => ({ ...document, documentId: document.evidenceDocumentId })),
+        })),
   listPersonaTemplates: () =>
-    USE_MOCK ? mockServer.listPersonaTemplates(auth()) : http.get('/persona-templates'),
+    USE_MOCK
+      ? mockServer.listPersonaTemplates(auth())
+      : http.get('/persona-templates').then((response) => ({
+          ...response,
+          items: response.items.map((persona) => ({ ...persona, personaId: persona.personaTemplateId })),
+        })),
   listRedTeamPacks: () => (USE_MOCK ? mockServer.listRedTeamPacks(auth()) : http.get('/red-team-packs')),
   listGroundTruthFacts: (documentId) =>
     USE_MOCK ? mockServer.listGroundTruthFacts(auth(), documentId) : http.get(`/product-documents/${documentId}/ground-truth-facts`),
@@ -135,14 +195,23 @@ export const api = {
       ? mockServer.createReview(auth(), body, uuid())
       : http.post('/reviews', body, { 'Idempotency-Key': uuid() }),
   listReviews: (params) => (USE_MOCK ? mockServer.listReviews(auth(), params) : http.get(`/reviews${qs(params)}`)),
-  getReview: (id) => (USE_MOCK ? mockServer.getReview(auth(), id) : http.get(`/reviews/${id}`)),
+  getReview: (id) =>
+    USE_MOCK
+      ? mockServer.getReview(auth(), id)
+      : http.get(`/reviews/${id}`).then((review) => ({ ...review, id: review.reviewId })),
   getReviewByAnalysis: (analysisId) => (USE_MOCK ? mockServer.getReviewByAnalysis(auth(), analysisId) : http.get(`/analyses/${analysisId}/review`)),
   decideReview: (id, body) =>
     USE_MOCK ? mockServer.decideReview(auth(), id, body) : http.post(`/reviews/${id}/decision`, body),
 
   // ---- risk library ----
   listRiskPatterns: (params) =>
-    USE_MOCK ? mockServer.listRiskPatterns(auth(), params) : http.get(`/risk-patterns${qs(params)}`),
+    USE_MOCK
+      ? mockServer.listRiskPatterns(auth(), params)
+      : http.get(`/risk-patterns${qs(params)}`).then((response) => ({
+          ...response,
+          items: (response.items ?? response.content ?? []).map(normalizeRiskPattern),
+        })),
+  updateRiskPattern: (id, body) => http.patch(`/risk-patterns/${id}`, body).then(normalizeRiskPattern),
 
   // ---- guardfit ----
   createGuardFitAction: (body) =>
@@ -155,8 +224,46 @@ export const api = {
     USE_MOCK ? mockServer.updateGuardFitAction(auth(), id, body) : http.put(`/guardfit/actions/${id}`, body),
 
   // ---- audit ----
-  listAuditLogs: (params) =>
-    USE_MOCK ? mockServer.listAuditLogs(auth(), params) : http.get(`/audit-logs${qs(params)}`),
+  listAuditLogs: async ({ offset = 0, limit = 15, snapshotCreatedAt, snapshotAuditId } = {}) => {
+    const pagination = { offset, limit }
+    const hasSnapshot =
+      snapshotCreatedAt != null && snapshotCreatedAt !== '' &&
+      snapshotAuditId != null && snapshotAuditId !== ''
+    if (hasSnapshot) {
+      pagination.snapshotCreatedAt = snapshotCreatedAt
+      pagination.snapshotAuditId = snapshotAuditId
+    }
+    if (!USE_MOCK) return http.get(`/audit-logs${qs(pagination)}`)
+
+    const response = await mockServer.listAuditLogs(auth(), pagination)
+    const compareAuditIds = (left, right) =>
+      String(left).localeCompare(String(right), undefined, { numeric: true })
+    const allItems = response.items.sort((left, right) =>
+      Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
+      compareAuditIds(right.auditId, left.auditId),
+    )
+    const traversalSnapshot = hasSnapshot
+      ? { snapshotCreatedAt, snapshotAuditId }
+      : {
+          snapshotCreatedAt: allItems[0]?.createdAt ?? null,
+          snapshotAuditId: allItems[0]?.auditId ?? null,
+        }
+    const snapshotTime = Date.parse(traversalSnapshot.snapshotCreatedAt)
+    const frozenItems = traversalSnapshot.snapshotCreatedAt == null
+      ? allItems
+      : allItems.filter((item) => {
+          const itemTime = Date.parse(item.createdAt)
+          return itemTime < snapshotTime ||
+            (itemTime === snapshotTime && compareAuditIds(item.auditId, traversalSnapshot.snapshotAuditId) <= 0)
+        })
+    return {
+      items: frozenItems.slice(offset, offset + limit),
+      offset,
+      limit,
+      totalElements: frozenItems.length,
+      ...traversalSnapshot,
+    }
+  },
 }
 
 export { ApiError, errorKind } from './errors.js'

@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { PhArrowUpRight, PhPlus, PhFolders, PhClipboardText, PhBell } from '@phosphor-icons/vue'
+import { PhArrowUpRight, PhArrowClockwise, PhPlus, PhFolders, PhClipboardText, PhBell, PhWarningCircle } from '@phosphor-icons/vue'
 import { api } from '@/api'
 import { useSessionStore } from '@/stores/session'
 import { useJobsStore } from '@/stores/jobs'
@@ -18,6 +18,7 @@ const session = useSessionStore()
 const jobs = useJobsStore()
 const toast = useToastStore()
 const loading = ref(true)
+const loadError = ref(null)
 const data = ref(null)
 
 const pad = (n) => String(n ?? 0).padStart(2, '0')
@@ -40,7 +41,7 @@ const metrics = computed(() => {
         { k: '추출 중', v: s.extracting, tone: s.extracting ? 'accent' : '' },
         { k: '분석 중', v: s.runningAnalyses, tone: s.runningAnalyses ? 'accent' : '' },
         { k: '검토 대기', v: s.pendingReviews, tone: '' },
-        { k: '반려', v: s.rejectedReviews, tone: s.rejectedReviews ? 'high' : '' },
+        { k: '승인', v: s.approved, tone: s.approved ? 'ok' : '' },
       ]
     : [
         { k: '검토 대기', v: s.pendingReviews, tone: s.pendingReviews ? 'accent' : '' },
@@ -53,8 +54,15 @@ const metrics = computed(() => {
 onMounted(load)
 async function load() {
   loading.value = true
-  try { data.value = session.isPM ? await api.getDashboardMe() : await api.getDashboardCompliance() }
-  catch (e) { toast.fromError(e) } finally { loading.value = false }
+  try {
+    data.value = session.isPM ? await api.getDashboardMe() : await api.getDashboardCompliance()
+    loadError.value = null
+  } catch (e) {
+    loadError.value = e
+    toast.fromError(e)
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 
@@ -72,82 +80,95 @@ async function load() {
       </GButton>
     </header>
 
-    <!-- Instrument readout, not stat cards -->
-    <div class="metrics">
-      <div v-for="m in metrics" :key="m.k" class="metric">
-        <span class="num" :class="m.tone ? `fg-${m.tone}` : ''">
-          <GSkeleton v-if="loading" w="38px" h="34px" /><template v-else>{{ pad(m.v) }}</template>
-        </span>
-        <span class="mono mlabel">{{ m.k }}</span>
+    <div v-if="loadError" class="load-fail" role="alert">
+      <PhWarningCircle :size="22" class="load-fail-i" />
+      <div class="grow">
+        <p class="t-base fw-semibold">{{ data ? '대시보드를 새로 불러오지 못했습니다' : '대시보드를 불러오지 못했습니다' }}</p>
+        <p class="t-sm soft">{{ data ? '이전에 불러온 내용을 유지합니다.' : '잠시 후 다시 시도해 주세요.' }}</p>
       </div>
+      <GButton variant="secondary" size="sm" :loading="loading" @click="load">
+        <template #icon><PhArrowClockwise :size="15" /></template>다시 시도
+      </GButton>
     </div>
 
-    <!-- PM: 알림 + 최근 상품 2단 / Reviewer: 우선 검토 -->
-    <div v-if="session.isPM" class="dash-cols">
-      <section class="panel">
-        <div class="q-head">
-          <h2 class="d-h3 notif-heading"><PhBell :size="18" />알림</h2>
-          <button v-if="notes.length" class="linkish" @click="clearAll">모두 읽음</button>
+    <template v-if="data || !loadError">
+      <!-- Instrument readout, not stat cards -->
+      <div class="metrics">
+        <div v-for="m in metrics" :key="m.k" class="metric">
+          <span class="num" :class="m.tone ? `fg-${m.tone}` : ''">
+            <GSkeleton v-if="loading && !data" w="38px" h="34px" /><template v-else>{{ pad(m.v) }}</template>
+          </span>
+          <span class="mono mlabel">{{ m.k }}</span>
         </div>
-        <div v-if="loading" class="q-list"><div v-for="i in 3" :key="i" class="q-sk"><GSkeleton h="16px" w="70%" /></div></div>
-        <div v-else-if="!notes.length" class="notif-empty"><span class="t-sm fw-medium">새 알림이 없습니다</span><span class="t-xs mute">추출·분석·검토가 끝나면 여기에 표시됩니다.</span></div>
-        <ul v-else class="notif-list">
-          <li v-for="n in notes" :key="n.id" class="notif-row" tabindex="0" @click="openNote(n)" @keyup.enter="openNote(n)">
-            <span class="notif-dot" :class="{ on: !n.read }" aria-hidden="true"></span>
-            <div class="notif-main">
-              <span class="notif-msg" :class="{ mut: n.read }">{{ n.message }}</span>
-              <span class="mono notif-time">{{ reltime(n.at) }}</span>
-            </div>
-          </li>
-        </ul>
-      </section>
+      </div>
 
-      <section class="panel">
+      <!-- PM: 알림 + 최근 상품 2단 / Reviewer: 우선 검토 -->
+      <div v-if="session.isPM" class="dash-cols">
+        <section class="panel">
+          <div class="q-head">
+            <h2 class="d-h3 notif-heading"><PhBell :size="18" />알림</h2>
+            <button v-if="notes.length" class="linkish" @click="clearAll">모두 읽음</button>
+          </div>
+          <div v-if="loading && !data" class="q-list"><div v-for="i in 3" :key="i" class="q-sk"><GSkeleton h="16px" w="70%" /></div></div>
+          <div v-else-if="!notes.length" class="notif-empty"><span class="t-sm fw-medium">새 알림이 없습니다</span><span class="t-xs mute">추출·분석·검토가 끝나면 여기에 표시됩니다.</span></div>
+          <ul v-else class="notif-list">
+            <li v-for="n in notes" :key="n.id" class="notif-row" tabindex="0" @click="openNote(n)" @keyup.enter="openNote(n)">
+              <span class="notif-dot" :class="{ on: !n.read }" aria-hidden="true"></span>
+              <div class="notif-main">
+                <span class="notif-msg" :class="{ mut: n.read }">{{ n.message }}</span>
+                <span class="mono notif-time">{{ reltime(n.at) }}</span>
+              </div>
+            </li>
+          </ul>
+        </section>
+
+        <section class="panel">
+          <div class="q-head">
+            <h2 class="d-h3">최근 상품</h2>
+            <RouterLink v-if="data" class="q-all" to="/products">상품 전체 <PhArrowUpRight :size="14" /></RouterLink>
+          </div>
+          <div v-if="loading && !data" class="q-list"><div v-for="i in 4" :key="i" class="q-sk"><GSkeleton h="20px" w="40%" /><GSkeleton h="14px" w="20%" /></div></div>
+          <GEmptyState v-else-if="!data?.recentItems?.length" title="등록한 상품이 없습니다" description="상품을 등록하고 첫 분석을 시작하세요.">
+            <template #icon><PhFolders :size="20" /></template>
+            <template #action><GButton variant="primary" @click="router.push('/products')"><template #icon><PhPlus :size="16" /></template>상품 등록</GButton></template>
+          </GEmptyState>
+          <ul v-else class="q-list">
+            <li v-for="p in data.recentItems" :key="p.productId" class="q-row" tabindex="0" @click="router.push(`/products/${p.productId}`)" @keyup.enter="router.push(`/products/${p.productId}`)">
+              <div class="q-main">
+                <span style="display:inline-flex;align-items:center;gap:6px"><span class="q-title fw-semibold">{{ p.name }}</span><span v-if="jobs.unreadForProduct(p.productId)" title="새 알림" style="display:inline-grid;place-items:center;width:18px;height:18px;border-radius:999px;background:var(--accent-wash);color:var(--accent);font-weight:700;font-size:11px;line-height:1">!</span></span>
+                <span class="mono q-meta">{{ PRODUCT_TYPE_LABEL[p.productType] }} · {{ p.productId }} · {{ formatDateTime(p.createdAt) }}</span>
+              </div>
+              <div class="q-side">
+                <GStatusPill :status="productStatusKey(p)" />
+                <PhArrowUpRight class="q-go" :size="17" />
+              </div>
+            </li>
+          </ul>
+        </section>
+      </div>
+
+      <section v-else class="queue">
         <div class="q-head">
-          <h2 class="d-h3">최근 상품</h2>
-          <RouterLink v-if="!loading" class="q-all" to="/products">상품 전체 <PhArrowUpRight :size="14" /></RouterLink>
+          <h2 class="d-h3">우선 검토</h2>
+          <RouterLink v-if="data" class="q-all" to="/reviews">검토함 전체 <PhArrowUpRight :size="14" /></RouterLink>
         </div>
-        <div v-if="loading" class="q-list"><div v-for="i in 4" :key="i" class="q-sk"><GSkeleton h="20px" w="40%" /><GSkeleton h="14px" w="20%" /></div></div>
-        <GEmptyState v-else-if="!data?.recentItems?.length" title="등록한 상품이 없습니다" description="상품을 등록하고 첫 분석을 시작하세요.">
-          <template #icon><PhFolders :size="20" /></template>
-          <template #action><GButton variant="primary" @click="router.push('/products')"><template #icon><PhPlus :size="16" /></template>상품 등록</GButton></template>
-        </GEmptyState>
+        <div v-if="loading && !data" class="q-list"><div v-for="i in 4" :key="i" class="q-sk"><GSkeleton h="20px" w="40%" /><GSkeleton h="14px" w="20%" /></div></div>
+        <GEmptyState v-else-if="!data?.priorityReviews?.length" title="대기 중인 검토가 없습니다"><template #icon><PhClipboardText :size="20" /></template></GEmptyState>
         <ul v-else class="q-list">
-          <li v-for="p in data.recentItems" :key="p.productId" class="q-row" tabindex="0" @click="router.push(`/products/${p.productId}`)" @keyup.enter="router.push(`/products/${p.productId}`)">
+          <li v-for="r in data.priorityReviews" :key="r.reviewId" class="q-row" tabindex="0" @click="router.push(`/reviews/${r.reviewId}`)" @keyup.enter="router.push(`/reviews/${r.reviewId}`)">
             <div class="q-main">
-              <span style="display:inline-flex;align-items:center;gap:6px"><span class="q-title fw-semibold">{{ p.name }}</span><span v-if="jobs.unreadForProduct(p.productId)" title="새 알림" style="display:inline-grid;place-items:center;width:18px;height:18px;border-radius:999px;background:var(--accent-wash);color:var(--accent);font-weight:700;font-size:11px;line-height:1">!</span></span>
-              <span class="mono q-meta">{{ PRODUCT_TYPE_LABEL[p.productType] }} · {{ p.productId }} · {{ formatDateTime(p.createdAt) }}</span>
+              <span class="q-title fw-semibold">{{ r.productName }}</span>
+              <span class="mono q-meta">{{ r.ownerName }} · {{ r.analysisId }}</span>
             </div>
             <div class="q-side">
-              <GStatusPill :status="productStatusKey(p)" />
+              <GSeverityBadge :severity="r.maxSeverity" />
+              <GStatusPill :status="r.status" />
               <PhArrowUpRight class="q-go" :size="17" />
             </div>
           </li>
         </ul>
       </section>
-    </div>
-
-    <section v-else class="queue">
-      <div class="q-head">
-        <h2 class="d-h3">우선 검토</h2>
-        <RouterLink v-if="!loading" class="q-all" to="/reviews">검토함 전체 <PhArrowUpRight :size="14" /></RouterLink>
-      </div>
-      <div v-if="loading" class="q-list"><div v-for="i in 4" :key="i" class="q-sk"><GSkeleton h="20px" w="40%" /><GSkeleton h="14px" w="20%" /></div></div>
-      <GEmptyState v-else-if="!data?.priorityReviews?.length" title="대기 중인 검토가 없습니다"><template #icon><PhClipboardText :size="20" /></template></GEmptyState>
-      <ul v-else class="q-list">
-        <li v-for="r in data.priorityReviews" :key="r.reviewId" class="q-row" tabindex="0" @click="router.push(`/reviews/${r.reviewId}`)" @keyup.enter="router.push(`/reviews/${r.reviewId}`)">
-          <div class="q-main">
-            <span class="q-title fw-semibold">{{ r.productName }}</span>
-            <span class="mono q-meta">{{ r.ownerName }} · {{ r.analysisId }}</span>
-          </div>
-          <div class="q-side">
-            <GSeverityBadge :severity="r.maxSeverity" />
-            <GStatusPill :status="r.status" />
-            <PhArrowUpRight class="q-go" :size="17" />
-          </div>
-        </li>
-      </ul>
-    </section>
+    </template>
   </div>
 </template>
 
@@ -169,6 +190,8 @@ async function load() {
 .notif-time { font-size: var(--text-xs); color: var(--ink-faint); }
 .linkish { border: 0; background: transparent; color: var(--ink-mute); font-size: var(--text-xs); cursor: pointer; }
 .linkish:hover { color: var(--ink); }
+.load-fail { margin-top: var(--s-32); padding: var(--s-20); border: 1px solid var(--risk-high-wash); background: var(--risk-high-wash); border-radius: var(--r-lg); display: flex; align-items: center; gap: var(--s-16); }
+.load-fail-i { color: var(--risk-high); flex: none; }
 @media (max-width: 900px) { .dash-cols { grid-template-columns: 1fr; } }
 
 .metrics {

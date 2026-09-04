@@ -62,7 +62,7 @@ async function save(status) {
     return
   }
   saving.value = status
-  try { await api.updateGuardFitAction(editing.value.actionId, { label: form.label, placement: form.placement, required: form.required === 'true', status }); toast.success(`${{ DRAFT: '초안 저장', APPROVED: '승인' }[status]} 완료`, editing.value.actionId); showEdit.value = false; await load() }
+  try { await api.updateGuardFitAction(editing.value.actionId, { actionType: editing.value.actionType, label: form.label, placement: form.placement, required: form.required === 'true', status }); toast.success(`${{ DRAFT: '초안 저장', APPROVED: '승인' }[status]} 완료`, editing.value.actionId); showEdit.value = false; await load() }
   catch (e) { toast.fromError(e) } finally { saving.value = null }
 }
 </script>

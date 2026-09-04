@@ -80,7 +80,7 @@ function leave() {
         <component :is="item.icon" :size="18" :weight="isActive(item.to) ? 'fill' : 'regular'" />
         <span>{{ item.label }}</span>
         <span v-if="item.to === '/products' && jobs.unread" class="nav-badge mono">{{ jobs.unread }}</span>
-        <span v-if="item.to === '/reviews' && pendingReviews !== null" class="nav-badge mono">{{ pendingReviews }}</span>
+        <span v-if="item.to === '/reviews' && pendingReviews > 0" class="nav-badge mono">{{ pendingReviews }}</span>
       </RouterLink>
     </nav>
 
