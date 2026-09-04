@@ -877,15 +877,27 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("Persona 를 4개 선택하면 400 INVALID_SELECTION_COUNT")
+    @DisplayName("Persona 를 5개 선택하면 400 INVALID_SELECTION_COUNT")
     void invalidSelectionCount() throws Exception {
         String traceId = "analysis-invalid-selection";
         mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1, 2, 3, 4))))), traceId))
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1, 2, 3, 4, 5))))), traceId))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_SELECTION_COUNT"));
         assertNoAudit(traceId);
+    }
+
+    @Test
+    @DisplayName("Persona 4개 선택은 분석 요청에 포함되어 202로 수락된다")
+    void acceptsFourPersonas() throws Exception {
+        mockMvc.perform(withIdempotencyKey(asPm(post("/api/analyses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1, 2, 3, 4))))))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("CREATED"));
+
+        assertThat(((FakeRiskAnalysisProvider) provider).lastRequest().personaCodes()).hasSize(4);
     }
 
     @Test

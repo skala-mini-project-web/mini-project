@@ -34,7 +34,8 @@ import org.springframework.stereotype.Component;
 public class AnalysisInputLoader {
 
     private static final int MIN_SELECTION = 1;
-    private static final int MAX_SELECTION = 3;
+    private static final int MAX_EVIDENCE_SELECTION = 3;
+    private static final int MAX_PERSONA_SELECTION = 4;
 
     private final ProductDocumentRepository productDocumentRepository;
     private final PersonaTemplateRepository personaTemplateRepository;
@@ -109,7 +110,7 @@ public class AnalysisInputLoader {
     }
 
     private List<PersonaTemplate> loadPersonas(Collection<Long> ids) {
-        Set<Long> selected = requireSelectionCount(ids);
+        Set<Long> selected = requireSelectionCount(ids, MAX_PERSONA_SELECTION);
         List<PersonaTemplate> personas = personaTemplateRepository.findAllById(selected).stream()
                 .sorted(Comparator.comparing(PersonaTemplate::getId)).toList();
         if (personas.size() != selected.size() || personas.stream().anyMatch(persona -> !persona.isActive())) {
@@ -120,7 +121,7 @@ public class AnalysisInputLoader {
     }
 
     private List<EvidenceDocument> loadEvidenceDocuments(Collection<Long> ids) {
-        Set<Long> selected = requireSelectionCount(ids);
+        Set<Long> selected = requireSelectionCount(ids, MAX_EVIDENCE_SELECTION);
         List<EvidenceDocument> documents = evidenceDocumentRepository.findAllById(selected).stream()
                 .sorted(Comparator.comparing(EvidenceDocument::getId)).toList();
         if (documents.size() != selected.size() || documents.stream().anyMatch(document -> !document.isActive())) {
@@ -150,10 +151,10 @@ public class AnalysisInputLoader {
         return ruleCodes;
     }
 
-    // 중복 제거 후 1~3개
-    private Set<Long> requireSelectionCount(Collection<Long> ids) {
+    // 중복 제거 후 최소 1개, 대상별 최대 선택 수를 적용한다.
+    private Set<Long> requireSelectionCount(Collection<Long> ids, int maximumSelection) {
         Set<Long> distinct = ids == null ? Set.of() : new LinkedHashSet<>(ids);
-        if (distinct.size() < MIN_SELECTION || distinct.size() > MAX_SELECTION) {
+        if (distinct.size() < MIN_SELECTION || distinct.size() > maximumSelection) {
             throw new BusinessException(ErrorCode.INVALID_SELECTION_COUNT);
         }
         return distinct;

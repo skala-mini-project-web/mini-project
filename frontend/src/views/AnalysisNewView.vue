@@ -27,7 +27,7 @@ const localAi = ref((() => { try { return localStorage.getItem('guardlab.ai.loca
 const debugControls = import.meta.env.VITE_DEBUG_AI_CONTROLS === 'true'
 function setLocalAi(v) { localAi.value = v; try { localStorage.setItem('guardlab.ai.local', v ? '1' : '0') } catch {} }
 const evOk = computed(() => selEv.value.length >= 1 && selEv.value.length <= 3)
-const perOk = computed(() => selPer.value.length >= 1 && selPer.value.length <= 3)
+const perOk = computed(() => selPer.value.length >= 1 && selPer.value.length <= 4)
 const factsVerified = computed(() => facts.value.some((fact) => fact.verificationStatus === 'VERIFIED'))
 const canSubmit = computed(() => selDoc.value && evOk.value && perOk.value && selPack.value && factsVerified.value && !submitting.value)
 
@@ -45,7 +45,7 @@ async function load() {
     evidence.value = ev.items; personas.value = ps.items; packs.value = pk.items
     if (docs.value.length) selDoc.value = docs.value[0].documentId
     if (evidence.value.length) selEv.value = evidence.value.slice(0, 2).map((item) => item.documentId)
-    if (personas.value.length) selPer.value = personas.value.slice(0, 2).map((p) => p.personaId)
+    if (personas.value.length) selPer.value = personas.value.slice(0, 4).map((p) => p.personaId)
     if (packs.value.length) selPack.value = packs.value[0].redTeamPackId
     await loadFacts()
     loadError.value = null
@@ -140,10 +140,10 @@ async function submit() {
       </section>
 
       <section class="blk">
-        <div class="bh"><span class="mono n">04</span><h2 class="d-h3">분석 대상 Persona</h2><GBadge class="bcount" :tone="perOk ? 'ok' : 'high'">{{ selPer.length }}/1-3</GBadge></div>
+        <div class="bh"><span class="mono n">04</span><h2 class="d-h3">분석 대상 Persona</h2><GBadge class="bcount" :tone="perOk ? 'ok' : 'high'">{{ selPer.length }}/1-4</GBadge></div>
         <div class="chips">
           <label v-for="p in personas" :key="p.personaId" class="chip" :class="{ on: selPer.includes(p.personaId) }">
-            <input type="checkbox" class="sr-only" :checked="selPer.includes(p.personaId)" @change="toggle(selPer, p.personaId, 3)" />
+            <input type="checkbox" class="sr-only" :checked="selPer.includes(p.personaId)" @change="toggle(selPer, p.personaId, 4)" />
             <span class="fw-medium">{{ p.name }}</span><span class="t-xs mute">{{ Array.isArray(p.riskFocus) ? p.riskFocus.join(' · ') : p.riskFocus }}</span><span v-if="p.criteria" class="t-xs mute">{{ Object.values(p.criteria).join(' · ') }}</span><span v-if="p.questionSummary" class="t-xs mute">{{ p.questionSummary }}</span>
           </label>
         </div>

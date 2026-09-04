@@ -112,7 +112,7 @@ AI health 응답의 provider가 `ollama`인지 확인합니다. health 응답은
 1. 상품을 등록하고 판매 PDF를 업로드합니다.
 2. PDFBox가 추출한 텍스트를 확인·확정합니다.
 3. 공식 사실 후보를 확인해 필요한 사실을 `VERIFIED`로 만듭니다.
-4. 분석 대상 문서, 근거 문서 1~3개, Persona 1~3개, Red Team Pack을 선택합니다.
+4. 분석 대상 문서, 근거 문서 1~3개, Persona 1~4개, Red Team Pack을 선택합니다.
 5. 분석 결과와 RAG 검색 근거를 확인한 뒤 검토 요청을 보냅니다.
 
 ### reviewer
@@ -156,7 +156,7 @@ Persona는 역할극 문장이 아니라 어떤 소비자 관점에서 위험을
 - 단기 자금 필요: 중도해지 비용·유동성 제약
 - 자영업자: 금리 변동·납부 조건·현금흐름
 
-UI는 실제 API에서 활성 Persona를 읽습니다. backend는 선택된 Persona 1~3개만 분석 요청에 넣고, 모델이 선택하지 않은 Persona code를 반환하면 결과를 저장하지 않습니다.
+UI는 실제 API에서 활성 Persona를 읽습니다. backend는 선택된 Persona 1~4개만 분석 요청에 넣고, 모델이 선택하지 않은 Persona code를 반환하면 결과를 저장하지 않습니다.
 
 ### Red Team Pack
 
