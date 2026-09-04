@@ -10,11 +10,14 @@ import com.crosschecklab.global.error.ErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.URI;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpResponse;
@@ -37,11 +40,15 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
 
     public HttpRiskAnalysisProvider(AiServiceProperties properties, ObjectMapper objectMapper) {
         requireSecureTransport(properties.baseUrl(), properties.allowInsecureHttp());
+        if (properties.internalToken() == null || properties.internalToken().isBlank()) {
+            throw new IllegalStateException("ai-service.internal-token 은 비어 있을 수 없습니다");
+        }
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(properties.connectTimeout());
         requestFactory.setReadTimeout(properties.readTimeout());
         this.restClient = RestClient.builder()
                 .baseUrl(properties.baseUrl())
+                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + properties.internalToken())
                 .requestFactory(requestFactory)
                 .build();
         this.objectMapper = objectMapper;
@@ -86,8 +93,8 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
     private ProviderException toProviderException(ClientHttpResponse response) throws IOException {
         HttpStatusCode status = response.getStatusCode();
         AiErrorResponse error = readErrorBody(response);
-        // 응답 본문의 retryable 을 우선 신뢰하고, 본문을 못 읽으면 5xx 만 재시도 가능으로 본다.
-        boolean retryable = error != null ? error.retryable() : status.is5xxServerError();
+        // HTTP 상태가 재시도 정책의 기준이다. 4xx 계약/설정 오류는 429만 예외로 재시도한다.
+        boolean retryable = status.value() == 429 || status.is5xxServerError();
         String detail = error != null ? error.errorCode() + " / " + error.message() : "본문 없음";
         log.warn("ai-service 오류 응답 status={} {}", status.value(), detail);
         return new ProviderException(
@@ -113,10 +120,12 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
         }
         List<AnalysisRequest.RetrievedContextPayload> contexts = request.retrievedContexts() == null
                 ? List.of() : request.retrievedContexts();
-        Set<Long> retrievedChunkIds = contexts.stream()
-                .filter(context -> context != null && context.chunkId() != null)
-                .map(AnalysisRequest.RetrievedContextPayload::chunkId)
-                .collect(Collectors.toSet());
+        Map<Long, AnalysisRequest.RetrievedContextPayload> contextsByChunkId = new HashMap<>();
+        for (AnalysisRequest.RetrievedContextPayload context : contexts) {
+            if (context != null && context.chunkId() != null) {
+                contextsByChunkId.put(context.chunkId(), context);
+            }
+        }
         Set<Long> knownFacts = request.knownFacts() == null ? Set.of() : request.knownFacts().stream()
                 .map(AnalysisRequest.KnownFactPayload::factId).collect(Collectors.toSet());
 
@@ -139,9 +148,37 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
                 if (!uniqueCitedChunkIds.add(chunkId)) {
                     throw invalid("중복된 검색 근거 청크 인용: " + chunkId);
                 }
-                if (!retrievedChunkIds.contains(chunkId)) {
+                if (!contextsByChunkId.containsKey(chunkId)) {
                     throw invalid("요청에서 검색되지 않은 근거 청크 인용: " + chunkId);
                 }
+            }
+            if (finding.evidenceSpans() == null || finding.evidenceSpans().isEmpty()) {
+                throw invalid("finding 에 evidenceSpans 가 없음");
+            }
+            Set<String> uniqueSpans = new HashSet<>();
+            Set<Long> spannedChunkIds = new HashSet<>();
+            for (FindingPayload.EvidenceSpanPayload span : finding.evidenceSpans()) {
+                if (span == null || span.chunkId() == null) {
+                    throw invalid("근거 범위에 chunkId 가 없음");
+                }
+                if (span.excerpt() == null || span.excerpt().isBlank()) {
+                    throw invalid("근거 범위의 excerpt 가 비어 있음");
+                }
+                if (!uniqueCitedChunkIds.contains(span.chunkId())) {
+                    throw invalid("인용되지 않은 청크의 근거 범위: " + span.chunkId());
+                }
+                AnalysisRequest.RetrievedContextPayload context = contextsByChunkId.get(span.chunkId());
+                if (context == null || context.chunkText() == null || !context.chunkText().contains(span.excerpt())) {
+                    throw invalid("검색 근거 청크에 정확히 포함되지 않은 excerpt: " + span.chunkId());
+                }
+                String spanIdentity = span.chunkId() + "\u0000" + span.excerpt();
+                if (!uniqueSpans.add(spanIdentity)) {
+                    throw invalid("중복된 근거 범위: " + span.chunkId());
+                }
+                spannedChunkIds.add(span.chunkId());
+            }
+            if (!spannedChunkIds.equals(uniqueCitedChunkIds)) {
+                throw invalid("인용된 모든 검색 근거 청크에 evidenceSpan 이 필요함");
             }
             Set<Long> citedFacts = new HashSet<>();
             for (Long factId : finding.knownFactIds()) {

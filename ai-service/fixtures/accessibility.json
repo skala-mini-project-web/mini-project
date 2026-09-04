@@ -12,6 +12,12 @@
       "retrievedContextChunkIds": [
         13
       ],
+      "evidenceSpans": [
+        {
+          "chunkId": 13,
+          "excerpt": "전문용어"
+        }
+      ],
       "recommendation": "문장을 짧게 나누고 전문용어 옆에 쉬운 설명을 제공하세요."
     }
   ]

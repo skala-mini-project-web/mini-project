@@ -3,6 +3,14 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+MAX_CONFIRMED_TEXT_LENGTH = 20_000
+MAX_CONTEXT_CHUNK_TEXT_LENGTH = 8_000
+MAX_RETRIEVED_CONTEXTS = 20
+MAX_KNOWN_FACT_TEXT_LENGTH = 2_000
+MAX_KNOWN_FACTS = 50
+MAX_AGGREGATE_PROMPT_TEXT_BYTES = 100_000
+
+
 def to_camel(value: str) -> str:
     head, *tail = value.split("_")
     return head + "".join(part.capitalize() for part in tail)
@@ -59,7 +67,10 @@ class RetrievedContext(ApiModel):
     evidence_document_id: int = Field(gt=0)
     source_type: EvidenceSourceType
     title: str = Field(min_length=1, max_length=255)
-    chunk_text: str = Field(min_length=1)
+    chunk_text: str = Field(
+        min_length=1,
+        max_length=MAX_CONTEXT_CHUNK_TEXT_LENGTH,
+    )
     rank: int = Field(gt=0)
     similarity: float = Field(ge=-1, le=1)
 
@@ -73,7 +84,7 @@ class RetrievedContext(ApiModel):
 
 class KnownFact(ApiModel):
     fact_id: int = Field(gt=0)
-    text: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=MAX_KNOWN_FACT_TEXT_LENGTH)
 
     @field_validator("text")
     @classmethod
@@ -86,15 +97,27 @@ class KnownFact(ApiModel):
 class RiskAnalysisRequest(ApiModel):
     analysis_id: int = Field(gt=0)
     scenario_code: str = Field(min_length=1, max_length=80)
-    confirmed_text: str = Field(min_length=1)
+    confirmed_text: str = Field(
+        min_length=1,
+        max_length=MAX_CONFIRMED_TEXT_LENGTH,
+    )
     persona_codes: list[PersonaCode] = Field(min_length=1, max_length=4)
     red_team_pack_code: RedTeamPackCode
-    rule_codes: list[RedTeamRuleCode] = Field(min_length=1)
+    rule_codes: list[RedTeamRuleCode] = Field(
+        min_length=1,
+        max_length=len(RedTeamRuleCode),
+    )
     selected_evidence_document_ids: list[int] = Field(
         min_length=1, max_length=3
     )
-    retrieved_contexts: list[RetrievedContext] = Field(min_length=1)
-    known_facts: list[KnownFact] = Field(default_factory=list)
+    retrieved_contexts: list[RetrievedContext] = Field(
+        min_length=1,
+        max_length=MAX_RETRIEVED_CONTEXTS,
+    )
+    known_facts: list[KnownFact] = Field(
+        default_factory=list,
+        max_length=MAX_KNOWN_FACTS,
+    )
 
     @field_validator("confirmed_text")
     @classmethod
@@ -167,7 +190,36 @@ class RiskAnalysisRequest(ApiModel):
             raise ValueError(
                 "retrieved contexts must belong to selected evidence documents"
             )
+        prompt_text = (
+            self.scenario_code,
+            self.confirmed_text,
+            *(
+                text
+                for context in self.retrieved_contexts
+                for text in (context.title, context.chunk_text)
+            ),
+            *(fact.text for fact in self.known_facts),
+        )
+        aggregate_bytes = sum(
+            len(text.encode("utf-8")) for text in prompt_text
+        )
+        if aggregate_bytes > MAX_AGGREGATE_PROMPT_TEXT_BYTES:
+            raise ValueError(
+                "aggregate prompt text exceeds the allowed size"
+            )
         return self
+
+
+class EvidenceSpan(ApiModel):
+    chunk_id: int = Field(gt=0)
+    excerpt: str = Field(min_length=1, max_length=MAX_CONTEXT_CHUNK_TEXT_LENGTH)
+
+    @field_validator("excerpt")
+    @classmethod
+    def excerpt_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("evidence span excerpt must not be blank")
+        return value
 
 
 class FindingPayload(ApiModel):
@@ -175,6 +227,7 @@ class FindingPayload(ApiModel):
     severity: Severity
     affected_persona_codes: list[PersonaCode] = Field(min_length=1)
     retrieved_context_chunk_ids: list[int] = Field(min_length=1)
+    evidence_spans: list[EvidenceSpan] = Field(min_length=1)
     known_fact_ids: list[int] = Field(default_factory=list)
     recommendation: str | None = Field(default=None, max_length=1000)
 
@@ -205,6 +258,16 @@ class FindingPayload(ApiModel):
     def known_fact_ids_must_be_unique(cls, value: list[int]) -> list[int]:
         if len(value) != len(set(value)):
             raise ValueError("duplicate known fact ids are not allowed")
+        return value
+
+    @field_validator("evidence_spans")
+    @classmethod
+    def evidence_spans_must_be_unique(
+        cls, value: list[EvidenceSpan]
+    ) -> list[EvidenceSpan]:
+        identities = [(span.chunk_id, span.excerpt) for span in value]
+        if len(identities) != len(set(identities)):
+            raise ValueError("duplicate evidence spans are not allowed")
         return value
 
 

@@ -57,6 +57,7 @@ public class PgVectorEvidenceRetriever {
                     where evidence.active = true
                       and c.embedding_model = ?
                       and c.chunking_version = ?
+                      and vector_norm(c.embedding) > 0
                       and c.evidence_document_id in (%s)
                 )
                 select chunk_id,
@@ -76,12 +77,16 @@ public class PgVectorEvidenceRetriever {
                 limit %d
                 """.formatted(placeholders, TOP_K);
 
+        String embeddingModel = embeddingClient.embeddingModel();
         double[] queryEmbedding = embeddingClient.embed(query);
+        if (!embeddingModel.equals(embeddingClient.embeddingModel())) {
+            throw new IllegalStateException("Ollama embedding model changed during retrieval");
+        }
         java.util.ArrayList<Object> parameters = new java.util.ArrayList<>(selectedIds.size() + 5);
-        parameters.add(embeddingClient.embeddingModel());
+        parameters.add(embeddingModel);
         parameters.add(EvidenceChunkIndexer.CHUNK_VERSION);
         parameters.add(EvidenceChunkIndexer.vectorLiteral(queryEmbedding));
-        parameters.add(embeddingClient.embeddingModel());
+        parameters.add(embeddingModel);
         parameters.add(EvidenceChunkIndexer.CHUNK_VERSION);
         parameters.addAll(selectedIds);
 

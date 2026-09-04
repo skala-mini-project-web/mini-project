@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { PhArrowLeft, PhArrowClockwise, PhWarningCircle, PhClipboardText, PhCheckCircle, PhXCircle, PhFileText, PhScales } from '@phosphor-icons/vue'
 import { api } from '@/api'
@@ -34,6 +34,8 @@ const reviewRequested = ref(false)
 const reviewInfo = ref(null)
 const showReviewRequest = ref(false)
 const submissionComment = ref('')
+const canManage = ref(false)
+let reviewRefreshTimer = null
 const STAGE_LABEL = {
   PREPARING: '분석 준비 중',
   PERSONA_SIMULATION: 'Persona 반복 실험 중',
@@ -74,13 +76,34 @@ const { polling, timedOut, start } = usePolling(() => api.getAnalysis(props.anal
     }
   },
 })
+function stopReviewRefresh() {
+  if (reviewRefreshTimer) clearInterval(reviewRefreshTimer)
+  reviewRefreshTimer = null
+}
+function scheduleReviewRefresh() {
+  stopReviewRefresh()
+  if (reviewInfo.value?.status !== 'PENDING') return
+  reviewRefreshTimer = setInterval(refreshReview, 2000)
+}
+async function refreshReview() {
+  try {
+    const nextReview = await api.getReviewByAnalysis(props.analysisId)
+    reviewInfo.value = nextReview
+    reviewRequested.value = false
+    if (nextReview?.status !== 'PENDING') stopReviewRefresh()
+  } catch (e) {
+    if (e?.status !== 404) stopReviewRefresh()
+  }
+}
 
 onMounted(load)
+onUnmounted(stopReviewRefresh)
 async function load() {
   loading.value = true
   try {
     const nextStatus = await api.getAnalysis(props.analysisId)
     status.value = nextStatus
+    canManage.value = session.isPM
     if (isRunning.value) start((r) => ['COMPLETED', 'FAILED'].includes(r.status))
     else if (isDone.value) await loadResult()
     loadError.value = null
@@ -102,6 +125,8 @@ async function loadResult() {
   }
   result.value = nextResult
   reviewInfo.value = nextReview
+  reviewRequested.value = false
+  scheduleReviewRefresh()
 }
 async function retry() {
   retrying.value = true
@@ -124,6 +149,7 @@ async function requestReview() {
     const res = await api.createReview({ analysisId: props.analysisId, submissionComment: submissionComment.value.trim() })
     reviewRequested.value = true
     reviewInfo.value = { status: 'PENDING' }
+    scheduleReviewRefresh()
     showReviewRequest.value = false
     toast.success('검토 요청됨', res.reviewId)
     useJobsStore().track({ kind: 'review', id: res.reviewId, name: result.value?.sourceDocument?.fileName || props.analysisId })
@@ -190,7 +216,7 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
         <p class="t-base fw-semibold">분석 실패</p>
         <p class="t-sm soft"><span class="mono">{{ status.error?.errorCode }}</span> · {{ status.error?.message }}</p>
       </div>
-      <GButton v-if="status.error?.retryable" variant="secondary" size="sm" :loading="retrying" @click="retry">
+      <GButton v-if="canManage && status.error?.retryable" variant="secondary" size="sm" :loading="retrying" @click="retry">
         <template #icon><PhArrowClockwise :size="15" /></template>재시도
       </GButton>
     </div>
@@ -221,7 +247,7 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
             <span class="t-sm mute"><PhScales :size="14" /> 선택 근거 문서 {{ result.groundingDocuments?.length || 0 }}건</span>
           </div>
         </div>
-        <div v-if="session.isPM" class="score-act">
+        <div v-if="canManage" class="score-act">
           <template v-if="!reviewInfo && !reviewRequested">
             <p class="t-xs mute act-note">사람 승인 전까지 승격되지 않습니다.</p>
             <GButton variant="primary" @click="openReviewRequest"><template #icon><PhClipboardText :size="15" /></template>검토 요청</GButton>

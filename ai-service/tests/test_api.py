@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 os.environ["AI_PROVIDER"] = "fixture"
+os.environ["AI_SERVICE_INTERNAL_TOKEN"] = "ai-service-test-token"
 
 from app.main import analysis_service, app
 from app.schemas import AnalysisProvider, RiskAnalysisRequest
@@ -18,6 +19,7 @@ def call_api(
     method: str,
     path: str,
     json: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     async def send() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
@@ -25,7 +27,15 @@ def call_api(
             transport=transport,
             base_url="http://testserver",
         ) as client:
-            return await client.request(method, path, json=json)
+            return await client.request(
+                method,
+                path,
+                json=json,
+                headers={
+                    "Authorization": "Bearer ai-service-test-token",
+                    **(headers or {}),
+                },
+            )
 
     return asyncio.run(send())
 
@@ -58,6 +68,19 @@ def test_health() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "UP", "provider": "fixture"}
+
+
+def test_rejects_unauthenticated_risk_analysis() -> None:
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+        headers={"Authorization": ""},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["errorCode"] == "INTERNAL_AUTHENTICATION_REQUIRED"
+    assert response.json()["retryable"] is False
 
 
 def test_defaults_to_ollama_when_provider_is_unconfigured(
@@ -266,6 +289,12 @@ def test_rejects_provider_output_citing_unknown_known_fact(
                 "severity": "HIGH",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": [11],
+                "evidenceSpans": [
+                    {
+                        "chunkId": 11,
+                        "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
+                    }
+                ],
                 "knownFactIds": [999],
                 "recommendation": "원금 손실 가능성을 함께 고지하세요.",
             }
@@ -306,6 +335,12 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
                 "severity": "HIGH",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": [11],
+                "evidenceSpans": [
+                    {
+                        "chunkId": 11,
+                        "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
+                    }
+                ],
                 "knownFactIds": [],
                 "recommendation": "원금 손실 가능성을 함께 고지하세요.",
             }
@@ -316,6 +351,7 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
         ollama_payload = json.loads(provider_request.content)
         finding_schema = ollama_payload["format"]["$defs"]["FindingPayload"]
         assert "retrievedContextChunkIds" in finding_schema["required"]
+        assert "evidenceSpans" in finding_schema["required"]
         assert (
             finding_schema["properties"]["retrievedContextChunkIds"][
                 "minItems"
@@ -515,7 +551,7 @@ def test_rejects_context_for_unselected_evidence() -> None:
     assert response.json()["retryable"] is False
 
 
-def test_fixture_citation_does_not_depend_on_copying_chunk_text() -> None:
+def test_fixture_citation_requires_exact_evidence_span() -> None:
     request = guarantee_request()
     request["retrievedContexts"][0][
         "chunkText"
@@ -523,8 +559,8 @@ def test_fixture_citation_does_not_depend_on_copying_chunk_text() -> None:
 
     response = call_api("POST", "/internal/v1/risk-analyses", json=request)
 
-    assert response.status_code == 200
-    assert response.json()["findings"][0]["retrievedContextChunkIds"] == [11]
+    assert response.status_code == 500
+    assert response.json()["errorCode"] == "AI_PROVIDER_RESPONSE_INVALID"
 
 
 def test_rejects_fixture_output_citing_unknown_known_fact(

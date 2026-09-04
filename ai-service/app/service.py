@@ -26,6 +26,16 @@ class OllamaUnavailableError(AiServiceError):
         )
 
 
+class OllamaRequestRejectedError(AiServiceError):
+    def __init__(self) -> None:
+        super().__init__(
+            error_code="AI_PROVIDER_REQUEST_REJECTED",
+            message="The configured Ollama provider rejected the request.",
+            retryable=False,
+            status_code=422,
+        )
+
+
 class ProviderResponseInvalidError(AiServiceError):
     def __init__(self) -> None:
         super().__init__(
@@ -37,7 +47,7 @@ class ProviderResponseInvalidError(AiServiceError):
 
 
 class RiskAnalysisService:
-    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v5"
+    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v6"
 
     def __init__(
         self,
@@ -119,6 +129,12 @@ class RiskAnalysisService:
             "retrievedContextChunkIds entry must be a chunkId selected exactly "
             "from retrievedContexts. Use only chunkId values present in "
             "retrievedContexts; never invent, alter, or substitute an ID. "
+            "For every cited chunkId, include at least one evidenceSpans entry "
+            "whose chunkId is that cited ID and whose excerpt is a nonblank, "
+            "exact contiguous substring copied verbatim from that chunk's "
+            "chunkText. Preserve its whitespace, punctuation, and casing. "
+            "Every evidence span must refer to a cited chunk, and duplicate "
+            "spans are forbidden. "
             "One well-grounded finding is sufficient. "
             "Never quote confirmedText or any other product text as evidence. "
             "Do not cite unknown or unretrieved contexts. knownFactIds "
@@ -155,7 +171,12 @@ class RiskAnalysisService:
                 json=payload,
             )
             provider_response.raise_for_status()
-        except httpx.HTTPError:
+        except httpx.HTTPStatusError as error:
+            status_code = error.response.status_code
+            if status_code != 429 and 400 <= status_code < 500:
+                raise OllamaRequestRejectedError() from None
+            raise OllamaUnavailableError() from None
+        except httpx.RequestError:
             raise OllamaUnavailableError() from None
 
         try:
@@ -192,12 +213,34 @@ class RiskAnalysisService:
                 raise ValueError("Finding contains an unselected persona.")
             if not finding.retrieved_context_chunk_ids:
                 raise ValueError("Finding is missing source evidence.")
+            cited_chunk_ids = set(finding.retrieved_context_chunk_ids)
             for chunk_id in finding.retrieved_context_chunk_ids:
                 context = contexts_by_chunk_id.get(chunk_id)
                 if context is None:
                     raise ValueError("Finding cites an unretrieved context.")
                 if context.evidence_document_id not in selected_evidence:
                     raise ValueError("Finding cites unselected evidence.")
+            spanned_chunk_ids: set[int] = set()
+            seen_spans: set[tuple[int, str]] = set()
+            for span in finding.evidence_spans:
+                context = contexts_by_chunk_id.get(span.chunk_id)
+                if context is None or span.chunk_id not in cited_chunk_ids:
+                    raise ValueError(
+                        "Evidence span refers to an uncited context."
+                    )
+                identity = (span.chunk_id, span.excerpt)
+                if identity in seen_spans:
+                    raise ValueError("Finding contains duplicate evidence spans.")
+                seen_spans.add(identity)
+                if not span.excerpt.strip():
+                    raise ValueError("Evidence span excerpt is blank.")
+                if span.excerpt not in context.chunk_text:
+                    raise ValueError(
+                        "Evidence span is not an exact context excerpt."
+                    )
+                spanned_chunk_ids.add(span.chunk_id)
+            if spanned_chunk_ids != cited_chunk_ids:
+                raise ValueError("A cited context is missing an evidence span.")
         RiskAnalysisService._validate_fact_references(request, response)
 
     @staticmethod

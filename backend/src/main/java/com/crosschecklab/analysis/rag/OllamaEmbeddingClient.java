@@ -3,6 +3,8 @@ package com.crosschecklab.analysis.rag;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -12,6 +14,8 @@ import org.springframework.web.client.RestClientException;
 
 @Component
 public class OllamaEmbeddingClient {
+
+    private static final String SHA256_PREFIX = "sha256:";
 
     private final RestClient restClient;
     private final String embeddingModel;
@@ -39,7 +43,39 @@ public class OllamaEmbeddingClient {
     }
 
     public String embeddingModel() {
-        return embeddingModel;
+        ModelMetadata metadata;
+        try {
+            metadata = restClient.get()
+                    .uri("/api/tags")
+                    .retrieve()
+                    .body(ModelMetadataResponse.class)
+                    .models()
+                    .stream()
+                    .filter(this::matchesConfiguredModel)
+                    .reduce((first, second) -> {
+                        throw new IllegalStateException("Ollama returned ambiguous embedding model metadata");
+                    })
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Ollama embedding model metadata was not found"));
+        } catch (RestClientException | NullPointerException exception) {
+            throw new IllegalStateException("Ollama model metadata service is unavailable", exception);
+        }
+        String digest = metadata.digest();
+        if (!StringUtils.hasText(digest)) {
+            throw new IllegalStateException("Ollama returned embedding model metadata without a digest");
+        }
+        String normalizedDigest = digest.toLowerCase(Locale.ROOT);
+        if (normalizedDigest.startsWith(SHA256_PREFIX)) {
+            normalizedDigest = normalizedDigest.substring(SHA256_PREFIX.length());
+        }
+        if (!normalizedDigest.matches("[0-9a-f]{64}")) {
+            throw new IllegalStateException("Ollama returned an invalid embedding model digest");
+        }
+        String identity = embeddingModel + "@" + SHA256_PREFIX + normalizedDigest;
+        if (identity.length() > 255) {
+            throw new IllegalStateException("Ollama embedding model identity is too long");
+        }
+        return identity;
     }
 
     public int embeddingDimension() {
@@ -55,6 +91,7 @@ public class OllamaEmbeddingClient {
             throw new IllegalArgumentException("At least one embedding input is required");
         }
         List<String> validatedInputs = inputs.stream().map(this::requireInput).toList();
+        String modelIdentity = embeddingModel();
         EmbedResponse response;
         try {
             response = restClient.post()
@@ -68,6 +105,9 @@ public class OllamaEmbeddingClient {
         if (response == null || response.embeddings() == null
                 || response.embeddings().size() != validatedInputs.size()) {
             throw new IllegalStateException("Ollama returned a malformed embedding response");
+        }
+        if (!modelIdentity.equals(embeddingModel())) {
+            throw new IllegalStateException("Ollama embedding model changed during embedding");
         }
 
         List<double[]> embeddings = new ArrayList<>(response.embeddings().size());
@@ -93,6 +133,23 @@ public class OllamaEmbeddingClient {
         return List.copyOf(embeddings);
     }
 
+    private boolean matchesConfiguredModel(ModelMetadata metadata) {
+        if (metadata == null) {
+            return false;
+        }
+        String normalizedConfiguredModel = normalizedModelName(embeddingModel);
+        return Objects.equals(normalizedConfiguredModel, normalizedModelName(metadata.name()))
+                || Objects.equals(normalizedConfiguredModel, normalizedModelName(metadata.model()));
+    }
+
+    private static String normalizedModelName(String model) {
+        if (!StringUtils.hasText(model)) {
+            return null;
+        }
+        int finalSlash = model.lastIndexOf('/');
+        return model.indexOf(':', finalSlash + 1) < 0 ? model + ":latest" : model;
+    }
+
     private String requireInput(String input) {
         if (!StringUtils.hasText(input)) {
             throw new IllegalArgumentException("Embedding input must not be blank");
@@ -104,5 +161,11 @@ public class OllamaEmbeddingClient {
     }
 
     private record EmbedResponse(List<List<Double>> embeddings) {
+    }
+
+    private record ModelMetadataResponse(List<ModelMetadata> models) {
+    }
+
+    private record ModelMetadata(String name, String model, String digest) {
     }
 }

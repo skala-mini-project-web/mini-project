@@ -59,7 +59,7 @@ Ollama Desktop이 이미 서버를 실행 중이면 `ollama serve`를 다시 실
 
 ## 설정
 
-기본값으로 바로 실행할 수 있습니다. 포트·DB·Ollama 연결을 바꿀 때만 `.env`를 만듭니다.
+기본값으로 바로 실행할 수 있습니다. 포트·DB·내부 AI token·Ollama 연결을 바꿀 때만 `.env`를 만듭니다.
 
 ```bash
 cp .env.example .env
@@ -77,12 +77,15 @@ AI_SERVICE_PORT=8000
 FRONTEND_PORT=5173
 
 AI_PROVIDER=ollama
+AI_SERVICE_INTERNAL_TOKEN=crosschecklab-local-internal-token
 OLLAMA_BASE_URL=http://host.docker.internal:11434
 OLLAMA_MODEL=qwen2.5:7b-instruct
 OLLAMA_EMBEDDING_MODEL=bge-m3:latest
 ```
 
 Compose는 Docker 컨테이너에서 host Ollama에 연결합니다. 기본 `host.docker.internal` 설정은 macOS와 Docker host-gateway 환경을 지원합니다. 포트가 이미 사용 중이면 해당 포트 변수만 변경합니다.
+
+`DB_PASSWORD`와 `AI_SERVICE_INTERNAL_TOKEN`의 기본값은 격리된 로컬 데모에서만 쓰는 합성값이며 실제 자격 증명이 아닙니다. `AI_SERVICE_INTERNAL_TOKEN`은 backend와 AI service가 공유하는 내부 호출용 bearer token입니다. 로컬 데모 밖에서 실행할 때는 두 값을 별도의 강한 값으로 교체하고 저장소에 커밋하지 않습니다.
 
 ## 로컬 실행
 
@@ -171,7 +174,7 @@ UI는 실제 API에서 활성 Persona를 읽습니다. backend는 선택된 Pers
 5. 모델은 전달받은 `retrievedContextChunkIds`만 Finding 근거로 선택합니다.
 6. backend는 선택 ID가 실제 retrieval snapshot에 있는지 검증하고, 해당 chunk의 정확한 문서 ID·원문을 저장합니다.
 
-따라서 모델이 검색하지 않은 문서를 인용하거나, 선택하지 않은 Persona·공식 사실을 결과에 넣으면 결과 저장이 거부됩니다. 분석 시점의 공식 사실과 retrieval 결과는 immutable snapshot으로 보관됩니다.
+따라서 모델이 검색하지 않은 문서를 인용하거나, 선택하지 않은 Persona·공식 사실을 결과에 넣으면 결과 저장이 거부됩니다. 분석 시점의 공식 사실과 retrieval 결과는 snapshot으로 저장됩니다. Retrieval run과 snapshot row는 일반 SQL로 직접 `UPDATE`하거나 `DELETE`할 수 없으며, 소유 analysis가 유지되는 동안 함께 보존됩니다. 소유 analysis를 삭제하면 FK cascade로 함께 삭제되고, `docker compose down -v`로 PostgreSQL volume을 제거하면 모든 로컬 데이터와 함께 삭제됩니다.
 
 분석 실행마다 새 `execution_token`을 발급합니다. retry가 시작되면 이전 worker는 새 결과를 덮어쓸 수 없습니다. terminal 상태와 terminal audit event는 같은 DB transaction으로 기록됩니다.
 

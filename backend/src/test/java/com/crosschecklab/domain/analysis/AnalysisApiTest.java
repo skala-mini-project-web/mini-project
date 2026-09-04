@@ -120,7 +120,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                                     chunk_hash, chunk_text, embedding_model, embedding
                                 )
                                 SELECT id, ?, 0, ?, ?, ?, ?,
-                                       array_fill(0.0::real, ARRAY[1024])::vector
+                                       (ARRAY[1.0::real] || array_fill(0.0::real, ARRAY[1023]))::vector
                                 FROM evidence_documents
                                 WHERE id = ? AND active = TRUE
                                 ON CONFLICT (
@@ -716,8 +716,8 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("#43: 재확정 뒤 재시도해도 수락 시점 VERIFIED 사실 snapshot을 사용한다")
-    void retryUsesAcceptedFactSnapshotAfterDocumentReconfirmation() throws Exception {
+    @DisplayName("분석이 생성된 문서는 재확정할 수 없어 수락 시점 사실 snapshot이 바뀌지 않는다")
+    void documentWithAnalysisCannotBeReconfirmed() throws Exception {
         String acceptedValue = "분석 수락 시점에 검증된 사실";
         Long factId = confirmFact(acceptedValue, "VERIFIED");
         FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
@@ -739,38 +739,19 @@ class AnalysisApiTest extends IntegrationTestSupport {
                     assertThat(fact.text()).isEqualTo(acceptedValue);
                 });
 
-        String liveValue = "문서 재확정으로 바뀐 현재 사실";
-        assertThat(confirmFact(liveValue, "CANDIDATE")).isEqualTo(factId);
-        assertThat(jdbc.queryForMap("""
-                SELECT verification_status, value
-                FROM ground_truth_facts
-                WHERE id = ?
-                """, factId))
-                .containsEntry("verification_status", "CANDIDATE")
-                .containsEntry("value", liveValue);
+        mockMvc.perform(asPm(patch("/api/documents/{documentId}/text", confirmedDocumentId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "extractedText", "문서 재확정으로 바뀐 현재 사실",
+                                "confirmed", true)))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("DOCUMENT_ALREADY_ANALYZED"));
+
         assertThat(jdbc.queryForObject("""
                 SELECT value
                 FROM analysis_ground_truth_fact_snapshots
                 WHERE analysis_id = ?
                 """, String.class, analysisId)).isEqualTo(acceptedValue);
-
-        fake.reset();
-        mockMvc.perform(asPm(post("/api/analyses/{id}/retry", analysisId)))
-                .andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.analysisId").value(analysisId));
-
-        assertThat(fake.lastRequest().knownFacts())
-                .singleElement()
-                .satisfies(fact -> {
-                    assertThat(fact.factId()).isEqualTo(factId);
-                    assertThat(fact.text()).isEqualTo(acceptedValue);
-                });
-        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.groundTruthFacts.length()").value(1))
-                .andExpect(jsonPath("$.groundTruthFacts[0].factId").value(factId))
-                .andExpect(jsonPath("$.groundTruthFacts[0].label").value("확정 문서 텍스트"))
-                .andExpect(jsonPath("$.groundTruthFacts[0].value").value(acceptedValue));
     }
 
     @Test

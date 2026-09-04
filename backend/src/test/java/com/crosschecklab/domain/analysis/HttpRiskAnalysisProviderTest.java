@@ -36,6 +36,7 @@ class HttpRiskAnalysisProviderTest {
              "findings":[{"statement":"안정성 표현이 원금보장으로 오인될 가능성이 있습니다.","severity":"HIGH",
              "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
              "retrievedContextChunkIds":[11],
+             "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
              "knownFactIds":[7],
              "recommendation":"원금 손실 가능성을 명시하세요."}]}""";
 
@@ -74,7 +75,7 @@ class HttpRiskAnalysisProviderTest {
     private HttpRiskAnalysisProvider provider(String baseUrl, boolean allowInsecureHttp) {
         return new HttpRiskAnalysisProvider(
                 new AiServiceProperties(baseUrl, Duration.ofMillis(500), Duration.ofSeconds(2),
-                        "SCENARIO", allowInsecureHttp),
+                        "SCENARIO", allowInsecureHttp, "crosschecklab-local-internal-token"),
                 new ObjectMapper());
     }
 
@@ -85,7 +86,10 @@ class HttpRiskAnalysisProviderTest {
                 List.of(1L),
                 List.of(new AnalysisRequest.RetrievedContextPayload(
                         11L, 1L, EvidenceSourceType.INTERNAL_POLICY, "내부준칙",
-                        "원금손실 가능성은 인접 표시", 1, 0.91)),
+                        "원금손실 가능성은 인접 표시", 1, 0.91),
+                        new AnalysisRequest.RetrievedContextPayload(
+                                12L, 1L, EvidenceSourceType.INTERNAL_POLICY, "내부준칙",
+                                "중도해지 비용을 함께 표시", 2, 0.87)),
                 List.of(new AnalysisRequest.KnownFactPayload(7L, "확정된 공식 사실")));
     }
 
@@ -100,6 +104,10 @@ class HttpRiskAnalysisProviderTest {
             assertThat(finding.severity()).isEqualTo(Severity.HIGH);
             assertThat(finding.affectedPersonaCodes()).containsExactly(PersonaCode.FINANCIAL_BEGINNER);
             assertThat(finding.retrievedContextChunkIds()).containsExactly(11L);
+            assertThat(finding.evidenceSpans()).singleElement().satisfies(span -> {
+                assertThat(span.chunkId()).isEqualTo(11L);
+                assertThat(span.excerpt()).isEqualTo("원금손실 가능성");
+            });
             assertThat(finding.knownFactIds()).containsExactly(7L);
         });
         // ai-service 는 extra="forbid" 라 필드명이 정확히 일치해야 한다.
@@ -127,16 +135,16 @@ class HttpRiskAnalysisProviderTest {
     }
 
     @Test
-    @DisplayName("500 + retryable=false → PROVIDER_RESPONSE_INVALID, 재시도 불가")
-    void invalidResponse() {
+    @DisplayName("500은 provider 응답 본문과 무관하게 AI_SERVICE_TEMPORARY_FAILURE, 재시도 가능")
+    void serverFailureIsRetryable() {
         status = 500;
         responseBody = """
                 {"errorCode":"PROVIDER_RESPONSE_INVALID","message":"invalid","retryable":false}""";
 
         assertThatThrownBy(() -> provider().analyze(request()))
                 .isInstanceOfSatisfying(ProviderException.class, e -> {
-                    assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID);
-                    assertThat(e.isRetryable()).isFalse();
+                    assertThat(e.getErrorCode()).isEqualTo(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE);
+                    assertThat(e.isRetryable()).isTrue();
                 });
     }
 
@@ -212,12 +220,92 @@ class HttpRiskAnalysisProviderTest {
     }
 
     @Test
+    @DisplayName("유효한 청크 ID만 인용해도 정확한 근거 범위가 없으면 계약 위반으로 끊는다")
+    void citationWithoutEvidenceSpanIsRejected() {
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "retrievedContextChunkIds":[11],"evidenceSpans":[],"recommendation":null}]}""";
+
+        assertInvalidProviderResponse();
+    }
+
+    @Test
+    @DisplayName("인용한 각 청크에 정확한 근거 범위가 없으면 계약 위반으로 끊는다")
+    void citedChunkWithoutMatchingEvidenceSpanIsRejected() {
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "retrievedContextChunkIds":[11,12],
+                 "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
+                 "recommendation":null}]}""";
+
+        assertInvalidProviderResponse();
+    }
+
+    @Test
+    @DisplayName("공백뿐인 excerpt는 계약 위반으로 끊는다")
+    void blankEvidenceSpanIsRejected() {
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "retrievedContextChunkIds":[11],
+                 "evidenceSpans":[{"chunkId":11,"excerpt":"   "}],
+                 "recommendation":null}]}""";
+
+        assertInvalidProviderResponse();
+    }
+
+    @Test
+    @DisplayName("검색된 청크 원문에 정확히 포함되지 않은 excerpt는 계약 위반으로 끊는다")
+    void inexactEvidenceSpanIsRejected() {
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "retrievedContextChunkIds":[11],
+                 "evidenceSpans":[{"chunkId":11,"excerpt":"원금 손실 가능성"}],
+                 "recommendation":null}]}""";
+
+        assertInvalidProviderResponse();
+    }
+
+    @Test
+    @DisplayName("근거 범위는 인용한 청크만 참조해야 한다")
+    void evidenceSpanForUncitedChunkIsRejected() {
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "retrievedContextChunkIds":[11],
+                 "evidenceSpans":[{"chunkId":12,"excerpt":"중도해지 비용"}],
+                 "recommendation":null}]}""";
+
+        assertInvalidProviderResponse();
+    }
+
+    @Test
+    @DisplayName("같은 근거 범위를 중복 반환하면 계약 위반으로 끊는다")
+    void duplicateEvidenceSpanIsRejected() {
+        responseBody = """
+                {"riskScore":50,"modelVersion":"m","promptVersion":"p",
+                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "retrievedContextChunkIds":[11],
+                 "evidenceSpans":[
+                   {"chunkId":11,"excerpt":"원금손실 가능성"},
+                   {"chunkId":11,"excerpt":"원금손실 가능성"}],
+                 "recommendation":null}]}""";
+
+        assertInvalidProviderResponse();
+    }
+
+    @Test
     @DisplayName("요청에 포함되지 않은 공식 사실을 인용하면 계약 위반으로 끊는다")
     void unknownFactReferenceIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
-                 "retrievedContextChunkIds":[],"knownFactIds":[99],"recommendation":null}]}""";
+                 "retrievedContextChunkIds":[11],
+                 "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
+                 "knownFactIds":[99],"recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }
@@ -228,7 +316,9 @@ class HttpRiskAnalysisProviderTest {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
-                 "retrievedContextChunkIds":[],"knownFactIds":[null],"recommendation":null}]}""";
+                 "retrievedContextChunkIds":[11],
+                 "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
+                 "knownFactIds":[null],"recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }
@@ -239,7 +329,9 @@ class HttpRiskAnalysisProviderTest {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
-                 "retrievedContextChunkIds":[],"knownFactIds":[7,7],"recommendation":null}]}""";
+                 "retrievedContextChunkIds":[11],
+                 "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
+                 "knownFactIds":[7,7],"recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }

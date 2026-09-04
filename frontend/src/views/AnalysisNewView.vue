@@ -5,6 +5,7 @@ import { PhArrowLeft, PhArrowClockwise, PhCheck, PhLightning, PhWarningCircle } 
 import { api } from '@/api'
 import { useToastStore } from '@/stores/toast'
 import { useJobsStore } from '@/stores/jobs'
+import { useSessionStore } from '@/stores/session'
 import { SCENARIO_OPTIONS } from '@/api/mock/scenarios'
 import { RULE_LABEL } from '@/lib/format'
 import GButton from '@/components/ui/GButton.vue'
@@ -16,11 +17,14 @@ import GSpinner from '@/components/ui/GSpinner.vue'
 const props = defineProps({ productId: { type: String, required: true } })
 const router = useRouter()
 const toast = useToastStore()
+const session = useSessionStore()
 const loading = ref(true)
 const loadError = ref(null)
 const submitting = ref(false)
 const docs = ref([]); const evidence = ref([]); const personas = ref([]); const packs = ref([]); const productName = ref('')
 const facts = ref([])
+const productOwnerId = ref(null)
+let factsRequestId = 0
 const selDoc = ref(''); const selEv = ref([]); const selPer = ref([]); const selPack = ref('')
 const scenario = ref('GUARANTEE_MISUNDERSTANDING_HIGH')
 const localAi = ref((() => { try { return localStorage.getItem('guardlab.ai.local') === '1' } catch { return false } })())
@@ -29,10 +33,16 @@ function setLocalAi(v) { localAi.value = v; try { localStorage.setItem('guardlab
 const evOk = computed(() => selEv.value.length >= 1 && selEv.value.length <= 3)
 const perOk = computed(() => selPer.value.length >= 1 && selPer.value.length <= 4)
 const factsVerified = computed(() => facts.value.some((fact) => fact.verificationStatus === 'VERIFIED'))
-const canSubmit = computed(() => selDoc.value && evOk.value && perOk.value && selPack.value && factsVerified.value && !submitting.value)
+const canManage = computed(() => session.owns(productOwnerId.value))
+const canSubmit = computed(() => canManage.value && selDoc.value && evOk.value && perOk.value && selPack.value && factsVerified.value && !submitting.value)
 
 async function loadFacts() {
-  facts.value = selDoc.value ? (await api.listGroundTruthFacts(selDoc.value)).items : []
+  const documentId = selDoc.value
+  const requestId = ++factsRequestId
+  facts.value = []
+  if (!documentId) return
+  const response = await api.listGroundTruthFacts(documentId)
+  if (requestId === factsRequestId && selDoc.value === documentId) facts.value = response.items
 }
 
 onMounted(load)
@@ -41,6 +51,7 @@ async function load() {
   try {
     const [product, ev, ps, pk] = await Promise.all([api.getProduct(props.productId), api.listEvidenceDocuments({ active: true }), api.listPersonaTemplates(), api.listRedTeamPacks()])
     productName.value = product.name
+    productOwnerId.value = product.ownerId
     docs.value = (product.documents || []).filter((d) => d.extractStatus === 'READY' && d.confirmed)
     evidence.value = ev.items; personas.value = ps.items; packs.value = pk.items
     if (docs.value.length) selDoc.value = docs.value[0].documentId
@@ -58,6 +69,7 @@ async function load() {
 }
 watch(selDoc, () => loadFacts().catch((error) => toast.fromError(error)))
 async function verifyFact(fact, verificationStatus) {
+  if (!canManage.value) return
   try {
     await api.verifyGroundTruthFact(fact.factId, { verificationStatus, value: fact.value })
     await loadFacts()
@@ -133,8 +145,8 @@ async function submit() {
           <div v-for="fact in facts" :key="fact.factId" class="opt fact">
             <span class="opt-m"><span class="fw-medium">{{ fact.label }}</span><span class="t-xs mute">{{ fact.value }} · {{ fact.importance }} · {{ fact.extractionSource || 'API' }}</span></span>
             <GBadge tone="neutral">{{ fact.verificationStatus }}</GBadge>
-            <GButton v-if="fact.verificationStatus === 'CANDIDATE'" size="sm" variant="secondary" @click="verifyFact(fact, 'REJECTED')">제외</GButton>
-            <GButton v-if="fact.verificationStatus !== 'VERIFIED'" size="sm" variant="primary" @click="verifyFact(fact, 'VERIFIED')">확인</GButton>
+            <GButton v-if="canManage && fact.verificationStatus === 'CANDIDATE'" size="sm" variant="secondary" @click="verifyFact(fact, 'REJECTED')">제외</GButton>
+            <GButton v-if="canManage && fact.verificationStatus !== 'VERIFIED'" size="sm" variant="primary" @click="verifyFact(fact, 'VERIFIED')">확인</GButton>
           </div>
         </div>
       </section>
@@ -173,7 +185,7 @@ async function submit() {
         </label>
       </section>
 
-      <div class="submit"><span class="t-sm mute">동일 조건 3회 자동 실행</span><GButton variant="primary" :loading="submitting" :disabled="!canSubmit" @click="submit"><template #icon><PhLightning :size="16" /></template>Persona + Red Team 분석 시작</GButton></div>
+      <div v-if="canManage" class="submit"><span class="t-sm mute">동일 조건 3회 자동 실행</span><GButton variant="primary" :loading="submitting" :disabled="!canSubmit" @click="submit"><template #icon><PhLightning :size="16" /></template>Persona + Red Team 분석 시작</GButton></div>
     </template>
   </div>
 </template>
