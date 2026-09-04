@@ -1,41 +1,87 @@
-# mini-project
-SKALA 4기 미니 프로젝트
+# ARGUS 로컬 Genuine RAG 데모
 
-## 전체 서비스 Docker 실행
+금융상품 판매 문구를 근거 문서와 대조하는 로컬 데모입니다. 예전의 **사용자가 선택한 근거를 프롬프트에 넣는 방식은 검색 단계가 없으므로 RAG가 아니었습니다.** 이 브랜치는 Spring 백엔드가 근거 문서를 결정론적으로 청크화하고, Ollama `bge-m3:latest` 임베딩과 PostgreSQL/pgvector 코사인 검색으로 상위 청크를 고른 뒤, 그 청크만 AI 서비스의 Ollama `qwen2.5:7b-instruct` 채팅 프롬프트에 전달합니다.
 
-Docker Desktop을 실행한 뒤 저장소 루트에서 다음 명령을 실행합니다.
+> `data/demo-corpus/`의 상품·회사·기관·수치·규정·PDF·메타데이터는 모두 100% 합성한 데모 전용 자료입니다. 실제 법률·규제·금융 사실이나 법률/재무 판단의 권위 있는 근거가 아닙니다.
+
+## 정본 데모 자료
+
+상품 입력 PDF:
+
+- `data/demo-corpus/documents/product/SMART-INCOME-SALES-v1.pdf`
+
+검색 대상 근거 PDF:
+
+- `data/demo-corpus/documents/evidence/SMART-INCOME-PRODUCT-POLICY-v1.pdf`
+- `data/demo-corpus/documents/evidence/IMPORTANT-INFO-DISPLAY-POLICY-v2026.1.pdf`
+- `data/demo-corpus/documents/evidence/FINANCIAL-CONSUMER-EXPLANATION-DUTY-EXCERPT-v1.pdf`
+
+감사 보조 파일:
+
+- 아티팩트 해시·버전·출처: `data/demo-corpus/manifest.v1.json`
+- 문서 메타데이터: `data/demo-corpus/metadata/documents.v1.json`
+- 예상 청크/페이지 앵커: `data/demo-corpus/metadata/chunks.v1.jsonl`
+- 분석 기대 사례: `data/demo-corpus/expected/analysis-cases.v1.json`
+- 검색 기대 사례: `data/demo-corpus/expected/rag-cases.v1.json`
+
+## 로컬 실행
+
+필수 조건은 Docker Desktop(Compose 포함), 로컬 Ollama, 두 모델을 받을 디스크/메모리입니다. 저장소 루트에서 실행할 명령은 다음과 같습니다.
 
 ```bash
-docker compose up --build
+ollama serve
+ollama pull bge-m3:latest
+ollama pull qwen2.5:7b-instruct
+ollama list
 ```
 
-기본 접속 주소:
-
-- Frontend: http://localhost:5173
-- Backend Swagger: http://localhost:8080/swagger-ui/index.html
-- AI Mock Swagger: http://localhost:8000/docs
-- PostgreSQL: `localhost:5432`
-
-종료할 때는 다음 명령을 사용합니다.
+`ollama serve`는 이미 데스크톱 앱이 서버를 제공 중이면 중복 실행하지 않습니다. 모델 준비 후 별도 터미널에서:
 
 ```bash
-docker compose down
+docker compose up --build -d
+docker compose ps
+curl -fsS http://localhost:8000/internal/v1/health
+curl -fsS http://localhost:8080/actuator/health
+node frontend/scripts/real-e2e-preflight.mjs
 ```
 
-DB 데이터까지 초기화하려면 `docker compose down -v`를 사용합니다.
-포트나 로컬 DB 계정을 변경할 때만 `.env.example`을 `.env`로 복사해 수정합니다.
+Preflight는 Spring과 AI 서비스의 도달 가능성만 검사합니다. 모델 호출, pgvector 검색, 업무 E2E 성공을 보증하지 않습니다. 기본 주소는 Frontend `http://localhost:5173`, Swagger `http://localhost:8080/swagger-ui/index.html`, AI health `http://localhost:8000/internal/v1/health`입니다. Compose 기본값은 실제 API 모드, `AI_PROVIDER=ollama`, `bge-m3:latest`, `qwen2.5:7b-instruct`이며 Ollama 오류를 fixture로 숨기지 않습니다.
 
-## 로컬 확인
+## PM → 검토자 확인 순서
 
-- Frontend: http://localhost:5173
-- Backend health: http://localhost:8080/actuator/health
-- AI health: http://localhost:8000/internal/v1/health
-- Swagger: http://localhost:8080/swagger-ui/index.html
+1. Frontend에서 상품 담당자(`PRODUCT_MANAGER`)로 들어가 상품을 등록합니다.
+2. 위 상품 입력 PDF를 업로드하고 추출 완료 후 텍스트를 확인·확정합니다.
+3. 공식 사실 후보를 확인하고, 위 근거 문서 3개를 선택해 분석을 한 번 요청합니다.
+4. 상태가 `COMPLETED`가 될 때까지 확인한 뒤 결과의 **RAG 검색 근거**에서 검색 버전, 임베딩 모델, 검색어 해시, 검색 시각과 rank별 청크를 검사합니다.
+5. 각 Finding의 `evidenceDocumentId`와 `excerpt`가 모델이 선택한 검색 청크의 문서 ID와 불변 원문 전체로 서버에서 해석되었는지 대조하고 검토 요청을 제출합니다.
+6. 역할을 컴플라이언스 검토자(`COMPLIANCE_REVIEWER`)로 바꾸어 검토함의 요청을 열고, 판매 원문 → 검색 청크 → Finding 인용을 다시 대조한 뒤 승인 또는 반려합니다.
+7. 승인 시에도 Risk Pattern 승격과 GuardFit DRAFT/APPROVED는 별도의 사람 결정임을 확인합니다.
 
-## 작업 상태
+API 감사 시 `GET /api/analyses/{analysisId}/result` 응답의 `retrievalTrace`를 봅니다. `queryHash`, `retrievalVersion`, `embeddingModel`, `retrievedAt`, `contexts[]`의 `chunkId`, 문서 ID, rank, similarity, `excerpt`가 분석 시점 스냅샷입니다. 모델은 이 검색 스냅샷에 포함된 불변 `chunkId`만 Finding 근거로 선택하고, 백엔드는 선택 ID가 AI 서비스로 보낸 바로 그 스냅샷에 속하는지 검증한 뒤 해당 청크의 정확한 문서 ID와 원문을 영속합니다. 모델이 원문 인용을 다시 생성하거나 byte-for-byte 복사하는 계약은 아닙니다. UI와 API는 종전과 같이 서버가 해석한 `evidenceDocumentId`와 `excerpt`를 노출하므로 소스 코드를 읽지 않고 검색 경로를 감사할 수 있습니다.
 
-- 완료: Compose 기반 PostgreSQL·Spring·Frontend 실행 환경
-- 완료: 감사 로그 조회·상태 변경 기록
-- 완료: 실제 Ollama 분석 제공자 연결
-- 완료: 확정 문서 기반 공식 사실 검증
-- 진행: Frontend 실서버 API 어댑터·브라우저 E2E
+## 초기화와 재색인
+
+```bash
+docker compose down                  # 컨테이너만 종료, postgres-data 유지
+docker compose down -v               # DB·청크·검색 스냅샷까지 완전 삭제
+docker compose up --build -d          # Flyway 스키마/합성 seed 재생성
+```
+
+별도 reindex 명령은 없습니다. 분석 시작 시 선택 근거를 색인합니다. 같은 원문 해시·청크 버전·임베딩 모델의 완전한 청크 집합은 재사용하고, 원문 또는 모델이 달라지면 새 버전으로 색인합니다. 깨끗한 재색인이 필요하면 `down -v` 후 재기동하고 새 분석을 요청합니다. `down -v`는 상품, 분석, 검토, 감사 기록도 모두 지우는 파괴적 동작입니다.
+
+## 실제 확인과 Mock 확인 구분
+
+- **실제 RAG 확인:** 위 Compose 스택에서 실제 PDF 업로드 → 분석 완료 → `retrievalTrace`/Finding 인용 감사. Ollama 두 모델과 pgvector를 모두 사용합니다.
+- **도달성만 확인:** `frontend/scripts/real-e2e-preflight.mjs`. health endpoint만 확인합니다.
+- **Mock/격리 회귀:** `frontend/scripts/smoke.mjs`, `frontend/scripts/ai-test.mjs`, `frontend/scripts/real-adapter-e2e.mjs`, 백엔드 테스트의 fake provider/embedding 대역, AI 서비스 pytest의 fixture 또는 HTTP monkeypatch. 실제 Ollama+pgvector E2E 통과 증거가 아닙니다.
+- **별도 실험:** `frontend/scripts/analyze-live.mjs`와 브라우저 직접 AI 옵션은 프론트 로컬 실험이며 서버의 genuine RAG 경로를 검증하지 않습니다.
+
+여기 적힌 명령은 실행 절차이며, 이 문서는 실행 성공을 주장하지 않습니다.
+
+## 알려진 제한
+
+- 로컬 모델 출력은 비결정적이며 하드웨어에 따라 최초 모델 로드와 분석 시간이 길 수 있습니다.
+- 검색은 사용자가 선택한 활성 근거 문서 안에서만 top 6을 고르며, 작은 합성 코퍼스의 기대 사례가 실제 문서 품질을 대표하지 않습니다.
+- PDF 바이너리는 업로드 뒤 서버에 보존되지 않고 추출 텍스트/체크섬 중심으로 처리됩니다. 스캔 품질과 OCR은 별도 검증 대상입니다.
+- similarity는 관련도 신호이지 법적 정확성, 사실성, 승인 여부가 아닙니다. 결과와 GuardFit은 검토자 승인 전 후보입니다.
+- `host.docker.internal` 연결은 로컬 Docker/Ollama 설정의 영향을 받습니다. 원격·운영 배포, 인증, 개인정보, 모델 라이선스/자원 계획은 이 데모 범위 밖입니다.

@@ -37,7 +37,7 @@ class ProviderResponseInvalidError(AiServiceError):
 
 
 class RiskAnalysisService:
-    OLLAMA_PROMPT_VERSION = "ollama-grounded-v1"
+    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v5"
 
     def __init__(
         self,
@@ -45,7 +45,7 @@ class RiskAnalysisService:
         http_client: httpx.Client | None = None,
     ) -> None:
         self.fixture_loader = fixture_loader or FixtureLoader()
-        provider_value = os.getenv("AI_PROVIDER", AnalysisProvider.FIXTURE.value)
+        provider_value = os.getenv("AI_PROVIDER", AnalysisProvider.OLLAMA.value)
         try:
             self.provider = AnalysisProvider(provider_value.strip().lower())
         except ValueError as error:
@@ -114,29 +114,39 @@ class RiskAnalysisService:
             "You are a financial-product sales risk analyst. Return only JSON "
             "that conforms exactly to the supplied JSON schema. Analyze only "
             "the confirmedText, selected personas and rules, and evidence "
-            "documents in the user message. Do not use unstated facts. Every "
-            "finding must cite at least one supplied evidence document, use "
-            "its exact positive integer id, and quote an exact non-empty "
-            "excerpt from that document's content. knownFactIds may contain "
-            "only exact factId values supplied in knownFacts; leave it empty "
-            "rather than inventing or substituting a fact reference. "
+            "contexts retrieved in the user message. Never infer or request "
+            "the full evidence documents. Do not use unstated facts. Every "
+            "retrievedContextChunkIds entry must be a chunkId selected exactly "
+            "from retrievedContexts. Use only chunkId values present in "
+            "retrievedContexts; never invent, alter, or substitute an ID. "
+            "One well-grounded finding is sufficient. "
+            "Never quote confirmedText or any other product text as evidence. "
+            "Do not cite unknown or unretrieved contexts. knownFactIds "
+            "may contain only exact factId values supplied in knownFacts; "
+            "leave it empty rather than inventing or substituting a fact "
+            "reference. "
             "affectedPersonaCodes may "
             "contain only selected personaCodes. Set modelVersion to "
             f"{json.dumps(self.ollama_model)} and promptVersion to "
             f"{json.dumps(self.OLLAMA_PROMPT_VERSION)}."
         )
+        user_payload = request.model_dump(mode="json", by_alias=True)
         payload: dict[str, Any] = {
             "model": self.ollama_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": request.model_dump_json(by_alias=True),
+                    "content": json.dumps(
+                        user_payload,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
                 },
             ],
             "format": response_schema,
             "stream": False,
-            "options": {"temperature": 0},
+            "options": {"temperature": 0, "seed": 42},
         }
 
         try:
@@ -172,23 +182,22 @@ class RiskAnalysisService:
         response: RiskAnalysisResponse,
     ) -> None:
         selected_personas = set(request.persona_codes)
-        evidence_by_id = {
-            document.id: document for document in request.evidence_documents
+        selected_evidence = set(request.selected_evidence_document_ids)
+        contexts_by_chunk_id = {
+            context.chunk_id: context for context in request.retrieved_contexts
         }
 
         for finding in response.findings:
             if not set(finding.affected_persona_codes) <= selected_personas:
                 raise ValueError("Finding contains an unselected persona.")
-            if not finding.evidence_references:
+            if not finding.retrieved_context_chunk_ids:
                 raise ValueError("Finding is missing source evidence.")
-            for reference in finding.evidence_references:
-                document = evidence_by_id.get(reference.evidence_document_id)
-                if document is None:
-                    raise ValueError("Finding cites unknown evidence.")
-                excerpt = " ".join(reference.excerpt.split())
-                content = " ".join(document.content.split())
-                if excerpt not in content:
-                    raise ValueError("Evidence excerpt is not a source quote.")
+            for chunk_id in finding.retrieved_context_chunk_ids:
+                context = contexts_by_chunk_id.get(chunk_id)
+                if context is None:
+                    raise ValueError("Finding cites an unretrieved context.")
+                if context.evidence_document_id not in selected_evidence:
+                    raise ValueError("Finding cites unselected evidence.")
         RiskAnalysisService._validate_fact_references(request, response)
 
     @staticmethod

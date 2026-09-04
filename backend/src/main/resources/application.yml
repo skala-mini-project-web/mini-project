@@ -39,6 +39,15 @@ ai-service:
   # X-Demo-Scenario 헤더가 없을 때 사용할 기본 Fixture 시나리오
   default-scenario-code: GUARANTEE_MISUNDERSTANDING_HIGH
 
+rag:
+  ollama:
+    base-url: http://localhost:11434
+    embedding-model: bge-m3:latest
+    embedding-dimension: 1024
+    connect-timeout: 2s
+    read-timeout: 30s
+  retrieval-version: rag-v1
+
 server:
   port: 8080
 

@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { PhArrowLeft, PhCheck, PhLightning } from '@phosphor-icons/vue'
+import { PhArrowLeft, PhArrowClockwise, PhCheck, PhLightning, PhWarningCircle } from '@phosphor-icons/vue'
 import { api } from '@/api'
 import { useToastStore } from '@/stores/toast'
 import { useJobsStore } from '@/stores/jobs'
@@ -17,6 +17,7 @@ const props = defineProps({ productId: { type: String, required: true } })
 const router = useRouter()
 const toast = useToastStore()
 const loading = ref(true)
+const loadError = ref(null)
 const submitting = ref(false)
 const docs = ref([]); const evidence = ref([]); const personas = ref([]); const packs = ref([]); const productName = ref('')
 const facts = ref([])
@@ -34,7 +35,9 @@ async function loadFacts() {
   facts.value = selDoc.value ? (await api.listGroundTruthFacts(selDoc.value)).items : []
 }
 
-onMounted(async () => {
+onMounted(load)
+async function load() {
+  loading.value = true
   try {
     const [product, ev, ps, pk] = await Promise.all([api.getProduct(props.productId), api.listEvidenceDocuments({ active: true }), api.listPersonaTemplates(), api.listRedTeamPacks()])
     productName.value = product.name
@@ -45,8 +48,14 @@ onMounted(async () => {
     if (personas.value.length) selPer.value = personas.value.slice(0, 2).map((p) => p.personaId)
     if (packs.value.length) selPack.value = packs.value[0].redTeamPackId
     await loadFacts()
-  } catch (e) { toast.fromError(e) } finally { loading.value = false }
-})
+    loadError.value = null
+  } catch (e) {
+    loadError.value = e
+    toast.fromError(e)
+  } finally {
+    loading.value = false
+  }
+}
 watch(selDoc, () => loadFacts().catch((error) => toast.fromError(error)))
 async function verifyFact(fact, verificationStatus) {
   try {
@@ -76,6 +85,18 @@ async function submit() {
     <header class="top"><h1 class="d-h1">분석 요청</h1><p class="t-base soft sub">확정 문서와 승인 근거, Persona, Red Team Pack을 묶어 분석을 시작합니다.</p></header>
 
     <div v-if="loading" class="pad"><GSpinner :size="24" /></div>
+
+    <div v-else-if="loadError" class="load-fail" role="alert">
+      <PhWarningCircle :size="22" class="load-fail-i" />
+      <div class="grow">
+        <p class="t-base fw-semibold">분석 요청 정보를 불러오지 못했습니다</p>
+        <p class="t-sm soft">{{ loadError.message || '잠시 후 다시 시도해 주세요.' }}</p>
+        <p v-if="loadError.errorCode" class="mono error-code">{{ loadError.errorCode }}</p>
+      </div>
+      <GButton variant="secondary" size="sm" @click="load">
+        <template #icon><PhArrowClockwise :size="15" /></template>다시 시도
+      </GButton>
+    </div>
 
     <div v-else-if="!docs.length" class="empty-doc">
       <p class="t-base">확정된 문서가 없습니다. 문서 추출 텍스트를 먼저 확정하세요.</p>
@@ -163,6 +184,9 @@ async function submit() {
 .back:hover { color: var(--ink); }
 .top .kicker { margin-bottom: var(--s-10); } .sub { margin-top: var(--s-12); max-width: 56ch; }
 .pad { display: grid; place-items: center; padding: var(--s-64); }
+.load-fail { margin-top: var(--s-40); padding: var(--s-24); border: 1px solid var(--risk-high-wash); background: var(--risk-high-wash); border-radius: var(--r-lg); display: flex; align-items: center; gap: var(--s-16); }
+.load-fail-i { color: var(--risk-high); flex: none; }
+.error-code { margin-top: 4px; color: var(--ink-mute); font-size: var(--text-xs); }
 .empty-doc { margin-top: var(--s-40); padding: var(--s-28); border: 1px solid var(--line); border-radius: var(--r-lg); display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-16); }
 .blk { margin-top: var(--s-40); }
 .engine { display: flex; gap: var(--s-12); align-items: flex-start; margin-top: var(--s-16); padding: var(--s-16); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; }

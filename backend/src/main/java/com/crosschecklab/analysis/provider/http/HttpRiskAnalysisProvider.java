@@ -47,7 +47,7 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
         this.objectMapper = objectMapper;
     }
 
-    // 요청 본문에 확정 텍스트와 근거 문서 원문이 실리므로 평문 전송은 로컬 개발에서만 허용한다.
+    // 요청 본문에 확정 텍스트와 검색된 근거 청크가 실리므로 평문 전송은 로컬 개발에서만 허용한다.
     private static void requireSecureTransport(String baseUrl, boolean allowInsecureHttp) {
         URI uri = URI.create(baseUrl);
         String host = uri.getHost();
@@ -111,8 +111,12 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
         if (result.riskScore() < 0 || result.riskScore() > 100) {
             throw invalid("riskScore 범위 초과: " + result.riskScore());
         }
-        Set<Long> selected = request.evidenceDocuments().stream()
-                .map(AnalysisRequest.EvidenceDocumentPayload::id).collect(Collectors.toSet());
+        List<AnalysisRequest.RetrievedContextPayload> contexts = request.retrievedContexts() == null
+                ? List.of() : request.retrievedContexts();
+        Set<Long> retrievedChunkIds = contexts.stream()
+                .filter(context -> context != null && context.chunkId() != null)
+                .map(AnalysisRequest.RetrievedContextPayload::chunkId)
+                .collect(Collectors.toSet());
         Set<Long> knownFacts = request.knownFacts() == null ? Set.of() : request.knownFacts().stream()
                 .map(AnalysisRequest.KnownFactPayload::factId).collect(Collectors.toSet());
 
@@ -120,18 +124,23 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
             if (finding == null || finding.severity() == null) {
                 throw invalid("finding 또는 severity 가 비어 있음");
             }
-            List<FindingPayload.EvidenceRefPayload> references =
-                    finding.evidenceReferences() == null ? List.of() : finding.evidenceReferences();
-            if (finding.severity() == Severity.HIGH && references.isEmpty()) {
+            if (finding.retrievedContextChunkIds() == null) {
+                throw invalid("finding 에 retrievedContextChunkIds 가 없음");
+            }
+            List<Long> citedChunkIds = finding.retrievedContextChunkIds();
+            if (finding.severity() == Severity.HIGH && citedChunkIds.isEmpty()) {
                 throw invalid("HIGH Finding 에 근거 인용이 없음");
             }
-            // 선택하지 않은 근거를 인용하면 결과 조회에서 그 문서의 제목·출처가 노출된다.
-            for (FindingPayload.EvidenceRefPayload reference : references) {
-                if (reference == null || reference.evidenceDocumentId() == null) {
-                    throw invalid("근거 인용에 evidenceDocumentId 가 없음");
+            Set<Long> uniqueCitedChunkIds = new HashSet<>();
+            for (Long chunkId : citedChunkIds) {
+                if (chunkId == null) {
+                    throw invalid("근거 인용에 retrievedContextChunkId 가 없음");
                 }
-                if (!selected.contains(reference.evidenceDocumentId())) {
-                    throw invalid("선택하지 않은 근거 문서 인용: " + reference.evidenceDocumentId());
+                if (!uniqueCitedChunkIds.add(chunkId)) {
+                    throw invalid("중복된 검색 근거 청크 인용: " + chunkId);
+                }
+                if (!retrievedChunkIds.contains(chunkId)) {
+                    throw invalid("요청에서 검색되지 않은 근거 청크 인용: " + chunkId);
                 }
             }
             Set<Long> citedFacts = new HashSet<>();

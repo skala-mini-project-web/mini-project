@@ -1,0 +1,128 @@
+{
+  "schemaVersion": "1.0",
+  "corpusId": "argus.issue-59.canonical-demo",
+  "synthetic": true,
+  "demoOnly": true,
+  "authorityDisclaimer": "검색 결과는 합성 데모 자료의 회귀 검증용이며 실제 금융·법률 근거나 규제기관 판단이 아닙니다.",
+  "cases": [
+    {
+      "caseId": "rag-stability-guarantee",
+      "purpose": "안정·보장 표현과 반대되는 손실 고지를 검색한다.",
+      "query": "매월 수익을 보장하는 안정형 선택이며 원금이 안전한가요?",
+      "productLogicalId": "product.smart-income.sales",
+      "selectedEvidenceDocumentIds": [1, 2, 3],
+      "selectedEvidenceMappings": [
+        {"logicalId": "evidence.smart-income.product-policy", "evidenceDocumentId": 3},
+        {"logicalId": "evidence.important-info-display-policy", "evidenceDocumentId": 1},
+        {"logicalId": "evidence.financial-consumer-explanation-duty-excerpt", "evidenceDocumentId": 2}
+      ],
+      "expected": {
+        "result": "MATCH",
+        "requiredLogicalIds": [
+          "evidence.smart-income.product-policy",
+          "evidence.important-info-display-policy"
+        ],
+        "requiredExactAnchors": [
+          "“매월 수익을 보장하는 안정형 선택”, “원금 안전”, “손실 없는 월수익”은 단독 또는 강조 형태로 사용할 수 없다.",
+          "“안정”, “보장”, “확정”과 같은 표현이 있으면 원금손실 가능성과 변동 수익 정정문을 같은 페이지, 같은 화면, 같은 음성 구간에 표시한다."
+        ]
+      }
+    },
+    {
+      "caseId": "rag-early-termination-cost",
+      "purpose": "중도 종료의 기간별 정률 비용과 시장가치 조정을 함께 검색한다.",
+      "query": "가입 15일째 중도 종료하면 비용과 지급액은 얼마인가요?",
+      "productLogicalId": "product.smart-income.sales",
+      "selectedEvidenceDocumentIds": [1, 2, 3],
+      "selectedEvidenceMappings": [
+        {"logicalId": "evidence.smart-income.product-policy", "evidenceDocumentId": 3},
+        {"logicalId": "evidence.important-info-display-policy", "evidenceDocumentId": 1},
+        {"logicalId": "evidence.financial-consumer-explanation-duty-excerpt", "evidenceDocumentId": 2}
+      ],
+      "expected": {
+        "result": "MATCH",
+        "requiredLogicalIds": ["evidence.smart-income.product-policy"],
+        "requiredExactAnchors": [
+          "정률 비용은 투자원금 기준으로 가입일부터 30일 이내 3.0%, 31~90일 2.0%, 91~180일 1.0%, 181일 이후 0.0%이다.",
+          "투자원금 10,000,000원, 가입 15일째 종료, 시장가치 9,200,000원인 합성 사례의 정률 비용은 300,000원이고 지급 예시는 8,900,000원이다."
+        ]
+      }
+    },
+    {
+      "caseId": "rag-clear-disclosure",
+      "purpose": "명확한 손실·변동·비용 고지를 뒷받침하는 검색 근거를 제공한다.",
+      "query": "원금 전부 또는 일부 손실, 분배금 0원, 비확정 수익률과 중도 종료 비용을 같은 흐름에서 안내",
+      "productLogicalId": "product.smart-income.sales",
+      "selectedEvidenceDocumentIds": [1, 2, 3],
+      "selectedEvidenceMappings": [
+        {"logicalId": "evidence.smart-income.product-policy", "evidenceDocumentId": 3},
+        {"logicalId": "evidence.important-info-display-policy", "evidenceDocumentId": 1},
+        {"logicalId": "evidence.financial-consumer-explanation-duty-excerpt", "evidenceDocumentId": 2}
+      ],
+      "expected": {
+        "result": "MATCH",
+        "requiredLogicalIds": [
+          "evidence.smart-income.product-policy",
+          "evidence.financial-consumer-explanation-duty-excerpt"
+        ],
+        "analysisExpectation": "NO_HIGH_RISK"
+      }
+    },
+    {
+      "caseId": "rag-out-of-domain-no-result",
+      "purpose": "선택된 근거가 없는 범위 밖 질문에는 검색 결과를 만들지 않는다.",
+      "query": "내일 서울의 합성 야구 경기와 날씨를 알려 주세요.",
+      "productLogicalId": "product.smart-income.sales",
+      "selectedEvidenceDocumentIds": [],
+      "selectedEvidenceMappings": [],
+      "expected": {
+        "result": "NO_RESULT",
+        "resultCount": 0,
+        "reason": "NO_SELECTED_IN_DOMAIN_EVIDENCE"
+      }
+    },
+    {
+      "caseId": "rag-inactive-evidence-exclusion",
+      "purpose": "비활성 근거는 선택 ID에 포함되어도 후보에서 제외한다.",
+      "query": "안정 또는 보장 표현의 표시 위치는 어디인가요?",
+      "productLogicalId": "product.smart-income.sales",
+      "selectedEvidenceDocumentIds": [1, 3],
+      "selectedEvidenceMappings": [
+        {"logicalId": "evidence.smart-income.product-policy", "evidenceDocumentId": 3},
+        {"logicalId": "evidence.important-info-display-policy", "evidenceDocumentId": 1}
+      ],
+      "precondition": {
+        "evidenceDocumentId": 1,
+        "active": false
+      },
+      "expected": {
+        "result": "MATCH",
+        "excludedEvidenceDocumentIds": [1],
+        "eligibleEvidenceDocumentIds": [3],
+        "mustNotReturnLogicalIds": ["evidence.important-info-display-policy"]
+      }
+    },
+    {
+      "caseId": "rag-changed-hash-reindex",
+      "purpose": "정규화된 전체 본문이 바뀌면 새 source hash로 재색인하고 최신 청크만 검색한다.",
+      "query": "원금손실과 중도 종료 비용",
+      "productLogicalId": "product.smart-income.sales",
+      "selectedEvidenceDocumentIds": [3],
+      "selectedEvidenceMappings": [
+        {"logicalId": "evidence.smart-income.product-policy", "evidenceDocumentId": 3}
+      ],
+      "precondition": {
+        "evidenceDocumentId": 3,
+        "originalSourceHash": "36c401902e6d25caa6023a0f5c41f932a6542a9c173bcc4599d62b82f6cf58a4",
+        "mutation": "정규화된 content 끝에 합성 재색인 검증 문장 한 줄을 추가한다."
+      },
+      "expected": {
+        "result": "MATCH",
+        "indexingOutcome": "INDEXED_NEW_SOURCE",
+        "sourceHash": {"notEqual": "36c401902e6d25caa6023a0f5c41f932a6542a9c173bcc4599d62b82f6cf58a4"},
+        "returnedSourcePolicy": "LATEST_ONLY",
+        "historicalChunksMayRemainAuditable": true
+      }
+    }
+  ]
+}
