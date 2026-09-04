@@ -24,7 +24,7 @@
       })
       if (!response.ok) throw new Error(`Demo session failed: ${response.status}`)
       localStorage.setItem('guardlab.session', JSON.stringify(await response.json()))
-      location.replace('/products?demo=prepared')
+      location.replace(`/products?demo=prepared&fresh=${Date.now()}`)
     })().catch((error) => {
       document.querySelector('.card').innerHTML = `<h1>초기화 실패</h1><p>${error.message}</p>`
     })
