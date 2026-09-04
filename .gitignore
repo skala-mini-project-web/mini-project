@@ -1,2 +1,7 @@
 # Local agent session state
 .gjc/
+
+# Local environment and editor files
+.env
+.idea/
+.DS_Store
