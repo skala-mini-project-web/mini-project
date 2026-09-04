@@ -47,6 +47,67 @@ node frontend/scripts/real-e2e-preflight.mjs
 
 Preflight는 Spring과 AI 서비스의 도달 가능성만 검사합니다. 모델 호출, pgvector 검색, 업무 E2E 성공을 보증하지 않습니다. 기본 주소는 Frontend `http://localhost:5173`, Swagger `http://localhost:8080/swagger-ui/index.html`, AI health `http://localhost:8000/internal/v1/health`입니다. Compose 기본값은 실제 API 모드, `AI_PROVIDER=ollama`, `bge-m3:latest`, `qwen2.5:7b-instruct`이며 Ollama 오류를 fixture로 숨기지 않습니다.
 
+## `Persona + Red Team 분석 시작`을 누르면 일어나는 일
+
+이 버튼은 화면용 점수 계산이나 Mock 결과 선택이 아닙니다. PM이 확정 상품 문서, 활성 근거 문서 1~3개, Persona 1~3개, Red Team Pack을 선택하면 backend가 `POST /api/analyses`를 받고 비동기 분석을 시작합니다.
+
+```text
+선택·검증
+  → 분석 입력 fingerprint + Idempotency-Key
+  → 선택 근거 chunk indexing
+  → 상품 텍스트·Persona·rule 기반 pgvector top-6 retrieval
+  → 검색 chunk만 Ollama에 전달
+  → 구조화된 Finding + retrievedContextChunkIds
+  → backend scope 검증·immutable snapshot 저장
+  → 결과 화면·검토 요청
+```
+
+1. **입력 검증**: 확정되지 않은 문서, 비활성 근거, 1~3개 범위를 벗어난 Persona/근거, VERIFIED 사실이 없는 요청은 분석 전에 거부합니다.
+2. **중복 방지**: `Idempotency-Key`와 의미적으로 정규화한 입력 fingerprint를 함께 사용합니다. 같은 key와 같은 요청은 기존 analysis ID를 재생하고, 같은 key를 다른 요청에 재사용하면 409입니다. 근거 문서의 source hash도 fingerprint에 포함하므로 근거 본문이 바뀌면 예전 입력과 동일하게 취급하지 않습니다.
+3. **검색**: 선택된 활성 근거만 결정론적으로 chunking·embedding하고, 확정 상품 텍스트 + Persona code + Red Team rule code로 query를 만들어 pgvector cosine top-6을 검색합니다. 전체 근거 문서를 LLM 프롬프트에 넣지 않으며, 검색 결과가 없거나 embedding이 실패하면 분석은 실패 상태와 retryable 정보를 남깁니다.
+4. **AI 분석**: FastAPI AI service는 검색된 `chunkId`, 문서 ID, rank, similarity, 원문만 Ollama에 전달합니다. 모델은 위험 statement·severity·대상 Persona·recommendation과 함께 **전달받은 `retrievedContextChunkIds`만** 선택해야 합니다.
+5. **서버 검증과 결과**: backend는 모델이 선택한 chunk ID가 실제 outbound retrieval snapshot 안에 있는지, Persona/공식 사실 ID가 요청 범위 안에 있는지 검증합니다. 통과한 ID는 서버가 immutable chunk snapshot의 정확한 문서 ID·원문으로 해석해 Finding과 `retrievalTrace`에 저장합니다. 모델이 근거 문장을 새로 만들거나, 검색하지 않은 문서를 인용할 수 없습니다.
+6. **사람 결정**: PM은 결과와 RAG 검색 근거를 보고 검토 요청을 제출합니다. reviewer는 같은 retrieval trace를 확인하고 Finding을 승인 또는 반려합니다. 승인 Finding만 Risk Pattern이 되고, GuardFit은 reviewer가 별도로 승인해야 PM에게 보입니다.
+
+분석 실행마다 새 `execution_token`을 발급합니다. retry가 시작된 뒤 이전 worker가 늦게 끝나도 새 결과를 덮어쓸 수 없습니다. `COMPLETED`/`FAILED` 상태와 해당 terminal audit event는 같은 DB transaction으로 기록합니다.
+
+## Persona는 무엇이고 어떻게 구현했나
+
+Persona는 LLM에게 임의의 역할극 문장을 붙이는 기능이 아니라, **어떤 소비자 관점에서 오해·손실·접근성 위험을 점검할지 제한하는 활성 기준 데이터**입니다.
+
+| Persona | 저장된 criteria | 위험 초점 |
+| --- | --- | --- |
+| 금융 초보자 | 금융 이해도 낮음, 투자 경험 없음 | 확정수익·원금보장 오해 |
+| 고령 금융소비자 | 디지털 이해도 낮음, 안정성 선호 높음 | 안정성 표현 오해·인지 접근성 |
+| 손실 경험자 | 위험 민감도·손실 회복 욕구 높음 | 손실 범위 인식·위험 민감도 |
+| 단기 자금 필요 | 유동성 필요 높음, 투자 기간 짧음 | 중도해지 비용·유동성 제약 |
+| 자영업자 | 소득 안정성 낮음, 현금흐름 민감 | 금리 변동·납부 조건·현금흐름 |
+
+- 기준 데이터는 `persona_templates`에 `code`, `criteria`, `risk_focus`, `active`로 저장됩니다.
+- UI는 `GET /api/persona-templates`의 실제 활성 템플릿을 읽어 보여주며, 분석 요청에는 template ID를 보냅니다.
+- backend는 활성 template만 허용하고 code로 변환해 AI request에 넣습니다.
+- 모델이 Finding의 `affectedPersonaCodes`에 선택하지 않은 Persona를 넣으면 provider contract 위반으로 결과를 저장하지 않습니다.
+- Persona 선택 1~3개와 Red Team rule은 retrieval query와 LLM 분석 조건에 모두 포함됩니다. 즉 결과의 Persona 표시는 화면 장식이 아니라 서버가 검증한 분석 입력·출력 범위입니다.
+
+## Red Team Pack은 무엇을 점검하나
+
+기본 `CORE_FINANCIAL_RISK_V1` Pack은 다음 6개 rule을 활성 기준으로 제공합니다.
+
+- `RETURN_FRAMING`: 수익을 위험보다 먼저·크게 강조하는지
+- `LOSS_SOFTENING`: 손실 가능성을 추상적으로 완화하는지
+- `COST_OMISSION`: 수수료·해지 비용이 누락·분산되는지
+- `STABILITY_KEYWORD`: 안정·보장 유사 표현으로 오인을 유발하는지
+- `FORMAL_CONFIRMATION`: 체크박스만으로 이해를 간주하는지
+- `COGNITIVE_ACCESSIBILITY`: 긴 문장·작은 글씨·전문용어가 집중되는지
+
+Pack과 rule도 DB의 활성 기준 데이터입니다. 분석 요청에 선택된 Pack의 활성 rule만 AI service로 전달되며, 모델이 반환한 결과는 선택 Persona·rule·검색 chunk·공식 사실 범위를 동시에 벗어날 수 없습니다.
+
+## 실제 서비스인지, Mock인지 확인하는 방법
+
+Compose 기본 실행은 `VITE_USE_MOCK=false`, `AI_PROVIDER=ollama`입니다. `http://localhost:8000/internal/v1/health`가 `{"status":"UP","provider":"ollama"}`를 반환하는지 먼저 확인합니다. fixture provider는 명시적으로 test/mock mode를 선택한 경우에만 사용하며, Ollama·embedding 오류를 fixture 결과로 대체하지 않습니다.
+
+실제 동작의 재현 가능한 증거는 `frontend/scripts/real-rag-full-flow-e2e.mjs`입니다. 이 스크립트는 API interception이나 `mockServer` 없이 canonical PDF를 실제 file chooser로 업로드하고, PDFBox 추출 → 사실 검증 → pgvector RAG → Ollama 분석 → 독립 PM/reviewer browser context → Risk Pattern → GuardFit → PM 확인까지 실행합니다. page error, request failure, 예상 밖 4xx/5xx도 실패로 처리합니다. 검토가 아직 없을 때의 `GET /api/analyses/{id}/review` 404 `REVIEW_NOT_FOUND`만 정상적인 초기 상태로 기록합니다.
+
 ## PM → 검토자 확인 순서
 
 1. Frontend에서 상품 담당자(`PRODUCT_MANAGER`)로 들어가 상품을 등록합니다.
