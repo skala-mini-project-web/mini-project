@@ -73,7 +73,7 @@ async def handle_request_validation_error(
     tags=["operations"],
 )
 def health() -> HealthResponse:
-    return HealthResponse(status="UP", provider="fixture")
+    return analysis_service.health()
 
 
 @app.post(

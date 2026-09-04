@@ -1,8 +1,8 @@
 # AI Service
 
-Spring Boot 백엔드가 내부 HTTP로 호출하는 독립형 FastAPI Mock 분석
-서비스입니다. 현재 MVP에서는 실제 LLM이나 RAG를 호출하지 않고,
-`scenarioCode`에 대응하는 고정 JSON Fixture를 반환합니다.
+Spring Boot 백엔드가 내부 HTTP로 호출하는 독립형 FastAPI 분석
+서비스입니다. 기본 모드는 `scenarioCode`에 대응하는 고정 JSON Fixture를
+반환하며, 명시적으로 설정하면 로컬 Ollama 모델을 호출합니다.
 
 ## 책임 범위
 
@@ -20,7 +20,7 @@ Spring Boot 백엔드의 책임이며 이 서비스는 DB에 직접 접근하지
 | Method | Path | 설명 |
 | --- | --- | --- |
 | `GET` | `/internal/v1/health` | 서비스 상태 확인 |
-| `POST` | `/internal/v1/risk-analyses` | Fixture 기반 위험 분석 |
+| `POST` | `/internal/v1/risk-analyses` | 위험 분석 (기본 Fixture, 선택적 Ollama) |
 | `GET` | `/docs` | Swagger UI |
 
 지원하는 `scenarioCode`는 다음과 같습니다.
@@ -42,6 +42,26 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
+```
+
+기본값은 기존 JSON Fixture provider입니다. 로컬 Ollama의 실제 모델로
+분석하려면 Ollama에 `qwen2.5:7b-instruct`가 설치되고
+`http://127.0.0.1:11434`에서 실행 중인 상태에서 다음 환경으로
+서비스를 시작합니다. Ollama 모드에서는 provider 오류 시 Fixture로
+대체하지 않습니다.
+
+```bash
+export AI_PROVIDER=ollama
+export OLLAMA_BASE_URL=http://127.0.0.1:11434
+export OLLAMA_MODEL=qwen2.5:7b-instruct
+uvicorn app.main:app --reload
+```
+
+선택한 provider와 모델의 접근 가능 여부는 다음 명령으로 검증합니다.
+성공 응답은 `{"status":"UP","provider":"ollama"}`입니다.
+
+```bash
+curl --fail http://127.0.0.1:8000/internal/v1/health
 ```
 
 ## 테스트

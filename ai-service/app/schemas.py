@@ -16,6 +16,11 @@ class ApiModel(BaseModel):
     )
 
 
+class AnalysisProvider(StrEnum):
+    FIXTURE = "fixture"
+    OLLAMA = "ollama"
+
+
 class PersonaCode(StrEnum):
     FINANCIAL_BEGINNER = "FINANCIAL_BEGINNER"
     SENIOR = "SENIOR"
@@ -144,7 +149,7 @@ class RiskAnalysisResponse(ApiModel):
 
 class HealthResponse(ApiModel):
     status: str
-    provider: str
+    provider: AnalysisProvider
 
 
 class ErrorResponse(ApiModel):
