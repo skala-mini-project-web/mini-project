@@ -87,7 +87,7 @@ class RiskAnalysisRequest(ApiModel):
     analysis_id: int = Field(gt=0)
     scenario_code: str = Field(min_length=1, max_length=80)
     confirmed_text: str = Field(min_length=1)
-    persona_codes: list[PersonaCode] = Field(min_length=1, max_length=3)
+    persona_codes: list[PersonaCode] = Field(min_length=1, max_length=4)
     red_team_pack_code: RedTeamPackCode
     rule_codes: list[RedTeamRuleCode] = Field(min_length=1)
     selected_evidence_document_ids: list[int] = Field(

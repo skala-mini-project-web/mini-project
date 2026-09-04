@@ -769,7 +769,7 @@ export const mockServer = {
     const ev = body.evidenceDocumentIds || []
     const personas = body.personaIds || []
     if (ev.length < 1 || ev.length > 3) throw new ApiError({ status: 400, errorCode: 'INVALID_SELECTION_COUNT', message: '근거 문서는 1~3건 선택해야 합니다.' })
-    if (personas.length < 1 || personas.length > 3) throw new ApiError({ status: 400, errorCode: 'INVALID_SELECTION_COUNT', message: 'Persona는 1~3개 선택해야 합니다.' })
+    if (personas.length < 1 || personas.length > 4) throw new ApiError({ status: 400, errorCode: 'INVALID_SELECTION_COUNT', message: 'Persona는 1~4개 선택해야 합니다.' })
     for (const id of ev) {
       const e = store.evidenceDocuments.find((x) => sameId(x.documentId, id))
       if (!e || !e.active) throw new ApiError({ status: 400, errorCode: 'INVALID_EVIDENCE_DOCUMENT', message: '비활성 근거 문서는 사용할 수 없습니다.' })

@@ -144,6 +144,36 @@ def test_rejects_duplicate_persona_codes() -> None:
     assert response.json()["retryable"] is False
 
 
+def test_accepts_four_selected_persona_codes() -> None:
+    request = guarantee_request()
+    request["personaCodes"] = [
+        "FINANCIAL_BEGINNER",
+        "SENIOR",
+        "LOSS_EXPERIENCED",
+        "SHORT_TERM_LIQUIDITY",
+    ]
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert response.status_code == 200
+
+
+def test_rejects_more_than_four_selected_persona_codes() -> None:
+    request = guarantee_request()
+    request["personaCodes"] = [
+        "FINANCIAL_BEGINNER",
+        "SENIOR",
+        "LOSS_EXPERIENCED",
+        "SHORT_TERM_LIQUIDITY",
+        "SELF_EMPLOYED",
+    ]
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert response.status_code == 422
+    assert response.json()["errorCode"] == "REQUEST_VALIDATION_FAILED"
+
+
 def test_rejects_unknown_red_team_pack() -> None:
     request = guarantee_request()
     request["redTeamPackCode"] = "DEFAULT_RED_TEAM_PACK"
