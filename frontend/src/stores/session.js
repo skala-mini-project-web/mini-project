@@ -13,6 +13,10 @@ export const useSessionStore = defineStore('session', {
     role: (s) => s.user?.role || null,
     isPM: (s) => s.user?.role === 'PRODUCT_MANAGER',
     isReviewer: (s) => s.user?.role === 'COMPLIANCE_REVIEWER',
+    owns: (s) => (ownerId) =>
+      s.user?.role === 'PRODUCT_MANAGER' &&
+      ownerId != null &&
+      String(s.user.userId) === String(ownerId),
     roleLabel: (s) =>
       s.user?.role === 'PRODUCT_MANAGER' ? '상품 담당자' : s.user?.role === 'COMPLIANCE_REVIEWER' ? '컴플라이언스 검토자' : '',
   },

@@ -1,4 +1,8 @@
-from fastapi import FastAPI, Request
+import os
+import secrets
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -21,6 +25,28 @@ app = FastAPI(
     ),
 )
 analysis_service = RiskAnalysisService()
+internal_token = os.getenv(
+    "AI_SERVICE_INTERNAL_TOKEN",
+    "crosschecklab-local-internal-token",
+)
+if not internal_token.strip():
+    raise RuntimeError("AI_SERVICE_INTERNAL_TOKEN must not be blank.")
+
+
+def require_internal_token(
+    authorization: Annotated[str | None, Header()] = None,
+) -> None:
+    expected = f"Bearer {internal_token}"
+    if authorization is None or not secrets.compare_digest(
+        authorization,
+        expected,
+    ):
+        raise AiServiceError(
+            error_code="INTERNAL_AUTHENTICATION_REQUIRED",
+            message="A valid internal bearer token is required.",
+            retryable=False,
+            status_code=401,
+        )
 
 
 def error_response(
@@ -80,6 +106,7 @@ def health() -> HealthResponse:
     "/internal/v1/risk-analyses",
     response_model=RiskAnalysisResponse,
     responses={
+        401: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
         422: {"model": ErrorResponse},
         500: {"model": ErrorResponse},
@@ -87,5 +114,8 @@ def health() -> HealthResponse:
     },
     tags=["risk-analysis"],
 )
-def analyze_risk(request: RiskAnalysisRequest) -> RiskAnalysisResponse:
+def analyze_risk(
+    request: RiskAnalysisRequest,
+    _authenticated: Annotated[None, Depends(require_internal_token)],
+) -> RiskAnalysisResponse:
     return analysis_service.analyze(request)

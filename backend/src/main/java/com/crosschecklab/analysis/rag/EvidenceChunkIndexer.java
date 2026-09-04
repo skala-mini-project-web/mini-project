@@ -40,6 +40,7 @@ public class EvidenceChunkIndexer {
         if (selectedIds.isEmpty()) {
             return new IndexingResult(0, 0, 0);
         }
+        String embeddingModel = embeddingClient.embeddingModel();
 
         String placeholders = String.join(",", java.util.Collections.nCopies(selectedIds.size(), "?"));
         List<EvidenceSource> sources = jdbcTemplate.query("""
@@ -59,16 +60,16 @@ public class EvidenceChunkIndexer {
         for (EvidenceSource source : sources) {
             List<ChunkDraft> chunks = chunk(source.content());
             String sourceHash = sha256(normalizeContent(source.content()));
-            Optional<String> latestSource = latestIndexedSource(source.id());
+            Optional<String> latestSource = latestIndexedSource(source.id(), embeddingModel);
             List<String> desiredHashes = chunks.stream().map(ChunkDraft::chunkHash).toList();
 
             if (latestSource.filter(sourceHash::equals).isPresent()) {
-                requireCompleteChunkSet(source.id(), sourceHash, desiredHashes);
+                requireCompleteChunkSet(source.id(), sourceHash, desiredHashes, embeddingModel);
                 unchangedDocuments++;
                 continue;
             }
 
-            List<String> historicalHashes = existingHashes(source.id(), sourceHash);
+            List<String> historicalHashes = existingHashes(source.id(), sourceHash, embeddingModel);
             if (historicalHashes.equals(desiredHashes)) {
                 jdbcTemplate.update("""
                                 update evidence_document_chunks
@@ -76,7 +77,7 @@ public class EvidenceChunkIndexer {
                                 where evidence_document_id = ? and source_hash = ?
                                   and chunking_version = ? and embedding_model = ?
                                 """,
-                        source.id(), sourceHash, CHUNK_VERSION, embeddingClient.embeddingModel());
+                        source.id(), sourceHash, CHUNK_VERSION, embeddingModel);
             } else {
                 if (!historicalHashes.isEmpty()) {
                     throw new IllegalStateException("Indexed evidence chunk set is incomplete for document "
@@ -84,11 +85,13 @@ public class EvidenceChunkIndexer {
                 }
                 List<double[]> embeddings = embeddingClient.embedAll(
                         chunks.stream().map(ChunkDraft::chunkText).toList());
-                insertChunks(source.id(), sourceHash, chunks, embeddings);
+                requireUnchangedModel(embeddingModel);
+                insertChunks(source.id(), sourceHash, chunks, embeddings, embeddingModel);
                 indexedChunks += chunks.size();
             }
             indexedDocuments++;
         }
+        requireUnchangedModel(embeddingModel);
         return new IndexingResult(indexedDocuments, unchangedDocuments, indexedChunks);
     }
 
@@ -120,7 +123,7 @@ public class EvidenceChunkIndexer {
         return List.copyOf(chunks);
     }
 
-    private Optional<String> latestIndexedSource(long evidenceDocumentId) {
+    private Optional<String> latestIndexedSource(long evidenceDocumentId, String embeddingModel) {
         List<String> values = jdbcTemplate.query("""
                         select source_hash
                         from evidence_document_chunks
@@ -129,19 +132,20 @@ public class EvidenceChunkIndexer {
                         limit 1
                         """,
                 (resultSet, rowNumber) -> resultSet.getString(1), evidenceDocumentId, CHUNK_VERSION,
-                embeddingClient.embeddingModel());
+                embeddingModel);
         return values.stream().findFirst();
     }
 
     private void requireCompleteChunkSet(long evidenceDocumentId, String sourceHash,
-                                         List<String> desiredHashes) {
-        if (!existingHashes(evidenceDocumentId, sourceHash).equals(desiredHashes)) {
+                                         List<String> desiredHashes, String embeddingModel) {
+        if (!existingHashes(evidenceDocumentId, sourceHash, embeddingModel).equals(desiredHashes)) {
             throw new IllegalStateException("Indexed evidence chunk set is incomplete for document "
                     + evidenceDocumentId);
         }
     }
 
-    private List<String> existingHashes(long evidenceDocumentId, String sourceHash) {
+    private List<String> existingHashes(long evidenceDocumentId, String sourceHash,
+                                        String embeddingModel) {
         return jdbcTemplate.query("""
                         select chunk_hash
                         from evidence_document_chunks
@@ -150,11 +154,12 @@ public class EvidenceChunkIndexer {
                         order by chunk_ordinal asc
                         """,
                 (resultSet, rowNumber) -> resultSet.getString(1), evidenceDocumentId, sourceHash,
-                CHUNK_VERSION, embeddingClient.embeddingModel());
+                CHUNK_VERSION, embeddingModel);
     }
 
     private void insertChunks(long evidenceDocumentId, String sourceHash,
-                              List<ChunkDraft> chunks, List<double[]> embeddings) {
+                              List<ChunkDraft> chunks, List<double[]> embeddings,
+                              String embeddingModel) {
         jdbcTemplate.batchUpdate("""
                         insert into evidence_document_chunks (
                             evidence_document_id, source_hash, chunk_ordinal, chunking_version,
@@ -171,7 +176,7 @@ public class EvidenceChunkIndexer {
                         statement.setString(4, CHUNK_VERSION);
                         statement.setString(5, chunk.chunkHash());
                         statement.setString(6, chunk.chunkText());
-                        statement.setString(7, embeddingClient.embeddingModel());
+                        statement.setString(7, embeddingModel);
                         statement.setString(8, vectorLiteral(embeddings.get(index)));
                     }
 
@@ -184,6 +189,7 @@ public class EvidenceChunkIndexer {
 
     static String vectorLiteral(double[] embedding) {
         StringBuilder literal = new StringBuilder(embedding.length * 12).append('[');
+        boolean hasMagnitude = false;
         for (int index = 0; index < embedding.length; index++) {
             if (index > 0) {
                 literal.append(',');
@@ -192,9 +198,19 @@ public class EvidenceChunkIndexer {
             if (!Double.isFinite(value)) {
                 throw new IllegalArgumentException("Embedding contains a non-finite value");
             }
+            hasMagnitude |= value != 0.0;
             literal.append(Double.toString(value));
         }
+        if (!hasMagnitude) {
+            throw new IllegalArgumentException("Embedding must have non-zero norm");
+        }
         return literal.append(']').toString();
+    }
+
+    private void requireUnchangedModel(String embeddingModel) {
+        if (!embeddingModel.equals(embeddingClient.embeddingModel())) {
+            throw new IllegalStateException("Ollama embedding model changed during indexing");
+        }
     }
 
     private static int preferredEnd(int[] codePoints, int start, int maximumEnd) {

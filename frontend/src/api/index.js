@@ -74,7 +74,14 @@ const normalizeRiskPattern = (pattern) => ({
 })
 const normalizeDocument = (document) => ({
   ...document,
-  rawExtractedText: document.extractedText,
+  extractStatus: document.extractStatus ?? document.status,
+  status: document.status ?? document.extractStatus,
+  rawExtractedText: document.rawExtractedText ?? document.extractedText,
+  verifiedText: document.verifiedText ?? document.extractedText,
+})
+const normalizeProduct = (product) => ({
+  ...product,
+  latestDocument: product.latestDocument ? normalizeDocument(product.latestDocument) : null,
 })
 
 export const api = {
@@ -93,12 +100,12 @@ export const api = {
       http.get('/dashboard/me'),
       http.get('/products'),
     ])
-    const products = productsResponse.items ?? []
+    const products = (productsResponse.items ?? []).map(normalizeProduct)
     return {
       summary: {
         products: dashboard.myProducts,
         extracting: products.filter(({ latestDocument }) =>
-          ['UPLOADED', 'EXTRACTING'].includes(latestDocument?.status)).length,
+          ['UPLOADED', 'EXTRACTING'].includes(latestDocument?.extractStatus)).length,
         runningAnalyses: dashboard.analyzing,
         pendingReviews: dashboard.pendingReview,
         approved: dashboard.approved,
@@ -113,7 +120,13 @@ export const api = {
     USE_MOCK ? mockServer.getDashboardCompliance(auth()) : http.get('/dashboard/compliance'),
 
   // ---- products ----
-  listProducts: () => (USE_MOCK ? mockServer.listProducts(auth()) : http.get('/products')),
+  listProducts: () =>
+    USE_MOCK
+      ? mockServer.listProducts(auth())
+      : http.get('/products').then((response) => ({
+          ...response,
+          items: (response.items ?? []).map(normalizeProduct),
+        })),
   createProduct: (body) =>
     USE_MOCK
       ? mockServer.createProduct(auth(), body, uuid())
@@ -121,13 +134,16 @@ export const api = {
   getProduct: (id) =>
     USE_MOCK
       ? mockServer.getProduct(auth(), id)
-      : http.get(`/products/${id}`).then(async (product) => ({
-          ...product,
-          documents: product.latestDocument
-            ? [normalizeDocument(await http.get(`/documents/${product.latestDocument.documentId}`))]
-            : [],
-          analyses: product.latestAnalysis ? [product.latestAnalysis] : [],
-        })),
+      : http.get(`/products/${id}`).then(async (response) => {
+          const product = normalizeProduct(response)
+          return {
+            ...product,
+            documents: product.latestDocument
+              ? [normalizeDocument(await http.get(`/documents/${product.latestDocument.documentId}`))]
+              : [],
+            analyses: product.latestAnalysis ? [product.latestAnalysis] : [],
+          }
+        }),
 
   // ---- documents ----
   uploadDocument: async (productId, file) => {

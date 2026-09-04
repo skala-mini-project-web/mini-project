@@ -9,6 +9,7 @@ public record FindingPayload(
         Severity severity,
         List<PersonaCode> affectedPersonaCodes,
         List<Long> retrievedContextChunkIds,
+        List<EvidenceSpanPayload> evidenceSpans,
         List<Long> knownFactIds,
         String recommendation
 ) {
@@ -22,8 +23,24 @@ public record FindingPayload(
             Severity severity,
             List<PersonaCode> affectedPersonaCodes,
             List<Long> retrievedContextChunkIds,
+            List<Long> knownFactIds,
             String recommendation
     ) {
-        this(statement, severity, affectedPersonaCodes, retrievedContextChunkIds, List.of(), recommendation);
+        this(statement, severity, affectedPersonaCodes, retrievedContextChunkIds, List.of(), knownFactIds,
+                recommendation);
+    }
+
+    public FindingPayload(
+            String statement,
+            Severity severity,
+            List<PersonaCode> affectedPersonaCodes,
+            List<Long> retrievedContextChunkIds,
+            String recommendation
+    ) {
+        this(statement, severity, affectedPersonaCodes, retrievedContextChunkIds, List.of(), List.of(),
+                recommendation);
+    }
+
+    public record EvidenceSpanPayload(Long chunkId, String excerpt) {
     }
 }

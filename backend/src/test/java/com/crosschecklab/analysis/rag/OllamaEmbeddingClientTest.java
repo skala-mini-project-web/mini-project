@@ -9,6 +9,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -21,6 +22,9 @@ import org.springframework.web.client.RestClient;
 class OllamaEmbeddingClientTest {
 
     private static final String EMBEDDING_MODEL = "bge-m3:latest";
+    private static final String MODEL_DIGEST =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    private static final String IMMUTABLE_MODEL = EMBEDDING_MODEL + "@sha256:" + MODEL_DIGEST;
     private static final int EMBEDDING_DIMENSION = 1_024;
 
     private HttpServer server;
@@ -41,7 +45,7 @@ class OllamaEmbeddingClientTest {
 
         List<double[]> embeddings = client.embedAll(List.of("첫 번째 근거", "두 번째 😀 근거"));
 
-        assertThat(client.embeddingModel()).isEqualTo(EMBEDDING_MODEL);
+        assertThat(client.embeddingModel()).isEqualTo(IMMUTABLE_MODEL);
         assertThat(client.embeddingDimension()).isEqualTo(EMBEDDING_DIMENSION);
         assertThat(embeddings).hasSize(2).allSatisfy(embedding -> {
             assertThat(embedding).hasSize(EMBEDDING_DIMENSION);
@@ -85,10 +89,50 @@ class OllamaEmbeddingClientTest {
                 .hasMessageContaining("non-finite embedding value");
     }
 
+    @Test
+    @DisplayName("영벡터를 거부한다")
+    void rejectsZeroEmbedding() throws IOException {
+        OllamaEmbeddingClient client = clientResponding(
+                embeddingResponse(EMBEDDING_DIMENSION, 1, "0.0"), new AtomicReference<>());
+
+        assertThatThrownBy(() -> client.embed("근거"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("zero embedding");
+    }
+
+    @Test
+    @DisplayName("임베딩 중 mutable tag의 digest가 바뀌면 거부한다")
+    void rejectsMutableTagChangeDuringEmbedding() throws IOException {
+        AtomicInteger metadataRequests = new AtomicInteger();
+        OllamaEmbeddingClient client = clientResponding(
+                embeddingResponse(EMBEDDING_DIMENSION, 1, "1.0"), new AtomicReference<>(),
+                metadataRequests, true);
+
+        assertThatThrownBy(() -> client.embed("근거"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("model changed during embedding");
+    }
+
     private OllamaEmbeddingClient clientResponding(
             String responseBody, AtomicReference<String> requestBody) throws IOException {
+        return clientResponding(responseBody, requestBody, new AtomicInteger(), false);
+    }
+
+    private OllamaEmbeddingClient clientResponding(
+            String responseBody, AtomicReference<String> requestBody,
+            AtomicInteger metadataRequests, boolean changeDigest) throws IOException {
         byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/tags", exchange -> {
+            String digest = changeDigest && metadataRequests.getAndIncrement() > 0
+                    ? "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                    : MODEL_DIGEST;
+            byte[] metadataResponse = modelMetadataResponse(digest).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, metadataResponse.length);
+            exchange.getResponseBody().write(metadataResponse);
+            exchange.close();
+        });
         server.createContext("/api/embed", exchange -> {
             requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -113,5 +157,11 @@ class OllamaEmbeddingClientTest {
         return IntStream.range(0, count)
                 .mapToObj(ignored -> vector)
                 .collect(Collectors.joining(",", "{\"embeddings\":[", "]}"));
+    }
+
+    private static String modelMetadataResponse(String digest) {
+        return """
+                {"models":[{"name":"bge-m3:latest","model":"bge-m3:latest","digest":"%s"}]}
+                """.formatted(digest);
     }
 }

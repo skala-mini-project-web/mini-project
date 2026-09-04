@@ -12,6 +12,6 @@ public record AiServiceProperties(
         @DefaultValue("2s") Duration connectTimeout,
         @DefaultValue("20s") Duration readTimeout,
         @DefaultValue("GUARANTEE_MISUNDERSTANDING_HIGH") String defaultScenarioCode,
-        @DefaultValue("false") boolean allowInsecureHttp
-) {
-}
+        @DefaultValue("false") boolean allowInsecureHttp,
+        @DefaultValue("crosschecklab-local-internal-token") String internalToken
+) { }

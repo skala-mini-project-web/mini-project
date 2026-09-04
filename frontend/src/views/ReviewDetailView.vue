@@ -1,9 +1,10 @@
 <script setup>
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { PhArrowLeft, PhArrowClockwise, PhCheck, PhCheckCircle, PhWarningCircle, PhXCircle, PhSealCheck } from '@phosphor-icons/vue'
 import { api } from '@/api'
 import { useToastStore } from '@/stores/toast'
+import { useSessionStore } from '@/stores/session'
 import { FINDING_TYPE_LABEL, RULE_LABEL, personaName, formatDateTime } from '@/lib/format'
 import GButton from '@/components/ui/GButton.vue'
 import GStatusPill from '@/components/ui/GStatusPill.vue'
@@ -17,6 +18,7 @@ const props = defineProps({ reviewId: { type: String, required: true } })
 const REVIEW_COMMENT_MAXIMUM_COUNT = 500
 const router = useRouter()
 const toast = useToastStore()
+const session = useSessionStore()
 
 const loading = ref(true)
 const loadError = ref(null)
@@ -26,8 +28,30 @@ const selected = ref([])
 const comment = ref('')
 const deciding = ref(null)
 const isPending = computed(() => review.value?.status === 'PENDING')
+const canDecide = computed(() => session.isReviewer && isPending.value)
+let refreshTimer = null
+
+function stopRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer)
+  refreshTimer = null
+}
+function scheduleRefresh() {
+  stopRefresh()
+  if (!isPending.value) return
+  refreshTimer = setInterval(refreshReview, 2000)
+}
+async function refreshReview() {
+  try {
+    const nextReview = await api.getReview(props.reviewId)
+    review.value = nextReview
+    if (nextReview.status !== 'PENDING') stopRefresh()
+  } catch {
+    stopRefresh()
+  }
+}
 
 onMounted(load)
+onUnmounted(stopRefresh)
 async function load() {
   loading.value = true
   try {
@@ -36,6 +60,7 @@ async function load() {
     review.value = nextReview
     result.value = nextResult
     selected.value = nextResult.findings.filter((f) => f.severity === 'HIGH').map((f) => f.findingId)
+    scheduleRefresh()
     loadError.value = null
   } catch (e) {
     loadError.value = e
@@ -47,6 +72,7 @@ async function load() {
 
 function toggle(id) { const i = selected.value.indexOf(id); i >= 0 ? selected.value.splice(i, 1) : selected.value.push(id) }
 async function decide(status) {
+  if (!canDecide.value) return
   if (comment.value.length > REVIEW_COMMENT_MAXIMUM_COUNT) {
     return toast.push({ type: 'error', title: '검토 의견 입력 오류', message: `검토 의견은 ${REVIEW_COMMENT_MAXIMUM_COUNT}자 이하로 입력하세요.` })
   }
@@ -115,13 +141,13 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 
       <div class="fh">
         <h2 class="d-h3">Finding</h2>
-        <span v-if="isPending" class="t-sm mute">체크한 Finding만 <b class="fw-semibold" style="color:var(--ink)">Risk Library</b>로 승격됩니다</span>
+        <span v-if="canDecide" class="t-sm mute">체크한 Finding만 <b class="fw-semibold" style="color:var(--ink)">Risk Library</b>로 승격됩니다</span>
       </div>
 
       <ol class="finds">
-        <li v-for="(f, i) in result.findings" :key="f.findingId" class="find" :class="{ picked: isPending && selected.includes(f.findingId) }">
+        <li v-for="(f, i) in result.findings" :key="f.findingId" class="find" :class="{ picked: canDecide && selected.includes(f.findingId) }">
           <div class="gutter">
-            <button v-if="isPending" class="pick" :class="{ on: selected.includes(f.findingId) }" @click="toggle(f.findingId)" :aria-pressed="selected.includes(f.findingId)">
+            <button v-if="canDecide" class="pick" :class="{ on: selected.includes(f.findingId) }" @click="toggle(f.findingId)" :aria-pressed="selected.includes(f.findingId)">
               <PhCheck v-if="selected.includes(f.findingId)" :size="13" weight="bold" />
             </button>
             <span class="mono fidx">{{ idx(i) }}</span>
@@ -161,7 +187,7 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
       </section>
 
       <!-- Decision -->
-      <div v-if="isPending" class="decide">
+      <div v-if="canDecide" class="decide">
         <div class="dec-head"><h2 class="d-h3">검토 결정</h2><span class="mono mute">{{ selected.length }} / {{ result.findings.length }} 승격 선택</span></div>
         <GField label="의견" hint="반려 시 필수. 승인 시 권장." for-id="cmt" :current-count="comment.length" :maximum-count="REVIEW_COMMENT_MAXIMUM_COUNT">
           <GTextarea id="cmt" v-model="comment" :rows="3" :maximum-count="REVIEW_COMMENT_MAXIMUM_COUNT" placeholder="결정 사유와 수정 방향을 남기세요" />
@@ -172,7 +198,7 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
         </div>
       </div>
 
-      <div v-else class="decided">
+      <div v-else-if="!isPending" class="decided">
         <PhCheckCircle v-if="review.status === 'APPROVED'" :size="18" weight="fill" class="ok" />
         <PhXCircle v-else :size="18" weight="fill" class="no" />
         <span class="t-base fw-semibold">{{ review.status === 'APPROVED' ? '승인됨' : '반려됨' }}</span>

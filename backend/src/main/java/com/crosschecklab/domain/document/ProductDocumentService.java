@@ -1,5 +1,6 @@
 package com.crosschecklab.domain.document;
 
+import com.crosschecklab.domain.analysis.AnalysisRepository;
 import com.crosschecklab.domain.document.dto.DocumentAcceptedResponse;
 import com.crosschecklab.domain.document.dto.DocumentResponse;
 import com.crosschecklab.domain.document.dto.DocumentTextUpdateRequest;
@@ -39,6 +40,7 @@ public class ProductDocumentService {
 
     private final ProductRepository productRepository;
     private final ProductDocumentRepository productDocumentRepository;
+    private final AnalysisRepository analysisRepository;
     private final GroundTruthFactService groundTruthFactService;
     private final UserRepository userRepository;
     private final ExtractionScenarioResolver scenarioResolver;
@@ -84,6 +86,9 @@ public class ProductDocumentService {
     @Transactional
     public DocumentResponse updateText(Long documentId, DocumentTextUpdateRequest request, DemoUser currentUser) {
         ProductDocument document = getOwnedDocumentForUpdate(documentId, currentUser);
+        if (analysisRepository.existsByProductDocumentId(documentId)) {
+            throw new BusinessException(ErrorCode.DOCUMENT_ALREADY_ANALYZED);
+        }
         if (!document.isReady()) {
             // 추출 중이거나 실패한 텍스트를 고치면 이후 추출 결과에 덮어써진다.
             throw new BusinessException(ErrorCode.DOCUMENT_NOT_READY);

@@ -7,8 +7,10 @@ import org.slf4j.MDC;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.TaskDecorator;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 // 분석 실행 전용 비동기 스레드 풀
 // 요청 스레드의 traceId(MDC)를 작업 스레드로 복사해 로그 추적을 잇는다.
@@ -32,6 +34,18 @@ public class AsyncConfig {
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();
         return executor;
+    }
+
+    // 복구 스캔은 단일 스레드에서 직렬 실행해 같은 프로세스 안에서 중복 스캔이 겹치지 않게 한다.
+    @Bean(name = "taskScheduler")
+    public TaskScheduler taskScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(1);
+        scheduler.setThreadNamePrefix("analysis-recovery-");
+        scheduler.setWaitForTasksToCompleteOnShutdown(true);
+        scheduler.setAwaitTerminationSeconds(30);
+        scheduler.initialize();
+        return scheduler;
     }
 
     // 호출한 요청 스레드의 MDC(traceId 등)를 작업 스레드에 복사

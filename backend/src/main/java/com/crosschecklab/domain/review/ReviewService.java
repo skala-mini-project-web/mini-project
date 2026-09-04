@@ -18,6 +18,7 @@ import com.crosschecklab.domain.review.dto.ReviewListItemResponse;
 import com.crosschecklab.domain.review.dto.ReviewOutcomeResponse;
 import com.crosschecklab.domain.risk.RiskPatternService;
 import com.crosschecklab.global.common.PageResponse;
+import com.crosschecklab.global.common.enums.ExtractStatus;
 import com.crosschecklab.global.common.enums.ReviewStatus;
 import com.crosschecklab.global.common.enums.Severity;
 import com.crosschecklab.global.common.enums.UserRole;
@@ -63,7 +64,9 @@ public class ReviewService {
         Analysis analysis = analysisRepository.findById(request.analysisId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
         // 분석 상태(409)를 알려주기 전에 소유권부터 판정한다.
-        ownershipChecker.requireOwner(ownerIdOf(analysis.getProductDocumentId()), currentUser);
+        ProductDocument document = findSourceDocument(analysis);
+        ownershipChecker.requireOwner(document.getOwnerId(), currentUser);
+        requireReadyConfirmedSource(document);
 
         if (reviewRepository.existsByAnalysisId(analysis.getId())) {
             throw new BusinessException(ErrorCode.REVIEW_ALREADY_EXISTS);
@@ -142,6 +145,9 @@ public class ReviewService {
 
         Review review = reviewRepository.findWithLockById(reviewId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        Analysis analysis = analysisRepository.findById(review.getAnalysisId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        requireReadyConfirmedSource(findSourceDocument(analysis));
 
         Set<Long> selectedFindingIds = validateSelection(review, decision, request);
         review.decide(decision, currentUser.id(), normalizeDecisionComment(request.comment()),
@@ -220,5 +226,16 @@ public class ReviewService {
         ProductDocument document = productDocumentRepository.findById(productDocumentId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
         return document.getProduct().getOwnerId();
+    }
+
+    private ProductDocument findSourceDocument(Analysis analysis) {
+        return productDocumentRepository.findById(analysis.getProductDocumentId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    }
+
+    private void requireReadyConfirmedSource(ProductDocument document) {
+        if (document.getExtractStatus() != ExtractStatus.READY || !document.isConfirmed()) {
+            throw new BusinessException(ErrorCode.DOCUMENT_NOT_CONFIRMED);
+        }
     }
 }

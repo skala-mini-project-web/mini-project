@@ -17,25 +17,33 @@ import com.crosschecklab.domain.analysis.FindingRepository;
 import com.crosschecklab.domain.audit.AuditAction;
 import com.crosschecklab.domain.audit.AuditEvent;
 import com.crosschecklab.domain.audit.AuditEventRepository;
+import com.crosschecklab.domain.document.ProductDocument;
+import com.crosschecklab.domain.document.ProductDocumentRepository;
 import com.crosschecklab.domain.evidence.EvidenceDocumentChunk;
 import com.crosschecklab.domain.evidence.EvidenceDocumentChunkRepository;
 import com.crosschecklab.domain.persona.PersonaTemplate;
 import com.crosschecklab.domain.persona.PersonaTemplateRepository;
+import com.crosschecklab.global.common.enums.AnalysisStatus;
+import com.crosschecklab.global.common.enums.ExtractStatus;
 import com.crosschecklab.global.common.enums.PersonaCode;
 import com.crosschecklab.global.config.AsyncConfig;
 import com.crosschecklab.global.error.BusinessException;
 import com.crosschecklab.global.error.ErrorCode;
 import jakarta.persistence.EntityManager;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -52,10 +60,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class AnalysisJobService {
 
     private static final String RETRIEVAL_VERSION = "pgvector-cosine-v1";
+    private static final Duration STALE_RUNNING_AFTER = Duration.ofMinutes(5);
+    private static final int RECOVERY_BATCH_SIZE = 25;
 
     private final AnalysisRepository analysisRepository;
     private final EntityManager entityManager;
     private final FindingRepository findingRepository;
+    private final ProductDocumentRepository productDocumentRepository;
     private final AnalysisRagRunRepository ragRunRepository;
     private final EvidenceDocumentChunkRepository evidenceChunkRepository;
     private final PersonaTemplateRepository personaTemplateRepository;
@@ -69,6 +80,7 @@ public class AnalysisJobService {
 
     public AnalysisJobService(AnalysisRepository analysisRepository, EntityManager entityManager,
                               FindingRepository findingRepository,
+                              ProductDocumentRepository productDocumentRepository,
                               AnalysisRagRunRepository ragRunRepository,
                               EvidenceDocumentChunkRepository evidenceChunkRepository,
                               PersonaTemplateRepository personaTemplateRepository, AnalysisInputLoader inputLoader,
@@ -79,6 +91,7 @@ public class AnalysisJobService {
         this.analysisRepository = analysisRepository;
         this.entityManager = entityManager;
         this.findingRepository = findingRepository;
+        this.productDocumentRepository = productDocumentRepository;
         this.ragRunRepository = ragRunRepository;
         this.evidenceChunkRepository = evidenceChunkRepository;
         this.personaTemplateRepository = personaTemplateRepository;
@@ -99,6 +112,34 @@ public class AnalysisJobService {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void handle(AnalysisRequestedEvent event) {
         run(event.analysisId(), event.scenarioCode(), event.traceId());
+    }
+
+    // 프로세스가 RUNNING 커밋 뒤 종료되면 in-memory executor 에 작업이 남지 않는다.
+    // 작은 batch 를 주기적으로 복구하고, 각 행은 별도 잠금 트랜잭션에서 다시 검증한다.
+    @Scheduled(initialDelayString = "PT30S", fixedDelayString = "PT30S")
+    public void recoverStaleRunningAnalyses() {
+        OffsetDateTime cutoff = OffsetDateTime.now(clock).minus(STALE_RUNNING_AFTER);
+        List<AnalysisRepository.StaleRunningExecution> staleExecutions =
+                analysisRepository.findStaleRunningExecutions(
+                        cutoff, PageRequest.of(0, RECOVERY_BATCH_SIZE));
+        for (AnalysisRepository.StaleRunningExecution staleExecution : staleExecutions) {
+            transactionTemplate.execute(status -> {
+                Analysis analysis = analysisRepository.findStaleRunningWithLock(
+                                staleExecution.getId(), staleExecution.getExecutionToken(), cutoff)
+                        .orElse(null);
+                if (analysis == null) {
+                    return false;
+                }
+                failAndAudit(
+                        analysis,
+                        ErrorCode.AI_SERVICE_TEMPORARY_FAILURE,
+                        true,
+                        "analysis-recovery-" + UUID.randomUUID());
+                analysisRepository.flush();
+                log.warn("오래된 RUNNING 분석 {} 을 FAILED 로 복구", analysis.getId());
+                return true;
+            });
+        }
     }
 
     private void run(Long analysisId, String scenarioCode, String traceId) {
@@ -129,6 +170,9 @@ public class AnalysisJobService {
             validateProviderReferences(job.request(), result);
             transactionTemplate.execute(
                     status -> saveResult(analysisId, result, job, traceId));
+        } catch (BusinessException e) {
+            log.warn("분석 {} 원본 문서가 더 이상 유효하지 않음 errorCode={}", analysisId, e.getErrorCode());
+            markFailed(analysisId, e.getErrorCode(), false, job.fence(), traceId);
         } catch (ProviderException e) {
             log.warn("분석 {} 실패 errorCode={} retryable={}", analysisId, e.getErrorCode(), e.isRetryable());
             markFailed(analysisId, e.getErrorCode(), e.isRetryable(), job.fence(), traceId);
@@ -252,14 +296,15 @@ public class AnalysisJobService {
         return new ProviderException(ErrorCode.PROVIDER_RESPONSE_INVALID, false, detail);
     }
 
-    // 잠근 행을 기준으로 이 회차가 아직 유효한가. 그 사이 재시도가 시작됐으면 false.
+    // 잠근 행을 기준으로 이 회차가 아직 유효한가. 그 사이 재시도나 복구 전이가 있었으면 false.
     private boolean isCurrent(Analysis analysis, String fence) {
         if (fence == null) {
             return true;
         }
-        boolean current = fence.equals(analysis.getExecutionToken());
+        boolean current = analysis.getStatus() == AnalysisStatus.RUNNING
+                && fence.equals(analysis.getExecutionToken());
         if (!current) {
-            log.warn("분석 {} 이전 회차 결과를 버린다 (재시도가 이미 시작됨)", analysis.getId());
+            log.warn("분석 {} 이전 회차 결과를 버린다 (상태 전이 또는 재시도가 이미 발생함)", analysis.getId());
         }
         return current;
     }
@@ -269,6 +314,7 @@ public class AnalysisJobService {
         if (!isCurrent(analysis, job.fence())) {
             return false;
         }
+        requireReadyConfirmedSource(analysis);
         // 재시도면 이전 회차 Finding 을 먼저 비운다 (연관 행은 FK CASCADE).
         findingRepository.deleteByAnalysisId(analysisId);
         findingRepository.flush();
@@ -294,6 +340,14 @@ public class AnalysisJobService {
         appendTerminalAudit(traceId, AuditAction.ANALYSIS_COMPLETED, analysisId);
         analysisRepository.flush();
         return true;
+    }
+
+    private void requireReadyConfirmedSource(Analysis analysis) {
+        ProductDocument document = productDocumentRepository.findById(analysis.getProductDocumentId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND));
+        if (document.getExtractStatus() != ExtractStatus.READY || !document.isConfirmed()) {
+            throw new BusinessException(ErrorCode.DOCUMENT_NOT_CONFIRMED);
+        }
     }
 
     private void saveRagRun(Analysis analysis, Job job) {
@@ -334,11 +388,15 @@ public class AnalysisJobService {
             if (!isCurrent(analysis, fence)) {
                 return false;
             }
-            analysis.fail(errorCode, retryable);
-            appendTerminalAudit(traceId, AuditAction.ANALYSIS_FAILED, analysisId);
+            failAndAudit(analysis, errorCode, retryable, traceId);
             analysisRepository.flush();
             return true;
         });
+    }
+
+    private void failAndAudit(Analysis analysis, ErrorCode errorCode, boolean retryable, String traceId) {
+        analysis.fail(errorCode, retryable);
+        appendTerminalAudit(traceId, AuditAction.ANALYSIS_FAILED, analysis.getId());
     }
 
     private void appendTerminalAudit(String traceId, AuditAction action, Long analysisId) {
