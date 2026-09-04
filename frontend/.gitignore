@@ -1,0 +1,25 @@
+# deps / build
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# local data (never commit uploads or db)
+data/uploads/
+data/postgres/
+logs/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# agent tooling (local, not product)
+.claude/
+skills-lock.json

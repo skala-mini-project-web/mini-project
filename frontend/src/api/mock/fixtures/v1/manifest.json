@@ -1,0 +1,17 @@
+{
+  "fixtureVersion": "1.0",
+  "scenario": "GOLDEN_FINANCIAL_RISK",
+  "entries": ["index.js", "golden-scenario.json", "analysis-result.json"],
+  "expectedReferences": {
+    "productId": 1,
+    "documentId": 11,
+    "analysisId": 61,
+    "reviewId": 91,
+    "auditId": 901,
+    "findingIds": [401, 402],
+    "personaRunIds": [1001, 1002, 1003, 1011, 1012, 1013],
+    "redTeamResultIds": [3001, 3002],
+    "vulnerabilityPatternIds": [501],
+    "guardFitSuggestionIds": [601]
+  }
+}

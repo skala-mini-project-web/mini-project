@@ -1,0 +1,93 @@
+/* =============================================================================
+   GuardLab design tokens - "Compliance Instrument"
+   Cool near-monochrome, ink-first. Single blue accent used sparingly for
+   active / link / AI states. Risk scale (red/amber/green) is DATA-ONLY.
+   Type: Pretendard (Korean-native UI/display) + JetBrains Mono (data/IDs).
+   Structure is carried by hairlines and negative space, not boxes.
+   Theme: light, locked.
+   ============================================================================= */
+:root {
+  /* Ink / neutrals (cool, off-black - never pure #000) */
+  --ink: #0e1116;
+  --ink-2: #2b303b;      /* strong secondary */
+  --ink-soft: #4c515c;   /* body secondary (>= 7:1 on paper) */
+  --ink-mute: #646a75;   /* tertiary / captions (>= AA 4.5:1 on paper) */
+  --ink-faint: #9aa0aa;  /* placeholder / decorative only */
+
+  /* Surfaces */
+  --paper: #f4f5f7;      /* app canvas */
+  --surface: #ffffff;    /* raised content */
+  --surface-2: #f0f2f5;  /* inset / nested */
+  --surface-3: #e9ecf1;  /* deeper inset */
+
+  /* Lines */
+  --line: #e2e5ea;
+  --line-strong: #d3d7de;
+  --line-soft: #edeff2;
+
+  /* Single accent (deliberately NOT AI-purple). Used for active/link/AI only. */
+  --accent: #2743f0;
+  --accent-press: #1c33c9;
+  --accent-wash: rgba(39, 67, 240, 0.08);
+  --accent-line: rgba(39, 67, 240, 0.28);
+
+  /* Risk / semantic scale - DATA ONLY (severity, status, score) */
+  --risk-high: #d1352c;
+  --risk-high-wash: rgba(209, 53, 44, 0.09);
+  --risk-med: #b26a00;
+  --risk-med-wash: rgba(178, 106, 0, 0.1);
+  --risk-low: #5b616e;
+  --risk-low-wash: rgba(91, 97, 110, 0.09);
+  --ok: #0f7a4f;
+  --ok-wash: rgba(15, 122, 79, 0.1);
+
+  /* Type families */
+  --font-sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, 'Apple SD Gothic Neo', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* Type scale (display leans tight; data uses mono) */
+  --text-mega: clamp(48px, 7vw, 88px);
+  --text-display: clamp(34px, 4.4vw, 56px);
+  --text-h1: 34px;
+  --text-h2: 26px;
+  --text-h3: 20px;
+  --text-lg: 17px;
+  --text-base: 15px;
+  --text-sm: 13.5px;
+  --text-xs: 12px;
+  --text-micro: 11px;
+
+  /* Spacing (4px base) */
+  --s-2: 2px; --s-4: 4px; --s-6: 6px; --s-8: 8px; --s-10: 10px; --s-12: 12px;
+  --s-16: 16px; --s-20: 20px; --s-24: 24px; --s-28: 28px; --s-32: 32px;
+  --s-40: 40px; --s-48: 48px; --s-56: 56px; --s-64: 64px; --s-80: 80px; --s-96: 96px;
+
+  /* Radii - sharp / engineered. Pills only for tags + segmented toggles. */
+  --r-xs: 3px;
+  --r-sm: 6px;
+  --r: 8px;
+  --r-lg: 12px;
+  --r-pill: 999px;
+
+  /* Shadows - restrained, cool. Elevation is rare. */
+  --shadow-1: 0 1px 2px rgba(14, 17, 22, 0.04), 0 1px 1px rgba(14, 17, 22, 0.03);
+  --shadow-2: 0 12px 32px -12px rgba(14, 17, 22, 0.18), 0 2px 6px rgba(14, 17, 22, 0.05);
+  --shadow-pop: 0 24px 60px -20px rgba(14, 17, 22, 0.28);
+
+  /* Focus */
+  --focus: 0 0 0 3px var(--accent-wash), 0 0 0 1px var(--accent);
+
+  /* Layout */
+  --rail-w: 236px;
+  --content-max: 1120px;
+
+  /* Motion (dial 3) */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --fast: 0.13s;
+  --base: 0.22s;
+}
