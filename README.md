@@ -1,4 +1,8 @@
-# ARGUS 금융상품 판매 리스크 사전검증 AI 플랫폼
+# ARGUS
+
+## 금융상품 판매 리스크 사전검증 AI 플랫폼
+
+![ARGUS 메인 화면](docs/assets/argus-main-page.png)
 
 - 판매 문서의 위험 표현을 분석하고, 근거·검토·보호조치 이력을 연결하는 로컬 AI 컴플라이언스 데모
 - 대상 흐름: 상품 담당자(PM) → 컴플라이언스 reviewer → Risk Pattern → GuardFit 적용 가이드
@@ -36,11 +40,20 @@
 
 ## 이해관계자와 제공 가치
 
-| 역할 | 기존 문제 | ARGUS에서의 역할 |
-| --- | --- | --- |
-| 상품 담당자 PM | 문서·위험·검토 요청을 수작업으로 연결 | 상품 등록, 문서 확정, 사실 검증, Persona + Red Team 분석, 검토 요청 |
-| 컴플라이언스 reviewer | AI 결과의 근거·우선순위·승인 이력이 불명확 | RAG trace 확인, Finding 승인·반려, Risk Pattern·GuardFit 결정 |
-| 운영 담당자 | 개선 조치가 판매 화면에 반영되는지 추적 어려움 | 승인 GuardFit 적용 가이드 확인 |
+### 상품 담당자 PM
+
+- 기존 문제: 문서·위험·검토 요청을 수작업으로 연결
+- ARGUS 역할: 상품 등록, 문서 확정, 사실 검증, Persona + Red Team 분석, 검토 요청
+
+### 컴플라이언스 reviewer
+
+- 기존 문제: AI 결과의 근거·우선순위·승인 이력이 불명확
+- ARGUS 역할: RAG trace 확인, Finding 승인·반려, Risk Pattern·GuardFit 결정
+
+### 운영 담당자
+
+- 기존 문제: 개선 조치가 판매 화면에 반영되는지 추적 어려움
+- ARGUS 역할: 승인 GuardFit 적용 가이드 확인
 
 ## 핵심 기능
 
@@ -191,15 +204,13 @@ reviewer
 
 ## 기술 스택
 
-| 영역 | 기술 |
-| --- | --- |
-| Frontend | Vue 3, Vite, Vue Router, Pinia, Playwright Core |
-| Backend | Java 21, Spring Boot, Spring Data JPA, Flyway |
-| Database | PostgreSQL 16, pgvector, HNSW cosine index |
-| AI | FastAPI, Pydantic, Ollama, bge-m3, qwen2.5 |
-| Document | PDFBox, PDF.js, Tesseract.js UI experiment |
-| Runtime | Docker Compose, Nginx |
-| Test | JUnit, MockMvc, pytest, Playwright E2E |
+- Frontend: Vue 3, Vite, Vue Router, Pinia, Playwright Core
+- Backend: Java 21, Spring Boot, Spring Data JPA, Flyway
+- Database: PostgreSQL 16, pgvector, HNSW cosine index
+- AI: FastAPI, Pydantic, Ollama, bge-m3, qwen2.5
+- Document: PDFBox, PDF.js, Tesseract.js UI experiment
+- Runtime: Docker Compose, Nginx
+- Test: JUnit, MockMvc, pytest, Playwright E2E
 
 ## 저장소 구조
 
@@ -391,13 +402,11 @@ docker compose up --build -d
 
 ## 팀 구성
 
-| 이름 | 역할 |
-| --- | --- |
-| 김지원 | PM, API 설계 |
-| 최도한 | Backend, Data Architecture |
-| 손서현 | Backend, DevOps |
-| 신주용 | Frontend, UI/UX |
-| 정다운 | Frontend, UI/UX |
+- 김지원: PM, API 설계
+- 최도한: Backend, Data Architecture
+- 손서현: Backend, DevOps
+- 신주용: Frontend, UI/UX
+- 정다운: Frontend, UI/UX
 
 ## 개발 타임라인
 
