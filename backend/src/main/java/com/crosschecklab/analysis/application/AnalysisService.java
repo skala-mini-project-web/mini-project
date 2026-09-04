@@ -23,11 +23,19 @@ import com.crosschecklab.global.common.enums.PersonaCode;
 import com.crosschecklab.global.common.enums.UserRole;
 import com.crosschecklab.global.error.BusinessException;
 import com.crosschecklab.global.error.ErrorCode;
+import com.crosschecklab.global.idempotency.IdempotencyClaim;
+import com.crosschecklab.global.idempotency.IdempotencyClaim.IdempotencyOperation;
+import com.crosschecklab.global.idempotency.IdempotencyClaimRepository;
 import com.crosschecklab.global.security.DemoUser;
 import com.crosschecklab.global.security.OwnershipChecker;
 import com.crosschecklab.global.trace.TraceIdFilter;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -45,7 +53,10 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class AnalysisService {
 
+    private static final IdempotencyOperation CREATE_OPERATION = IdempotencyOperation.ANALYSIS_CREATE;
+
     private final AnalysisRepository analysisRepository;
+    private final IdempotencyClaimRepository idempotencyClaimRepository;
     private final AnalysisGroundTruthFactSnapshotRepository factSnapshotRepository;
     private final FindingRepository findingRepository;
     private final ProductDocumentRepository productDocumentRepository;
@@ -60,7 +71,30 @@ public class AnalysisService {
 
     // ANA-001. 입력을 검증해 CREATED 로 저장하고 즉시 202 를 반환한다.
     @Transactional
-    public AnalysisAcceptedResponse create(AnalysisCreateRequest request, String scenarioCode, DemoUser currentUser) {
+    public AnalysisAcceptedResponse create(
+            AnalysisCreateRequest request,
+            String idempotencyKey,
+            String scenarioCode,
+            DemoUser currentUser) {
+        String resolvedScenario = resolveScenario(scenarioCode);
+        String fingerprint = createFingerprint(request, resolvedScenario);
+        int acquired = idempotencyClaimRepository.tryAcquire(
+                currentUser.id(), CREATE_OPERATION, idempotencyKey, fingerprint);
+        IdempotencyClaim claim = idempotencyClaimRepository
+                .findWithLockByActorIdAndOperationAndIdempotencyKey(
+                        currentUser.id(), CREATE_OPERATION, idempotencyKey)
+                .orElseThrow(() -> new IllegalStateException("acquired idempotency claim is missing"));
+
+        if (acquired == 0) {
+            if (!claim.getFingerprint().equals(fingerprint)) {
+                throw new BusinessException(ErrorCode.IDEMPOTENCY_KEY_REUSED);
+            }
+            if (!claim.isCompleted()) {
+                throw new IllegalStateException("idempotency claim completed without an analysis");
+            }
+            return AnalysisAcceptedResponse.created(claim.getAnalysisId());
+        }
+
         ownershipChecker.requireRole(currentUser, UserRole.PRODUCT_MANAGER);
         ProductDocument lockedDocument = inputLoader.lockDocument(request.productDocumentId());
         ownershipChecker.requireOwner(lockedDocument.getProduct().getOwnerId(), currentUser);
@@ -79,11 +113,12 @@ public class AnalysisService {
                 .map(fact -> AnalysisGroundTruthFactSnapshot.of(analysis, fact.source()))
                 .toList());
 
+        claim.complete(analysis.getId());
         auditService.append(
                 currentUser, AuditAction.ANALYSIS_CREATED, analysis.getId(), null, analysis.getId());
         eventPublisher.publishEvent(new AnalysisRequestedEvent(
-                analysis.getId(), resolveScenario(scenarioCode), currentRequestTraceId()));
-        return AnalysisAcceptedResponse.from(analysis);
+                analysis.getId(), resolvedScenario, currentRequestTraceId()));
+        return AnalysisAcceptedResponse.created(analysis.getId());
     }
 
     // ANA-002. 조회만 하며 상태를 바꾸지 않는다.
@@ -145,6 +180,30 @@ public class AnalysisService {
     // X-Demo-Scenario 헤더가 없으면 설정의 기본 시나리오를 쓴다.
     private String resolveScenario(String scenarioCode) {
         return StringUtils.hasText(scenarioCode) ? scenarioCode.trim() : aiServiceProperties.defaultScenarioCode();
+    }
+
+    private String createFingerprint(AnalysisCreateRequest request, String resolvedScenario) {
+        String canonical = String.join("\n",
+                "productDocumentId=" + request.productDocumentId(),
+                "redTeamPackId=" + request.redTeamPackId(),
+                "personaIds=" + normalizedIds(request.personaIds()),
+                "evidenceDocumentIds=" + normalizedIds(request.evidenceDocumentIds()),
+                "scenario=" + resolvedScenario.length() + ":" + resolvedScenario);
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
+    }
+
+    private String normalizedIds(List<Long> ids) {
+        return ids.stream()
+                .distinct()
+                .sorted(Comparator.nullsFirst(Comparator.naturalOrder()))
+                .map(String::valueOf)
+                .collect(Collectors.joining(","));
     }
 
     private String currentRequestTraceId() {
