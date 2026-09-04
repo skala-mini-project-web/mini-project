@@ -207,6 +207,14 @@ node frontend/scripts/real-rag-full-flow-e2e.mjs
 - API interception과 `mockServer`를 사용하지 않음
 - page error, request failure, 예상 밖 4xx/5xx 응답은 실패 처리
 
+## 제출 산출물
+
+- 전체 목록: [`docs/deliverables/`](docs/deliverables/)
+- 최종 발표·Use-Case: 발표 슬라이드와 PM·reviewer 업무 흐름
+- 설계: 실제 화면 기반 Wireframe, ERD·DB schema, API·Postman Mock, AI prompt·JSON 규격
+- 구현: FE·BE scaffolding, 메인·핵심 UI 구현 증빙
+- 검증·형상관리: 실제 RAG E2E·회귀 테스트 결과와 GitHub repository 설정
+
 ## 시연 데이터
 
 - 판매 PDF: `data/demo-showcase-pdfs/`
@@ -253,14 +261,6 @@ ollama list
 ## 개발 타임라인
 
 ![프로젝트 타임라인](docs/assets/project-timeline.png)
-
-## 제출 산출물
-
-- 전체 목록: [`docs/deliverables/`](docs/deliverables/)
-- 최종 발표·Use-Case: 발표 슬라이드와 PM·reviewer 업무 흐름
-- 설계: 실제 화면 기반 Wireframe, ERD·DB schema, API·Postman Mock, AI prompt·JSON 규격
-- 구현: FE·BE scaffolding, 메인·핵심 UI 구현 증빙
-- 검증·형상관리: 실제 RAG E2E·회귀 테스트 결과와 GitHub repository 설정
 
 ## 상세 문서
 
