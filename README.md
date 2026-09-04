@@ -229,17 +229,38 @@ ollama list
 - 데이터 유지 종료: `docker compose down`
 - DB·RAG index·분석·검토·감사 데이터 삭제: `docker compose down -v`
 
+## 향후 구현 예정
+
+- 한글 스캔 PDF OCR
+  - 서버 측 PDF page rendering과 OCR engine 연동
+  - 한글 인식 품질·낮은 신뢰도 구간 검토·원문 대조 workflow 추가
+- AI 분석 점수 근거 명확화
+  - Finding severity, 적용 rule, 인용 evidence span, Persona 영향도를 점수 구성 요소로 분리
+  - 결과 화면에 점수 산정 근거와 항목별 기여도를 노출
+- 대량 파일 자동 처리
+  - 다중 파일 업로드 queue, 추출·indexing·분석 batch 처리, 진행 상황·재시도 관리 추가
+
 ## 팀 구성
 
-- 김지원: PM, API 설계
-- 최도한: Backend, Data Architecture
-- 손서현: Backend, DevOps
-- 신주용: Frontend, UI/UX
-- 정다운: Frontend, UI/UX
+| 이름 | 역할 |
+| --- | --- |
+| 김지원 | PM, API 설계 |
+| 최도한 | Backend, Data Architecture |
+| 손서현 | Backend, DevOps |
+| 신주용 | Frontend, UI/UX |
+| 정다운 | Frontend, UI/UX |
 
 ## 개발 타임라인
 
 ![프로젝트 타임라인](docs/assets/project-timeline.png)
+
+## 제출 산출물
+
+- 전체 목록: [`docs/deliverables/`](docs/deliverables/)
+- 최종 발표·Use-Case: 발표 슬라이드와 PM·reviewer 업무 흐름
+- 설계: 실제 화면 기반 Wireframe, ERD·DB schema, API·Postman Mock, AI prompt·JSON 규격
+- 구현: FE·BE scaffolding, 메인·핵심 UI 구현 증빙
+- 검증·형상관리: 실제 RAG E2E·회귀 테스트 결과와 GitHub repository 설정
 
 ## 상세 문서
 
