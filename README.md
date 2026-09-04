@@ -262,6 +262,17 @@ ollama list
 
 ![프로젝트 타임라인](docs/assets/project-timeline.png)
 
+## 협업 및 형상관리
+
+- 작업 단위: Issue → feature·docs·fix branch → PR → review → `develop` merge
+- 릴리스 단위: 검증된 `develop` → release PR → `main` merge
+- `main`, `develop` 직접 push 금지
+- PR review·자동 리뷰 의견·수정 반영 후 작성자가 merge
+
+![협업 규칙](docs/assets/collaboration-rules.png)
+
+![PR 브랜치 그래프](docs/assets/collaboration-pr-branch-graph.png)
+
 ## 상세 문서
 
 - Backend·DB·RAG: `backend/README.md`
