@@ -67,7 +67,7 @@ function docIcon(mt, n) { if (/pptx?$/i.test(n) || /presentation/.test(mt || '')
       <section class="sec">
         <div class="sec-head">
           <h2 class="d-h3">문서 <span class="mono cnt">{{ product.documents?.length || 0 }}</span></h2>
-          <GButton v-if="canEdit" variant="secondary" size="sm" :loading="uploading" @click="pick">업로드</GButton>
+
         </div>
         <p class="sec-note t-sm mute">PDF 또는 PPTX, 최대 10MB. 서버가 실제 텍스트를 추출합니다.</p>
 
