@@ -1,5 +1,6 @@
 package com.crosschecklab.domain.guardfit;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -8,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.crosschecklab.global.error.ErrorCode;
 import com.crosschecklab.support.IntegrationTestSupport;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,7 +48,12 @@ class GuardFitActionApiTest extends IntegrationTestSupport {
         return builder.header(USER_ID_HEADER, REVIEWER_ID).header(ROLE_HEADER, "COMPLIANCE_REVIEWER");
     }
 
-    // 컨테이너는 JVM 당 하나라 여기서 만든 행이 다른 테스트로 새어 나간다. 앞뒤로 비운다.
+    private MockHttpServletRequestBuilder traced(MockHttpServletRequestBuilder builder, String traceId) {
+        return builder.header("X-Trace-Id", traceId);
+    }
+
+    // 컨테이너는 JVM 당 하나라 여기서 만든 변경 가능한 행이 다른 테스트로 새어 나간다.
+    // append-only audit_events 는 비우지 않고 trace/resource 조건으로 검증 범위를 격리한다.
     @BeforeEach
     void setUp() {
         clearFixtures();
@@ -151,61 +158,99 @@ class GuardFitActionApiTest extends IntegrationTestSupport {
                 "status", status));
     }
 
+    private void assertAudit(String traceId, String action, Long resourceId, String label) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT trace_id, actor_id, action, resource_type, resource_id, resource_label, analysis_id
+                FROM audit_events
+                WHERE trace_id = ?
+                  AND resource_type = 'GUARDFIT_ACTION'
+                  AND resource_id = ?
+                """, traceId, resourceId);
+
+        assertThat(rows).singleElement().satisfies(row -> {
+            assertThat(row.get("trace_id")).isEqualTo(traceId);
+            assertThat(row.get("actor_id")).isEqualTo(REVIEWER_ID);
+            assertThat(row.get("action")).isEqualTo(action);
+            assertThat(row.get("resource_type")).isEqualTo("GUARDFIT_ACTION");
+            assertThat(row.get("resource_id")).isEqualTo(resourceId);
+            assertThat(row.get("resource_label")).isEqualTo(label);
+            assertThat(row.get("analysis_id")).isNull();
+        });
+    }
+
+    private void assertNoAudit(String traceId) {
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM audit_events WHERE trace_id = ?", Long.class, traceId)).isZero();
+    }
+
     @Test
     @DisplayName("GF-001: 검토자는 ACTIVE 패턴에 보호조치 후보를 DRAFT 로 생성한다")
     void reviewerCreatesDraftAction() throws Exception {
-        mockMvc.perform(asReviewer(post("/api/guardfit/actions"))
+        String traceId = "guardfit-create-success";
+        String response = mockMvc.perform(traced(asReviewer(post("/api/guardfit/actions"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(createBody(activePatternId)))
+                        .content(createBody(activePatternId)), traceId))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.actionId").isNumber())
                 .andExpect(jsonPath("$.status").value("DRAFT"))
-                .andExpect(jsonPath("$.createdAt").exists());
+                .andExpect(jsonPath("$.createdAt").exists())
+                .andReturn().getResponse().getContentAsString();
+
+        Long actionId = objectMapper.readTree(response).get("actionId").asLong();
+        assertAudit(traceId, "GUARDFIT_ACTION_CREATED", actionId, "원금 손실 가능");
     }
 
     @Test
     @DisplayName("GF-001: DRAFT 패턴에 보호조치를 붙이면 409 RISK_PATTERN_NOT_ACTIVE")
     void createOnDraftPatternIsConflict() throws Exception {
-        mockMvc.perform(asReviewer(post("/api/guardfit/actions"))
+        String traceId = "guardfit-create-inactive";
+        mockMvc.perform(traced(asReviewer(post("/api/guardfit/actions"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(createBody(draftPatternId)))
+                        .content(createBody(draftPatternId)), traceId))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.RISK_PATTERN_NOT_ACTIVE.name()));
+        assertNoAudit(traceId);
     }
 
     @Test
     @DisplayName("GF-001: 존재하지 않는 패턴이면 404")
     void createOnUnknownPatternIsNotFound() throws Exception {
-        mockMvc.perform(asReviewer(post("/api/guardfit/actions"))
+        String traceId = "guardfit-create-not-found";
+        mockMvc.perform(traced(asReviewer(post("/api/guardfit/actions"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(createBody(999_999L)))
+                        .content(createBody(999_999L)), traceId))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.NOT_FOUND.name()));
+        assertNoAudit(traceId);
     }
 
     @Test
     @DisplayName("GF-001: 상품 담당자가 후보를 생성하면 403")
     void productManagerCannotCreate() throws Exception {
-        mockMvc.perform(asPm(post("/api/guardfit/actions"))
+        String traceId = "guardfit-create-wrong-role";
+        mockMvc.perform(traced(asPm(post("/api/guardfit/actions"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(createBody(activePatternId)))
+                        .content(createBody(activePatternId)), traceId))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.FORBIDDEN.name()));
+        assertNoAudit(traceId);
     }
 
     @Test
     @DisplayName("GF-001: 정의되지 않은 actionType 은 400")
     void unknownActionTypeIsBadRequest() throws Exception {
+        String traceId = "guardfit-create-invalid-type";
         String body = objectMapper.writeValueAsString(Map.of(
                 "riskPatternId", activePatternId,
                 "actionType", "WARNING_LABEL",
                 "label", "원금 손실 가능",
                 "placement", "상품 상세 상단"));
 
-        mockMvc.perform(asReviewer(post("/api/guardfit/actions"))
+        mockMvc.perform(traced(asReviewer(post("/api/guardfit/actions"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
+                        .content(body), traceId))
                 .andExpect(status().isBadRequest());
+        assertNoAudit(traceId);
     }
 
     @Test
@@ -295,10 +340,11 @@ class GuardFitActionApiTest extends IntegrationTestSupport {
     @DisplayName("GF-003: 검토자는 문구를 편집하면서 APPROVED 로 승인한다")
     void reviewerEditsAndApproves() throws Exception {
         Long actionId = insertAction(activePatternId, "LABEL", "원금 손실 가능", "DRAFT");
+        String traceId = "guardfit-approve-success";
 
-        mockMvc.perform(asReviewer(put("/api/guardfit/actions/{actionId}", actionId))
+        mockMvc.perform(traced(asReviewer(put("/api/guardfit/actions/{actionId}", actionId))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(updateBody("APPROVED")))
+                        .content(updateBody("APPROVED")), traceId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.actionId").value(actionId))
                 .andExpect(jsonPath("$.riskPatternId").value(activePatternId))
@@ -306,59 +352,69 @@ class GuardFitActionApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.label").value("투자위험 안내"))
                 .andExpect(jsonPath("$.status").value("APPROVED"))
                 .andExpect(jsonPath("$.updatedAt").exists());
+        assertAudit(traceId, "GUARDFIT_ACTION_APPROVED", actionId, "투자위험 안내");
     }
 
     @Test
     @DisplayName("GF-003: DRAFT 로 저장하면 승인 전 편집만 반영된다")
     void reviewerEditsWithoutApproving() throws Exception {
         Long actionId = insertAction(activePatternId, "LABEL", "원금 손실 가능", "DRAFT");
+        String traceId = "guardfit-update-success";
 
-        mockMvc.perform(asReviewer(put("/api/guardfit/actions/{actionId}", actionId))
+        mockMvc.perform(traced(asReviewer(put("/api/guardfit/actions/{actionId}", actionId))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(updateBody("DRAFT")))
+                        .content(updateBody("DRAFT")), traceId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.label").value("투자위험 안내"))
                 .andExpect(jsonPath("$.status").value("DRAFT"));
+        assertAudit(traceId, "GUARDFIT_ACTION_UPDATED", actionId, "투자위험 안내");
     }
 
     @Test
     @DisplayName("GF-003: APPROVED 이후 수정하면 409 ACTION_ALREADY_FINALIZED")
     void approvedActionCannotBeEdited() throws Exception {
         Long actionId = insertAction(activePatternId, "WARNING", "원금 손실 가능", "APPROVED");
+        String traceId = "guardfit-update-finalized";
 
-        mockMvc.perform(asReviewer(put("/api/guardfit/actions/{actionId}", actionId))
+        mockMvc.perform(traced(asReviewer(put("/api/guardfit/actions/{actionId}", actionId))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(updateBody("APPROVED")))
+                        .content(updateBody("APPROVED")), traceId))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.ACTION_ALREADY_FINALIZED.name()));
+        assertNoAudit(traceId);
     }
 
     @Test
     @DisplayName("GF-003: 상품 담당자가 편집·승인하면 403")
     void productManagerCannotUpdate() throws Exception {
         Long actionId = insertAction(activePatternId, "WARNING", "원금 손실 가능", "DRAFT");
+        String traceId = "guardfit-update-wrong-role";
 
-        mockMvc.perform(asPm(put("/api/guardfit/actions/{actionId}", actionId))
+        mockMvc.perform(traced(asPm(put("/api/guardfit/actions/{actionId}", actionId))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(updateBody("APPROVED")))
+                        .content(updateBody("APPROVED")), traceId))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.FORBIDDEN.name()));
+        assertNoAudit(traceId);
     }
 
     @Test
     @DisplayName("GF-003: 존재하지 않는 보호조치는 404")
     void updateUnknownActionIsNotFound() throws Exception {
-        mockMvc.perform(asReviewer(put("/api/guardfit/actions/{actionId}", 999_999L))
+        String traceId = "guardfit-update-not-found";
+        mockMvc.perform(traced(asReviewer(put("/api/guardfit/actions/{actionId}", 999_999L))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(updateBody("APPROVED")))
+                        .content(updateBody("APPROVED")), traceId))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.NOT_FOUND.name()));
+        assertNoAudit(traceId);
     }
 
     @Test
     @DisplayName("GF-003: label 이 비면 400")
     void blankLabelIsBadRequest() throws Exception {
         Long actionId = insertAction(activePatternId, "WARNING", "원금 손실 가능", "DRAFT");
+        String traceId = "guardfit-update-blank-label";
         String body = objectMapper.writeValueAsString(Map.of(
                 "actionType", "WARNING",
                 "label", "  ",
@@ -366,10 +422,11 @@ class GuardFitActionApiTest extends IntegrationTestSupport {
                 "required", true,
                 "status", "APPROVED"));
 
-        mockMvc.perform(asReviewer(put("/api/guardfit/actions/{actionId}", actionId))
+        mockMvc.perform(traced(asReviewer(put("/api/guardfit/actions/{actionId}", actionId))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
+                        .content(body), traceId))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.VALIDATION_ERROR.name()));
+        assertNoAudit(traceId);
     }
 }

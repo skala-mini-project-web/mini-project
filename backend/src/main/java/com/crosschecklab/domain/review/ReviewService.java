@@ -4,6 +4,8 @@ import com.crosschecklab.domain.analysis.Analysis;
 import com.crosschecklab.domain.analysis.AnalysisRepository;
 import com.crosschecklab.domain.analysis.Finding;
 import com.crosschecklab.domain.analysis.FindingRepository;
+import com.crosschecklab.domain.audit.AuditAction;
+import com.crosschecklab.domain.audit.AuditService;
 import com.crosschecklab.domain.document.ProductDocument;
 import com.crosschecklab.domain.document.ProductDocumentRepository;
 import com.crosschecklab.domain.product.Product;
@@ -50,6 +52,7 @@ public class ReviewService {
     private final FindingRepository findingRepository;
     private final ProductDocumentRepository productDocumentRepository;
     private final OwnershipChecker ownershipChecker;
+    private final AuditService auditService;
     private final Clock clock;
 
     // REV-001. 완료된 분석을 검토 대기열에 올리고 분석을 IN_REVIEW 로 넘긴다.
@@ -74,6 +77,7 @@ public class ReviewService {
         } catch (DataIntegrityViolationException e) {
             throw new BusinessException(ErrorCode.REVIEW_ALREADY_EXISTS);
         }
+        auditService.append(currentUser, AuditAction.REVIEW_CREATED, review.getId(), null, analysis.getId());
         return ReviewCreatedResponse.from(review);
     }
 
@@ -148,6 +152,20 @@ public class ReviewService {
         List<Long> riskPatternIds = decision == ReviewStatus.APPROVED
                 ? riskPatternService.promote(review.getId(), findingRepository.findAllById(selectedFindingIds))
                 : List.of();
+        riskPatternIds.forEach(riskPatternId -> auditService.append(
+                currentUser,
+                AuditAction.RISK_PATTERN_PROMOTED,
+                riskPatternId,
+                null,
+                review.getAnalysisId()));
+        auditService.append(
+                currentUser,
+                decision == ReviewStatus.APPROVED
+                        ? AuditAction.REVIEW_APPROVED
+                        : AuditAction.REVIEW_REJECTED,
+                review.getId(),
+                null,
+                review.getAnalysisId());
         return ReviewDecisionResponse.of(review, riskPatternIds);
     }
 

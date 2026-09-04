@@ -30,6 +30,7 @@ class ReviewApiTest extends IntegrationTestSupport {
     private static final long REVIEWER_ID = 2L;
     private static final long FOREIGN_PM_ID = 1001L;
     private static final long OTHER_REVIEWER_ID = 1002L;
+    private static final String TRACE_ID_HEADER = "X-Trace-Id";
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -63,7 +64,7 @@ class ReviewApiTest extends IntegrationTestSupport {
         jdbc.update("DELETE FROM users WHERE id IN (?, ?)", FOREIGN_PM_ID, OTHER_REVIEWER_ID);
     }
 
-    // 참조 순서대로 지운다 (risk_patterns → reviews → findings → analyses → documents → products).
+    // 변경 가능한 fixture 만 참조 순서대로 지운다 (risk_patterns → reviews → findings → analyses → documents → products).
     private void clearFixtures() {
         jdbc.update("DELETE FROM risk_patterns");
         jdbc.update("DELETE FROM reviews");
@@ -126,10 +127,42 @@ class ReviewApiTest extends IntegrationTestSupport {
         return builder.header(USER_ID_HEADER, userId).header(ROLE_HEADER, role);
     }
 
+    private void assertAuditEvent(String traceId, String action, String resourceType,
+                                  Long resourceId, Long actorId, Long expectedAnalysisId) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT action, resource_type, resource_id, actor_id, analysis_id, trace_id, resource_label
+                FROM audit_events
+                WHERE trace_id = ? AND action = ? AND resource_type = ? AND resource_id = ?""",
+                traceId, action, resourceType, resourceId);
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0))
+                .containsEntry("action", action)
+                .containsEntry("resource_type", resourceType)
+                .containsEntry("resource_id", resourceId)
+                .containsEntry("actor_id", actorId)
+                .containsEntry("analysis_id", expectedAnalysisId)
+                .containsEntry("trace_id", traceId)
+                .containsEntry("resource_label", null);
+    }
+
+    private void assertNoAuditEventForAnalysis(String traceId, Long targetAnalysisId) {
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM audit_events WHERE trace_id = ? AND analysis_id = ?",
+                Integer.class, traceId, targetAnalysisId)).isZero();
+    }
+
+    private void assertNoAuditEvent(String traceId, Long targetResourceId) {
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM audit_events WHERE trace_id = ? AND resource_id = ?",
+                Integer.class, traceId, targetResourceId)).isZero();
+    }
+
     @Test
     @DisplayName("REV-001: 완료 분석을 검토 요청하면 201이고 분석은 IN_REVIEW가 된다")
     void createReviewMovesAnalysisToInReview() throws Exception {
+        String traceId = "review-create-success";
         mockMvc.perform(asPm(post("/api/reviews")
+                        .header(TRACE_ID_HEADER, traceId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("analysisId", analysisId)))))
                 .andExpect(status().isCreated())
@@ -140,6 +173,9 @@ class ReviewApiTest extends IntegrationTestSupport {
 
         assertThat(jdbc.queryForObject("SELECT status FROM analyses WHERE id = ?", String.class, analysisId))
                 .isEqualTo("IN_REVIEW");
+        Long reviewId = jdbc.queryForObject(
+                "SELECT id FROM reviews WHERE analysis_id = ?", Long.class, analysisId);
+        assertAuditEvent(traceId, "REVIEW_CREATED", "REVIEW", reviewId, PM_ID, analysisId);
     }
 
     @Test
@@ -179,7 +215,9 @@ class ReviewApiTest extends IntegrationTestSupport {
     @Test
     @DisplayName("REV-001: 500자를 넘는 제출 의견은 검토를 만들지 않고 400으로 거절한다")
     void oversizedSubmissionCommentIsRejectedWithoutCreatingReview() throws Exception {
+        String traceId = "review-create-validation-failure";
         mockMvc.perform(asPm(post("/api/reviews")
+                        .header(TRACE_ID_HEADER, traceId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "analysisId", analysisId,
@@ -196,6 +234,7 @@ class ReviewApiTest extends IntegrationTestSupport {
                 "SELECT status FROM analyses WHERE id = ?",
                 String.class,
                 analysisId)).isEqualTo("COMPLETED");
+        assertNoAuditEventForAnalysis(traceId, analysisId);
     }
 
     @Test
@@ -227,12 +266,15 @@ class ReviewApiTest extends IntegrationTestSupport {
     @DisplayName("REV-001: 같은 분석을 다시 제출하면 409 REVIEW_ALREADY_EXISTS")
     void duplicateReviewIsConflict() throws Exception {
         createReview(analysisId);
+        String traceId = "review-create-duplicate-failure";
 
         mockMvc.perform(asPm(post("/api/reviews")
+                        .header(TRACE_ID_HEADER, traceId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("analysisId", analysisId)))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.REVIEW_ALREADY_EXISTS.name()));
+        assertNoAuditEventForAnalysis(traceId, analysisId);
     }
 
     @Test
@@ -251,12 +293,15 @@ class ReviewApiTest extends IntegrationTestSupport {
     @DisplayName("REV-001: 타인 분석의 검토 요청은 403")
     void reviewOnOthersAnalysisIsForbidden() throws Exception {
         Long othersAnalysisId = insertCompletedAnalysis(REVIEWER_ID, "타인 상품", "hash-other");
+        String traceId = "review-create-authorization-failure";
 
         mockMvc.perform(asPm(post("/api/reviews")
+                        .header(TRACE_ID_HEADER, traceId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("analysisId", othersAnalysisId)))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.FORBIDDEN_OWNERSHIP.name()));
+        assertNoAuditEventForAnalysis(traceId, othersAnalysisId);
     }
 
     @Test
@@ -310,11 +355,13 @@ class ReviewApiTest extends IntegrationTestSupport {
     @DisplayName("REV-003: 승인하면 선택한 Finding 만 DRAFT RiskPattern 으로 승격된다")
     void approvePromotesSelectedFindingsOnly() throws Exception {
         Long reviewId = createReview(analysisId);
+        String traceId = "review-approve-success";
 
         mockMvc.perform(asReviewer(decision(reviewId, Map.of(
                         "status", "APPROVED",
                         "comment", "원금 손실 가능성을 첫 문장에 명시하세요.",
-                        "selectedFindingIds", List.of(highFindingId)))))
+                        "selectedFindingIds", List.of(highFindingId)))
+                        .header(TRACE_ID_HEADER, traceId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reviewId").value(reviewId))
                 .andExpect(jsonPath("$.status").value("APPROVED"))
@@ -324,7 +371,7 @@ class ReviewApiTest extends IntegrationTestSupport {
 
         // 승격 데이터에서 원본 Finding 과 Review 를 역추적할 수 있어야 한다.
         Map<String, Object> pattern = jdbc.queryForMap(
-                "SELECT finding_id, review_id, name, severity, status FROM risk_patterns");
+                "SELECT id, finding_id, review_id, name, severity, status FROM risk_patterns");
         assertThat(pattern.get("finding_id")).isEqualTo(highFindingId);
         assertThat(pattern.get("review_id")).isEqualTo(reviewId);
         assertThat(pattern.get("severity")).isEqualTo("HIGH");
@@ -339,16 +386,40 @@ class ReviewApiTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject(
                 "SELECT count(*) FROM review_selected_findings WHERE review_id = ?", Integer.class, reviewId))
                 .isEqualTo(1);
+        Long patternId = ((Number) pattern.get("id")).longValue();
+        assertAuditEvent(traceId, "RISK_PATTERN_PROMOTED", "RISK_PATTERN",
+                patternId, REVIEWER_ID, analysisId);
+        assertThat(jdbc.queryForList("""
+                SELECT action, resource_type, resource_id, actor_id, analysis_id, trace_id, resource_label
+                FROM audit_events
+                WHERE trace_id = ? AND action = 'REVIEW_APPROVED'
+                  AND resource_type = 'REVIEW' AND resource_id = ?""", traceId, reviewId))
+                .singleElement()
+                .satisfies(row -> assertThat(row)
+                        .containsEntry("resource_type", "REVIEW")
+                        .containsEntry("resource_id", reviewId)
+                        .containsEntry("actor_id", REVIEWER_ID)
+                        .containsEntry("analysis_id", analysisId)
+                        .containsEntry("trace_id", traceId)
+                        .containsEntry("resource_label", null));
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM audit_events
+                WHERE trace_id = ?
+                  AND ((resource_type = 'REVIEW' AND resource_id = ?)
+                    OR (resource_type = 'RISK_PATTERN' AND resource_id = ?))""",
+                Integer.class, traceId, reviewId, patternId)).isEqualTo(2);
     }
 
     @Test
     @DisplayName("REV-003: 반려는 사유만 남기고 승격하지 않는다")
     void rejectRecordsCommentWithoutPromotion() throws Exception {
         Long reviewId = createReview(analysisId);
+        String traceId = "review-reject-success";
 
         mockMvc.perform(asReviewer(decision(reviewId, Map.of(
                         "status", "REJECTED",
-                        "comment", "근거 인용이 부족합니다."))))
+                        "comment", "근거 인용이 부족합니다."))
+                        .header(TRACE_ID_HEADER, traceId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("REJECTED"))
                 .andExpect(jsonPath("$.riskPatternIds.length()").value(0));
@@ -361,6 +432,7 @@ class ReviewApiTest extends IntegrationTestSupport {
         assertThat(review.get("comment")).isEqualTo("근거 인용이 부족합니다.");
         assertThat(review.get("decided_at")).isNotNull();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM risk_patterns", Integer.class)).isZero();
+        assertAuditEvent(traceId, "REVIEW_REJECTED", "REVIEW", reviewId, REVIEWER_ID, analysisId);
     }
 
     @Test
@@ -372,23 +444,29 @@ class ReviewApiTest extends IntegrationTestSupport {
                         "selectedFindingIds", List.of(highFindingId)))))
                 .andExpect(status().isOk());
 
+        String traceId = "review-second-decision-failure";
         mockMvc.perform(asReviewer(decision(reviewId, Map.of(
                         "status", "REJECTED",
-                        "comment", "다시 봐야 합니다."))))
+                        "comment", "다시 봐야 합니다."))
+                        .header(TRACE_ID_HEADER, traceId)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.REVIEW_ALREADY_DECIDED.name()));
 
         assertThat(jdbc.queryForObject("SELECT count(*) FROM risk_patterns", Integer.class)).isEqualTo(1);
+        assertNoAuditEvent(traceId, reviewId);
     }
 
     @Test
     @DisplayName("REV-003: 승인인데 selectedFindingIds 가 없으면 400 INVALID_FINDING_SELECTION")
     void approveWithoutSelectionIsBadRequest() throws Exception {
         Long reviewId = createReview(analysisId);
+        String traceId = "review-decision-validation-failure";
 
-        mockMvc.perform(asReviewer(decision(reviewId, Map.of("status", "APPROVED"))))
+        mockMvc.perform(asReviewer(decision(reviewId, Map.of("status", "APPROVED"))
+                        .header(TRACE_ID_HEADER, traceId)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.INVALID_FINDING_SELECTION.name()));
+        assertNoAuditEvent(traceId, reviewId);
     }
 
     @Test
@@ -419,12 +497,15 @@ class ReviewApiTest extends IntegrationTestSupport {
     @DisplayName("REV-003: 상품 담당자의 결정 호출은 403")
     void decisionByProductManagerIsForbidden() throws Exception {
         Long reviewId = createReview(analysisId);
+        String traceId = "review-decision-authorization-failure";
 
         mockMvc.perform(asPm(decision(reviewId, Map.of(
                         "status", "APPROVED",
-                        "selectedFindingIds", List.of(highFindingId)))))
+                        "selectedFindingIds", List.of(highFindingId)))
+                        .header(TRACE_ID_HEADER, traceId)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.FORBIDDEN.name()));
+        assertNoAuditEvent(traceId, reviewId);
     }
 
     @Test

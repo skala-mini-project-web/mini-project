@@ -31,6 +31,7 @@ class RiskPatternApiTest extends IntegrationTestSupport {
     private static final String ROLE_HEADER = "X-Demo-Role";
     private static final long PM_ID = 1L;
     private static final long REVIEWER_ID = 2L;
+    private static final String TRACE_ID_HEADER = "X-Trace-Id";
 
     // V2 시드: 1 = CORE_FINANCIAL_RISK_V1 (규칙 6종 전부 보유)
     private static final long CORE_PACK_ID = 1L;
@@ -95,7 +96,7 @@ class RiskPatternApiTest extends IntegrationTestSupport {
         clearFixtures();
     }
 
-    // 참조 순서대로 지운다 (risk_patterns → reviews → findings → analyses → documents → products → 테스트 Pack).
+    // 변경 가능한 fixture 만 참조 순서대로 지운다 (risk_patterns → reviews → findings → analyses → documents → products → 테스트 Pack).
     private void clearFixtures() {
         jdbc.update("DELETE FROM risk_patterns");
         jdbc.update("DELETE FROM reviews");
@@ -169,6 +170,28 @@ class RiskPatternApiTest extends IntegrationTestSupport {
                 INSERT INTO risk_patterns (finding_id, review_id, name, severity, status, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, NOW(), NOW())
                 RETURNING id""", Long.class, findingId, reviewId, name, severity, status);
+    }
+
+    private void assertAuditEvent(String traceId, String action, Long resourceId, String resourceLabel) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT action, resource_type, resource_id, actor_id, analysis_id, trace_id, resource_label
+                FROM audit_events
+                WHERE trace_id = ? AND resource_type = 'RISK_PATTERN' AND resource_id = ?""",
+                traceId, resourceId);
+        assertThat(rows).singleElement().satisfies(row -> assertThat(row)
+                .containsEntry("action", action)
+                .containsEntry("resource_type", "RISK_PATTERN")
+                .containsEntry("resource_id", resourceId)
+                .containsEntry("actor_id", REVIEWER_ID)
+                .containsEntry("analysis_id", null)
+                .containsEntry("trace_id", traceId)
+                .containsEntry("resource_label", resourceLabel));
+    }
+
+    private void assertNoAuditEvent(String traceId, Long targetResourceId) {
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM audit_events WHERE trace_id = ? AND resource_id = ?",
+                Integer.class, traceId, targetResourceId)).isZero();
     }
 
     @Test
@@ -370,7 +393,9 @@ class RiskPatternApiTest extends IntegrationTestSupport {
                 .containsExactly(highPatternId, lowPatternId, draftPatternId)
                 .doesNotContain(unrelatedPatternId);
 
-        mockMvc.perform(asReviewer(patch("/api/risk-patterns/{id}", draftPatternId))
+        String traceId = "risk-status-only-activation-success";
+        mockMvc.perform(asReviewer(patch("/api/risk-patterns/{id}", draftPatternId)
+                        .header(TRACE_ID_HEADER, traceId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("status", "ACTIVE"))))
                 .andExpect(status().isOk());
@@ -378,6 +403,7 @@ class RiskPatternApiTest extends IntegrationTestSupport {
         assertThat(riskPatternService.findIdsByReviewId(reviewId))
                 .containsExactly(highPatternId, lowPatternId, draftPatternId)
                 .doesNotContain(unrelatedPatternId);
+        assertAuditEvent(traceId, "RISK_PATTERN_ACTIVATED", draftPatternId, "중도해지 비용이 분산되어 있습니다.");
     }
 
     @Test
@@ -411,32 +437,61 @@ class RiskPatternApiTest extends IntegrationTestSupport {
                         "중도해지 비용이 분산되어 있습니다.", "MEDIUM"),
                 reviewId, "중도해지 비용이 분산되어 있습니다.", "MEDIUM", "DRAFT");
 
-        mockMvc.perform(asReviewer(patch("/api/risk-patterns/{id}", draftPatternId))
+        String traceId = "risk-name-update-success";
+        mockMvc.perform(asReviewer(patch("/api/risk-patterns/{id}", draftPatternId)
+                        .header(TRACE_ID_HEADER, traceId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("name", "중도해지 비용 오인"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("중도해지 비용 오인"))
                 .andExpect(jsonPath("$.status").value("DRAFT"));
+        assertAuditEvent(traceId, "RISK_PATTERN_UPDATED", draftPatternId, "중도해지 비용 오인");
     }
 
     @Test
     @DisplayName("RISK-002: ACTIVE 를 DRAFT 로 되돌리면 409")
     void revertingToDraftIsConflict() throws Exception {
-        mockMvc.perform(asReviewer(patch("/api/risk-patterns/{id}", highPatternId))
+        String traceId = "risk-rejected-transition-failure";
+        mockMvc.perform(asReviewer(patch("/api/risk-patterns/{id}", highPatternId)
+                        .header(TRACE_ID_HEADER, traceId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("status", "DRAFT"))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.RISK_PATTERN_ALREADY_ACTIVE.name()));
+        assertNoAuditEvent(traceId, highPatternId);
     }
 
     @Test
     @DisplayName("RISK-002: 상품 담당자의 수정 호출은 403")
     void updateByProductManagerIsForbidden() throws Exception {
-        mockMvc.perform(asPm(patch("/api/risk-patterns/{id}", highPatternId))
+        String traceId = "risk-update-authorization-failure";
+        mockMvc.perform(asPm(patch("/api/risk-patterns/{id}", highPatternId)
+                        .header(TRACE_ID_HEADER, traceId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("name", "임의 변경"))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.FORBIDDEN.name()));
+        assertNoAuditEvent(traceId, highPatternId);
+    }
+
+    @Test
+    @DisplayName("RISK-002: 공백 이름 검증 실패는 감사 로그를 남기지 않는다")
+    void blankNameWritesNoAuditEvent() throws Exception {
+        Long draftPatternId = insertPattern(
+                insertFinding(jdbc.queryForObject(
+                        "SELECT analysis_id FROM findings WHERE id = ?", Long.class, highFindingId),
+                        "공백 이름 검증 대상입니다.", "MEDIUM"),
+                reviewId, "저장된 패턴 이름", "MEDIUM", "DRAFT");
+        String traceId = "risk-update-validation-failure";
+
+        mockMvc.perform(asReviewer(patch("/api/risk-patterns/{id}", draftPatternId)
+                        .header(TRACE_ID_HEADER, traceId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("name", " "))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value(ErrorCode.RISK_PATTERN_NAME_REQUIRED.name()));
+
+        assertNoAuditEvent(traceId, draftPatternId);
     }
 
     @Test

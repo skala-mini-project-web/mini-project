@@ -1,5 +1,7 @@
 package com.crosschecklab.domain.guardfit;
 
+import com.crosschecklab.domain.audit.AuditAction;
+import com.crosschecklab.domain.audit.AuditService;
 import com.crosschecklab.domain.guardfit.dto.GuardFitActionCreateRequest;
 import com.crosschecklab.domain.guardfit.dto.GuardFitActionCreatedResponse;
 import com.crosschecklab.domain.guardfit.dto.GuardFitActionResponse;
@@ -29,6 +31,7 @@ public class GuardFitActionService {
     private final GuardFitActionRepository guardFitActionRepository;
     private final RiskPatternService riskPatternService;
     private final OwnershipChecker ownershipChecker;
+    private final AuditService auditService;
 
     // GF-001. 사람이 승인해 ACTIVE 가 된 패턴에만 보호조치를 붙일 수 있다.
     @Transactional
@@ -45,7 +48,14 @@ public class GuardFitActionService {
                 request.requiredOrDefault(),
                 normalizePreview(request.preview()),
                 currentUser.id());
-        return GuardFitActionCreatedResponse.from(guardFitActionRepository.save(action));
+        GuardFitAction savedAction = guardFitActionRepository.save(action);
+        auditService.append(
+                currentUser,
+                AuditAction.GUARDFIT_ACTION_CREATED,
+                savedAction.getId(),
+                savedAction.getLabel(),
+                null);
+        return GuardFitActionCreatedResponse.from(savedAction);
     }
 
     // GF-002. 상품 담당자와 검토자가 함께 쓰는 유일한 GuardFit 조회 경로다.
@@ -67,6 +77,7 @@ public class GuardFitActionService {
 
         GuardFitAction action = guardFitActionRepository.findWithLockById(actionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        GuardFitStatus previousStatus = action.getStatus();
         // 이미 APPROVED 면 엔티티가 409 ACTION_ALREADY_FINALIZED 로 끊는다.
         action.edit(
                 request.actionType(),
@@ -77,7 +88,17 @@ public class GuardFitActionService {
                 request.status(),
                 currentUser.id());
         // updatedAt 은 flush 시점에 채워지므로 응답에 최신 값을 담으려면 여기서 밀어낸다.
-        return GuardFitActionResponse.from(guardFitActionRepository.saveAndFlush(action));
+        GuardFitAction savedAction = guardFitActionRepository.saveAndFlush(action);
+        auditService.append(
+                currentUser,
+                previousStatus == GuardFitStatus.DRAFT
+                                && savedAction.getStatus() == GuardFitStatus.APPROVED
+                        ? AuditAction.GUARDFIT_ACTION_APPROVED
+                        : AuditAction.GUARDFIT_ACTION_UPDATED,
+                savedAction.getId(),
+                savedAction.getLabel(),
+                null);
+        return GuardFitActionResponse.from(savedAction);
     }
 
     // 상품 담당자에게는 승인본만 보인다. 요청에 status 를 무엇으로 넣든 서버가 APPROVED 로 고정한다.
