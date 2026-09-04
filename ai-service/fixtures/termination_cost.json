@@ -1,0 +1,24 @@
+{
+  "riskScore": 61,
+  "modelVersion": "mock-risk-v1",
+  "promptVersion": "mock-prompt-v1",
+  "findings": [
+    {
+      "statement": "중도해지 비용이 수익 정보보다 눈에 띄지 않아 총비용을 오인할 가능성이 있습니다.",
+      "severity": "MEDIUM",
+      "affectedPersonaCodes": [
+        "SHORT_TERM_LIQUIDITY"
+      ],
+      "retrievedContextChunkIds": [
+        12
+      ],
+      "evidenceSpans": [
+        {
+          "chunkId": 12,
+          "excerpt": "중도해지 비용"
+        }
+      ],
+      "recommendation": "예상 중도해지 비용을 수익 정보와 동일한 화면에 표시하세요."
+    }
+  ]
+}

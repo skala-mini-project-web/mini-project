@@ -1,0 +1,29 @@
+# 테스트 전용 설정.
+# 이 파일은 클래스패스에서 main의 application.yml을 가린다(대체한다). 테스트에 필요한 값은 여기 둔다.
+# 실제 DB 접속 정보는 Testcontainers의 @ServiceConnection이 주입한다.
+spring:
+  # 테스트에서 analysisTaskExecutor 를 동기 실행기로 교체하기 위함
+  main:
+    allow-bean-definition-overriding: true
+
+  datasource:
+    username: test
+    password: test
+
+  jpa:
+    properties:
+      hibernate:
+        format_sql: false
+
+# 테스트는 외부 ai-service를 호출하지 않는다(FakeRiskAnalysisProvider). 기본 시나리오만 고정한다.
+ai-service:
+  base-url: http://localhost:8000
+  connect-timeout: 1s
+  read-timeout: 5s
+  default-scenario-code: GUARANTEE_MISUNDERSTANDING_HIGH
+
+logging:
+  level:
+    org.hibernate.SQL: warn
+    org.testcontainers: warn
+    com.github.dockerjava: warn

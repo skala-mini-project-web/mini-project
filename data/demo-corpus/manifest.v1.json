@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "1.0",
+  "corpusId": "argus.issue-59.canonical-demo",
+  "language": "ko-KR",
+  "syntheticDeclaration": "모든 문서, 상품, 기관, 지수, 수치 및 규정은 100% 합성이며 실제 금융·법률 권위를 갖지 않습니다.",
+  "artifacts": [
+    {
+      "logicalId": "product.smart-income.sales",
+      "version": "1.0",
+      "documentType": "product-sales-material",
+      "source": "Argus synthetic demo authoring",
+      "license": "CC0-1.0",
+      "synthetic": true,
+      "authoritativeForDemo": true,
+      "path": "documents/product/SMART-INCOME-SALES-v1.pdf",
+      "sha256": "f7d1b5887dc9e55b58ac7c244e65c23daeeac7be6d017d23e61ec0e4804be0c9",
+      "byteSize": 75747,
+      "pageCount": 3
+    },
+    {
+      "logicalId": "evidence.smart-income.product-policy",
+      "version": "1.0",
+      "documentType": "internal-product-policy",
+      "source": "Argus synthetic demo authoring",
+      "license": "CC0-1.0",
+      "synthetic": true,
+      "authoritativeForDemo": true,
+      "path": "documents/evidence/SMART-INCOME-PRODUCT-POLICY-v1.pdf",
+      "sha256": "47dae5a632f32c12da39135756ecc20590cfe7bc1b42cb323290851c3fd1fb74",
+      "byteSize": 74031,
+      "pageCount": 2
+    },
+    {
+      "logicalId": "evidence.important-info-display-policy",
+      "version": "2026.1",
+      "documentType": "internal-disclosure-policy",
+      "source": "Argus synthetic demo authoring",
+      "license": "CC0-1.0",
+      "synthetic": true,
+      "authoritativeForDemo": true,
+      "path": "documents/evidence/IMPORTANT-INFO-DISPLAY-POLICY-v2026.1.pdf",
+      "sha256": "595f9f81aba4941b514b50a5eac128e2f5376ac62be8d3ae916339a79ad5060e",
+      "byteSize": 72845,
+      "pageCount": 2
+    },
+    {
+      "logicalId": "evidence.financial-consumer-explanation-duty-excerpt",
+      "version": "1.0",
+      "documentType": "synthetic-regulation-excerpt",
+      "source": "Argus synthetic demo authoring",
+      "license": "CC0-1.0",
+      "synthetic": true,
+      "authoritativeForDemo": true,
+      "path": "documents/evidence/FINANCIAL-CONSUMER-EXPLANATION-DUTY-EXCERPT-v1.pdf",
+      "sha256": "38b2ac8007db5ed162173dedb8f2ddeb470424147be695d4bbb3eef11d0c1999",
+      "byteSize": 77272,
+      "pageCount": 2
+    }
+  ],
+  "evidenceMappings": [
+    {
+      "productLogicalId": "product.smart-income.sales",
+      "databaseTable": "demo_corpus_evidence_mappings",
+      "selectedEvidence": [
+        {
+          "evidenceLogicalId": "evidence.smart-income.product-policy",
+          "evidenceDocumentId": 3,
+          "selectionOrder": 1
+        },
+        {
+          "evidenceLogicalId": "evidence.important-info-display-policy",
+          "evidenceDocumentId": 1,
+          "selectionOrder": 2
+        },
+        {
+          "evidenceLogicalId": "evidence.financial-consumer-explanation-duty-excerpt",
+          "evidenceDocumentId": 2,
+          "selectionOrder": 3
+        }
+      ],
+      "mappingType": "persisted_seed_mapping",
+      "authorityDisclaimer": "이 연결은 데모 데이터베이스에 사전 시드한 검색 매핑이며, 실제 법적 권위·규제기관 승인·사실관계를 창작하거나 주장하지 않습니다."
+    }
+  ]
+}

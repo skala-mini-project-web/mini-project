@@ -1,0 +1,162 @@
+{
+  "contractVersion": "1.0",
+  "analysisId": 61,
+  "status": "COMPLETED",
+  "riskScore": 82,
+  "scoreBreakdown": {
+    "severityBase": 60,
+    "personaBonus": 10,
+    "ruleBonus": 6,
+    "groundingBonus": 6,
+    "scorePolicyVersion": "1.0"
+  },
+  "sourceDocument": {
+    "documentId": 11,
+    "fileName": "스마트인컴_판매자료.pdf"
+  },
+  "experimentSummary": {
+    "repetitionCountPerPersona": 3,
+    "selectedPersonaCount": 2,
+    "totalRunCount": 6,
+    "stabilityThreshold": 0.67
+  },
+  "personaSummaries": [
+    {
+      "personaCode": "FINANCIAL_BEGINNER",
+      "averageComprehensionScore": 27,
+      "runCount": 3,
+      "topMisunderstandingCodes": ["PRINCIPAL_PROTECTION_MISUNDERSTANDING"]
+    }
+  ],
+  "redTeamSummary": {
+    "checkedRuleCount": 6,
+    "triggeredRuleCount": 2,
+    "triggeredRuleCodes": ["STABILITY_KEYWORD", "COST_OMISSION"]
+  },
+  "findings": [
+    {
+      "findingId": 401,
+      "statement": "안정성 표현이 원금보장으로 오인될 가능성이 있습니다.",
+      "severity": "HIGH",
+      "affectedPersonaCodes": ["FINANCIAL_BEGINNER", "SENIOR"],
+      "evidenceReferences": [
+        {
+          "evidenceDocumentId": 22,
+          "sourceType": "INTERNAL_POLICY",
+          "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다."
+        }
+      ],
+      "recommendation": "안정성 표현과 같은 영역에 원금손실 가능성을 명시하세요.",
+      "aiDetail": {
+        "findingType": "MISUNDERSTANDING",
+        "categoryCode": "PRINCIPAL_PROTECTION_MISUNDERSTANDING",
+        "ruleCode": "STABILITY_KEYWORD",
+        "confidence": 0.94,
+        "taxonomyVersion": "1.0",
+        "sourceReferences": [
+          {
+            "documentId": 11,
+            "page": 1,
+            "slide": null,
+            "excerpt": "최근 안정적인 수익률을 기대할 수 있는 투자상품입니다."
+          }
+        ],
+        "groundTruthFactIds": [201],
+        "sourceRunIds": [1001],
+        "redTeamResultIds": [3001],
+        "caseReferences": []
+      }
+    },
+    {
+      "findingId": 402,
+      "statement": "총비용 수준이 명확히 표시되지 않았습니다.",
+      "severity": "MEDIUM",
+      "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+      "evidenceReferences": [
+        {
+          "evidenceDocumentId": 22,
+          "sourceType": "INTERNAL_POLICY",
+          "excerpt": "비용 정보는 수익 표현과 함께 제시해야 합니다."
+        }
+      ],
+      "recommendation": "총비용 예시를 수익 표현 인접 위치에 표시하세요.",
+      "aiDetail": {
+        "findingType": "OMISSION",
+        "categoryCode": "COST_OMISSION",
+        "ruleCode": "COST_OMISSION",
+        "confidence": 0.9,
+        "taxonomyVersion": "1.0",
+        "sourceReferences": [
+          {
+            "documentId": 11,
+            "page": 1,
+            "slide": null,
+            "excerpt": "운용 보수가 부과됩니다."
+          }
+        ],
+        "groundTruthFactIds": [202],
+        "sourceRunIds": [1001],
+        "redTeamResultIds": [3002],
+        "caseReferences": []
+      }
+    }
+  ],
+  "vulnerabilityPatterns": [
+    {
+      "patternId": 501,
+      "analysisId": 61,
+      "patternKey": "PRINCIPAL_PROTECTION_MISUNDERSTANDING",
+      "title": "안정성 표현에 따른 원금보장 오해",
+      "severity": "HIGH",
+      "occurrenceCount": 5,
+      "totalRunCount": 6,
+      "consistencyRate": 0.8333,
+      "stabilityThreshold": 0.67,
+      "stable": true,
+      "affectedPersonaCodes": ["FINANCIAL_BEGINNER", "SENIOR"],
+      "findingIds": [401]
+    }
+  ],
+  "guardFitSuggestions": [
+    {
+      "suggestionId": 601,
+      "patternId": 501,
+      "actionType": "WARNING",
+      "priority": "HIGH",
+      "label": "원금손실 가능성 고지",
+      "placement": "상품 소개 문구 바로 아래",
+      "required": true,
+      "reason": "6회 중 5회에서 원금보장 오해가 재현되었습니다.",
+      "beforeText": "최근 안정적인 수익률을 기대할 수 있는 투자상품입니다.",
+      "afterText": "시장 상황에 따라 원금 전액 손실이 발생할 수 있는 고위험 투자상품입니다.",
+      "evidenceDocumentIds": [22],
+      "status": "PROPOSED"
+    }
+  ],
+  "groundTruthFacts": [
+    {
+      "factId": 201,
+      "factType": "PRINCIPAL_LOSS",
+      "label": "원금손실 가능성",
+      "value": "시장 상황에 따라 원금 전액 손실 가능",
+      "importance": "CRITICAL",
+      "verificationStatus": "VERIFIED",
+      "sourceReferences": [
+        {
+          "evidenceDocumentId": 21,
+          "page": 8,
+          "excerpt": "투자자는 원금의 전부를 손실할 수 있습니다."
+        }
+      ]
+    }
+  ],
+  "provenance": {
+    "providerType": "MOCK",
+    "modelVersion": "DETERMINISTIC_FIXTURE_V1",
+    "promptVersion": "1.0",
+    "outputSchemaVersion": "1.0",
+    "scorePolicyVersion": "1.0",
+    "taxonomyVersion": "1.0",
+    "generatedAt": "2026-09-03T14:10:05+09:00"
+  }
+}

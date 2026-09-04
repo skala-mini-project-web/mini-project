@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ARGUS 로컬 데모 데이터 초기화</title>
+  <style>body{margin:0;display:grid;min-height:100vh;place-items:center;background:#f5f7fa;color:#122033;font:15px -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif}.card{max-width:360px;padding:28px;border:1px solid #d8dee8;border-radius:12px;background:#fff;text-align:center;box-shadow:0 3px 12px #12203312}p{color:#667085;line-height:1.6}</style>
+</head>
+<body>
+  <main class="card">
+    <h1>로컬 Mock 데이터 초기화</h1>
+    <p>이전 테스트 상품·문서·분석·검토·알림 데이터를 지우고 실제 로컬 데모 상품 목록으로 이동합니다.</p>
+  </main>
+  <script>
+    ;(async () => {
+      localStorage.removeItem('guardlab.store.v1')
+      localStorage.removeItem('guardlab.jobs.v1')
+      localStorage.removeItem('guardlab.ai.local')
+
+      const response = await fetch('/api/demo/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: 1, role: 'PRODUCT_MANAGER' }),
+      })
+      if (!response.ok) throw new Error(`Demo session failed: ${response.status}`)
+      localStorage.setItem('guardlab.session', JSON.stringify(await response.json()))
+      location.replace(`/products?demo=prepared&fresh=${Date.now()}`)
+    })().catch((error) => {
+      document.querySelector('.card').innerHTML = `<h1>초기화 실패</h1><p>${error.message}</p>`
+    })
+  </script>
+</body>
+</html>

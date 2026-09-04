@@ -1,0 +1,60 @@
+spring:
+  application:
+    name: crosschecklab
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:crosschecklab}?sslmode=${DB_SSLMODE:disable}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate   # 스키마는 Flyway가 관리, JPA는 검증만
+    properties:
+      hibernate:
+        format_sql: true
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+# 외부 ai-service(FastAPI Mock) 호출 설정. Provider 교체 시 여기만 바꾼다.
+ai-service:
+  # 요청 본문에 확정 텍스트와 근거 문서 원문이 실린다.
+  # 로컬(localhost)이 아니면 https 만 허용하며, 아니면 기동 시점에 실패한다.
+  base-url: ${AI_SERVICE_URL:http://localhost:8000}
+  # Docker Compose 내부 네트워크의 평문 HTTP를 로컬 데모에서만 명시적으로 허용한다.
+  # 실제 배포 환경에서는 반드시 false로 두고 HTTPS를 사용한다.
+  allow-insecure-http: ${AI_SERVICE_ALLOW_INSECURE_HTTP:false}
+  connect-timeout: 2s
+  read-timeout: 20s
+  # X-Demo-Scenario 헤더가 없을 때 사용할 기본 Fixture 시나리오
+  default-scenario-code: GUARANTEE_MISUNDERSTANDING_HIGH
+
+rag:
+  ollama:
+    base-url: http://localhost:11434
+    embedding-model: bge-m3:latest
+    embedding-dimension: 1024
+    connect-timeout: 2s
+    read-timeout: 30s
+  retrieval-version: rag-v1
+
+server:
+  port: 8080
+
+logging:
+  level:
+    org.hibernate.SQL: debug
+
+  # 로그 라인마다 traceId 를 찍어서 요청 단위로 추적
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{traceId:-no-trace}] %logger{36} - %msg%n"

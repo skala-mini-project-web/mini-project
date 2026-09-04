@@ -1,0 +1,112 @@
+{
+  "schemaVersion": "1.0",
+  "corpusId": "argus.issue-59.canonical-demo",
+  "language": "ko-KR",
+  "synthetic": true,
+  "demoOnly": true,
+  "authorityDisclaimer": "이 메타데이터와 연결된 문서·데이터베이스 행은 100% 합성 데모 자료이며 실제 금융·법률 권위 또는 규제기관 승인을 의미하지 않습니다.",
+  "chunking": {
+    "version": "korean-boundary-v1-1200-200",
+    "maxCodePoints": 1200,
+    "overlapCodePoints": 200,
+    "sourceNormalization": "CRLF/CR을 LF로 바꾼 뒤 전체 문자열 strip"
+  },
+  "documents": [
+    {
+      "logicalId": "product.smart-income.sales",
+      "version": "1.0",
+      "path": "documents/product/SMART-INCOME-SALES-v1.pdf",
+      "artifactSha256": "f7d1b5887dc9e55b58ac7c244e65c23daeeac7be6d017d23e61ec0e4804be0c9",
+      "license": "CC0-1.0",
+      "synthetic": true,
+      "demoOnly": true,
+      "databaseMapping": {
+        "table": "demo_corpus_artifacts",
+        "logicalIdColumn": "logical_id",
+        "evidenceDocumentId": null,
+        "purpose": "analysis-input",
+        "selectedEvidenceMappingTable": "demo_corpus_evidence_mappings",
+        "selectedEvidence": [
+          {
+            "logicalId": "evidence.smart-income.product-policy",
+            "evidenceDocumentId": 3,
+            "selectionOrder": 1
+          },
+          {
+            "logicalId": "evidence.important-info-display-policy",
+            "evidenceDocumentId": 1,
+            "selectionOrder": 2
+          },
+          {
+            "logicalId": "evidence.financial-consumer-explanation-duty-excerpt",
+            "evidenceDocumentId": 2,
+            "selectionOrder": 3
+          }
+        ]
+      }
+    },
+    {
+      "logicalId": "evidence.smart-income.product-policy",
+      "version": "1.0",
+      "path": "documents/evidence/SMART-INCOME-PRODUCT-POLICY-v1.pdf",
+      "artifactSha256": "47dae5a632f32c12da39135756ecc20590cfe7bc1b42cb323290851c3fd1fb74",
+      "contentSourceSha256": "36c401902e6d25caa6023a0f5c41f932a6542a9c173bcc4599d62b82f6cf58a4",
+      "license": "CC0-1.0",
+      "synthetic": true,
+      "demoOnly": true,
+      "databaseMapping": {
+        "table": "evidence_documents",
+        "id": 3,
+        "sourceType": "PRODUCT_POLICY",
+        "active": true,
+        "provenanceTable": "demo_corpus_artifacts",
+        "provenanceLogicalId": "evidence.smart-income.product-policy",
+        "selectionMappingTable": "demo_corpus_evidence_mappings",
+        "selectedByProductLogicalId": "product.smart-income.sales",
+        "selectionOrder": 1
+      }
+    },
+    {
+      "logicalId": "evidence.important-info-display-policy",
+      "version": "2026.1",
+      "path": "documents/evidence/IMPORTANT-INFO-DISPLAY-POLICY-v2026.1.pdf",
+      "artifactSha256": "595f9f81aba4941b514b50a5eac128e2f5376ac62be8d3ae916339a79ad5060e",
+      "contentSourceSha256": "8a04ce9628e3e205960946099d04c7fd25f3812f298f3b13649602f791d04fe6",
+      "license": "CC0-1.0",
+      "synthetic": true,
+      "demoOnly": true,
+      "databaseMapping": {
+        "table": "evidence_documents",
+        "id": 1,
+        "sourceType": "INTERNAL_POLICY",
+        "active": true,
+        "provenanceTable": "demo_corpus_artifacts",
+        "provenanceLogicalId": "evidence.important-info-display-policy",
+        "selectionMappingTable": "demo_corpus_evidence_mappings",
+        "selectedByProductLogicalId": "product.smart-income.sales",
+        "selectionOrder": 2
+      }
+    },
+    {
+      "logicalId": "evidence.financial-consumer-explanation-duty-excerpt",
+      "version": "1.0",
+      "path": "documents/evidence/FINANCIAL-CONSUMER-EXPLANATION-DUTY-EXCERPT-v1.pdf",
+      "artifactSha256": "38b2ac8007db5ed162173dedb8f2ddeb470424147be695d4bbb3eef11d0c1999",
+      "contentSourceSha256": "443c7a3b26aca1b934df5219c766471acd6a567ed89edd7b2a624bc3c7fb4772",
+      "license": "CC0-1.0",
+      "synthetic": true,
+      "demoOnly": true,
+      "databaseMapping": {
+        "table": "evidence_documents",
+        "id": 2,
+        "sourceType": "REGULATION",
+        "active": true,
+        "provenanceTable": "demo_corpus_artifacts",
+        "provenanceLogicalId": "evidence.financial-consumer-explanation-duty-excerpt",
+        "selectionMappingTable": "demo_corpus_evidence_mappings",
+        "selectedByProductLogicalId": "product.smart-income.sales",
+        "selectionOrder": 3
+      }
+    }
+  ]
+}
