@@ -38,6 +38,9 @@ public class Review extends BaseTimeEntity {
     @Column(name = "analysis_id", nullable = false, updatable = false, unique = true)
     private Long analysisId;
 
+    @Column(name = "submission_comment", length = 500, updatable = false)
+    private String submissionComment;
+
     // 결정 전에는 담당 검토자가 정해져 있지 않다. 결정한 사람이 그대로 기록된다.
     @Column(name = "reviewer_id")
     private Long reviewerId;
@@ -58,9 +61,10 @@ public class Review extends BaseTimeEntity {
     @Column(name = "finding_id", nullable = false)
     private Set<Long> selectedFindingIds = new LinkedHashSet<>();
 
-    public static Review create(Long analysisId) {
+    public static Review create(Long analysisId, String submissionComment) {
         Review review = new Review();
         review.analysisId = analysisId;
+        review.submissionComment = submissionComment;
         review.status = ReviewStatus.PENDING;
         return review;
     }

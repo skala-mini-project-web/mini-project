@@ -55,6 +55,8 @@ class RiskPatternApiTest extends IntegrationTestSupport {
     private Long mediumFindingId;
     private Long reviewId;
     private Long highPatternId;
+    private Long lowPatternId;
+    private Long unrelatedPatternId;
 
     private MockHttpServletRequestBuilder asPm(MockHttpServletRequestBuilder builder) {
         return builder.header(USER_ID_HEADER, PM_ID).header(ROLE_HEADER, "PRODUCT_MANAGER");
@@ -75,7 +77,7 @@ class RiskPatternApiTest extends IntegrationTestSupport {
         lowFindingId = insertFinding(coreAnalysisId, "용어 설명이 부족합니다.", "LOW", PERSONA_LOSS_EXPERIENCED);
         reviewId = insertApprovedReview(coreAnalysisId);
         highPatternId = insertPattern(highFindingId, reviewId, "원금보장 오해", "HIGH", "ACTIVE");
-        insertPattern(lowFindingId, reviewId, "용어 설명 부족", "LOW", "ACTIVE");
+        lowPatternId = insertPattern(lowFindingId, reviewId, "용어 설명 부족", "LOW", "ACTIVE");
 
         // 규칙이 없는 Pack 으로 분석된 패턴. ruleCode 필터에서 빠져야 한다.
         jdbc.update("""
@@ -84,7 +86,8 @@ class RiskPatternApiTest extends IntegrationTestSupport {
         Long emptyPackAnalysisId = insertCompletedAnalysis("퇴직연금 안심플랜", EMPTY_PACK_ID, "hash-empty");
         mediumFindingId = insertFinding(emptyPackAnalysisId, "수수료 안내가 분산되어 있습니다.", "MEDIUM",
                 PERSONA_FINANCIAL_BEGINNER);
-        insertPattern(mediumFindingId, insertApprovedReview(emptyPackAnalysisId), "비용 누락", "MEDIUM", "ACTIVE");
+        unrelatedPatternId = insertPattern(
+                mediumFindingId, insertApprovedReview(emptyPackAnalysisId), "비용 누락", "MEDIUM", "ACTIVE");
     }
 
     @AfterEach
@@ -135,11 +138,30 @@ class RiskPatternApiTest extends IntegrationTestSupport {
         return findingId;
     }
 
-    private Long insertApprovedReview(Long analysisId) {
-        return jdbc.queryForObject("""
+    private Long insertApprovedReview(Long analysisId, Long... selectedFindingIds) {
+        Long insertedReviewId = jdbc.queryForObject("""
                 INSERT INTO reviews (analysis_id, reviewer_id, status, comment, decided_at, created_at, updated_at)
                 VALUES (?, ?, 'APPROVED', '표현을 보완하세요.', NOW(), NOW(), NOW())
                 RETURNING id""", Long.class, analysisId, REVIEWER_ID);
+        for (Long selectedFindingId : selectedFindingIds) {
+            jdbc.update("""
+                    INSERT INTO review_selected_findings (review_id, finding_id)
+                    VALUES (?, ?)""", insertedReviewId, selectedFindingId);
+        }
+        return insertedReviewId;
+    }
+
+    private Long insertReview(Long analysisId, String status) {
+        if ("PENDING".equals(status)) {
+            return jdbc.queryForObject("""
+                    INSERT INTO reviews (analysis_id, status, created_at, updated_at)
+                    VALUES (?, 'PENDING', NOW(), NOW())
+                    RETURNING id""", Long.class, analysisId);
+        }
+        return jdbc.queryForObject("""
+                INSERT INTO reviews (analysis_id, reviewer_id, status, comment, decided_at, created_at, updated_at)
+                VALUES (?, ?, ?, '반려 사유입니다.', NOW(), NOW(), NOW())
+                RETURNING id""", Long.class, analysisId, REVIEWER_ID, status);
     }
 
     private Long insertPattern(Long findingId, Long reviewId, String name, String severity, String status) {
@@ -253,6 +275,9 @@ class RiskPatternApiTest extends IntegrationTestSupport {
         Long newFindingId = insertFinding(
                 jdbc.queryForObject("SELECT analysis_id FROM findings WHERE id = ?", Long.class, highFindingId),
                 "수수료 안내가 본문과 떨어져 있습니다.", "MEDIUM");
+        jdbc.update("""
+                INSERT INTO review_selected_findings (review_id, finding_id)
+                VALUES (?, ?)""", reviewId, newFindingId);
         List<Finding> findings = findingRepository.findAllById(List.of(newFindingId));
 
         List<Long> promoted = riskPatternService.promote(reviewId, findings);
@@ -260,6 +285,99 @@ class RiskPatternApiTest extends IntegrationTestSupport {
         assertThat(promoted).hasSize(1);
         assertThat(jdbc.queryForObject("SELECT status FROM risk_patterns WHERE id = ?", String.class, promoted.get(0)))
                 .isEqualTo("DRAFT");
+    }
+
+    @Test
+    @DisplayName("승격: 대상 Review와 다른 Analysis의 Finding이 섞이면 패턴을 하나도 저장하지 않는다")
+    void promoteRejectsCrossAnalysisFindingsWithoutPersistingPatterns() {
+        Long targetAnalysisId = insertCompletedAnalysis("교차 분석 검증 상품", CORE_PACK_ID, "hash-target");
+        Long targetFindingId = insertFinding(targetAnalysisId, "대상 분석의 지적입니다.", "LOW");
+        Long targetReviewId = insertApprovedReview(targetAnalysisId, targetFindingId);
+        Long foreignAnalysisId = insertCompletedAnalysis("다른 분석 상품", CORE_PACK_ID, "hash-foreign");
+        Long foreignFindingId = insertFinding(foreignAnalysisId, "다른 분석의 지적입니다.", "HIGH");
+        List<Finding> findings = findingRepository.findAllById(List.of(targetFindingId, foreignFindingId));
+
+        assertThatThrownBy(() -> riskPatternService.promote(targetReviewId, findings))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.INVALID_FINDING_SELECTION);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM risk_patterns WHERE review_id = ?", Integer.class, targetReviewId)).isZero();
+    }
+
+    @Test
+    @DisplayName("승격: PENDING Review의 Finding은 패턴을 하나도 저장하지 않는다")
+    void promoteRejectsPendingReviewWithoutPersistingPatterns() {
+        Long analysisId = insertCompletedAnalysis("승인 전 검토 상품", CORE_PACK_ID, "hash-pending-review");
+        Long findingId = insertFinding(analysisId, "승인 전 지적입니다.", "MEDIUM");
+        Long pendingReviewId = insertReview(analysisId, "PENDING");
+
+        assertThatThrownBy(() -> riskPatternService.promote(
+                pendingReviewId, findingRepository.findAllById(List.of(findingId))))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.INVALID_FINDING_SELECTION);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM risk_patterns WHERE review_id = ?", Integer.class, pendingReviewId)).isZero();
+    }
+
+    @Test
+    @DisplayName("승격: REJECTED Review의 Finding은 패턴을 하나도 저장하지 않는다")
+    void promoteRejectsRejectedReviewWithoutPersistingPatterns() {
+        Long analysisId = insertCompletedAnalysis("반려된 검토 상품", CORE_PACK_ID, "hash-rejected-review");
+        Long findingId = insertFinding(analysisId, "반려된 지적입니다.", "HIGH");
+        Long rejectedReviewId = insertReview(analysisId, "REJECTED");
+
+        assertThatThrownBy(() -> riskPatternService.promote(
+                rejectedReviewId, findingRepository.findAllById(List.of(findingId))))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.INVALID_FINDING_SELECTION);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM risk_patterns WHERE review_id = ?", Integer.class, rejectedReviewId)).isZero();
+    }
+
+    @Test
+    @DisplayName("승격: 같은 Analysis라도 Review에서 선택하지 않은 Finding은 패턴을 하나도 저장하지 않는다")
+    void promoteRejectsUnselectedSameAnalysisFindingWithoutPersistingPatterns() {
+        Long analysisId = insertCompletedAnalysis("미선택 지적 검증 상품", CORE_PACK_ID, "hash-unselected-finding");
+        Long selectedFindingId = insertFinding(analysisId, "선택한 지적입니다.", "LOW");
+        Long unselectedFindingId = insertFinding(analysisId, "선택하지 않은 지적입니다.", "MEDIUM");
+        Long approvedReviewId = insertApprovedReview(analysisId, selectedFindingId);
+
+        assertThatThrownBy(() -> riskPatternService.promote(
+                approvedReviewId, findingRepository.findAllById(List.of(unselectedFindingId))))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.INVALID_FINDING_SELECTION);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM risk_patterns WHERE review_id = ?", Integer.class, approvedReviewId)).isZero();
+    }
+
+    @Test
+    @DisplayName("Review provenance 조회는 DRAFT·ACTIVE 패턴 ID만 해당 review에서 오름차순으로 반환한다")
+    void findIdsByReviewIdIncludesDraftBeforeAndAfterActivation() throws Exception {
+        Long draftFindingId = insertFinding(
+                jdbc.queryForObject("SELECT analysis_id FROM findings WHERE id = ?", Long.class, highFindingId),
+                "중도해지 비용이 분산되어 있습니다.", "MEDIUM");
+        jdbc.update("""
+                INSERT INTO review_selected_findings (review_id, finding_id)
+                VALUES (?, ?)""", reviewId, draftFindingId);
+        Long draftPatternId = riskPatternService.promote(
+                reviewId, findingRepository.findAllById(List.of(draftFindingId))).get(0);
+
+        assertThat(riskPatternService.findIdsByReviewId(reviewId))
+                .containsExactly(highPatternId, lowPatternId, draftPatternId)
+                .doesNotContain(unrelatedPatternId);
+
+        mockMvc.perform(asReviewer(patch("/api/risk-patterns/{id}", draftPatternId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("status", "ACTIVE"))))
+                .andExpect(status().isOk());
+
+        assertThat(riskPatternService.findIdsByReviewId(reviewId))
+                .containsExactly(highPatternId, lowPatternId, draftPatternId)
+                .doesNotContain(unrelatedPatternId);
     }
 
     @Test

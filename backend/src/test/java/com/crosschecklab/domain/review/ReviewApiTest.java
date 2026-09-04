@@ -28,6 +28,8 @@ class ReviewApiTest extends IntegrationTestSupport {
     private static final String ROLE_HEADER = "X-Demo-Role";
     private static final long PM_ID = 1L;
     private static final long REVIEWER_ID = 2L;
+    private static final long FOREIGN_PM_ID = 1001L;
+    private static final long OTHER_REVIEWER_ID = 1002L;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -48,6 +50,8 @@ class ReviewApiTest extends IntegrationTestSupport {
     @BeforeEach
     void setUp() {
         clearFixtures();
+        insertTestUser(FOREIGN_PM_ID, "foreign_pm", "다른 상품 담당자", "PRODUCT_MANAGER");
+        insertTestUser(OTHER_REVIEWER_ID, "other_reviewer", "다른 준법 검토자", "COMPLIANCE_REVIEWER");
         analysisId = insertCompletedAnalysis(PM_ID, "스마트 인컴 투자상품", "hash-main");
         highFindingId = insertFinding(analysisId, "안정성 표현이 원금보장으로 오인될 가능성이 있습니다.", "HIGH");
         lowFindingId = insertFinding(analysisId, "용어 설명이 부족합니다.", "LOW");
@@ -56,6 +60,7 @@ class ReviewApiTest extends IntegrationTestSupport {
     @AfterEach
     void tearDown() {
         clearFixtures();
+        jdbc.update("DELETE FROM users WHERE id IN (?, ?)", FOREIGN_PM_ID, OTHER_REVIEWER_ID);
     }
 
     // 참조 순서대로 지운다 (risk_patterns → reviews → findings → analyses → documents → products).
@@ -66,6 +71,13 @@ class ReviewApiTest extends IntegrationTestSupport {
         jdbc.update("DELETE FROM analyses");
         jdbc.update("DELETE FROM product_documents");
         jdbc.update("DELETE FROM products");
+    }
+
+    private void insertTestUser(long id, String username, String name, String role) {
+        jdbc.update("""
+                INSERT INTO users (id, username, name, role, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, TRUE, NOW(), NOW())
+                ON CONFLICT (id) DO NOTHING""", id, username, name, role);
     }
 
     private Long insertCompletedAnalysis(long ownerId, String productName, String inputHash) {
@@ -110,6 +122,10 @@ class ReviewApiTest extends IntegrationTestSupport {
                 .content(objectMapper.writeValueAsString(body));
     }
 
+    private MockHttpServletRequestBuilder asUser(MockHttpServletRequestBuilder builder, long userId, String role) {
+        return builder.header(USER_ID_HEADER, userId).header(ROLE_HEADER, role);
+    }
+
     @Test
     @DisplayName("REV-001: 완료 분석을 검토 요청하면 201이고 분석은 IN_REVIEW가 된다")
     void createReviewMovesAnalysisToInReview() throws Exception {
@@ -124,6 +140,87 @@ class ReviewApiTest extends IntegrationTestSupport {
 
         assertThat(jdbc.queryForObject("SELECT status FROM analyses WHERE id = ?", String.class, analysisId))
                 .isEqualTo("IN_REVIEW");
+    }
+
+    @Test
+    @DisplayName("REV-001: 상품 담당자의 500자 제출 의견을 검토에 보존한다")
+    void createReviewPreservesBoundedSubmissionComment() throws Exception {
+        String submissionComment = "가".repeat(500);
+
+        mockMvc.perform(asPm(post("/api/reviews")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "analysisId", analysisId,
+                                "submissionComment", submissionComment)))))
+                .andExpect(status().isCreated());
+
+        assertThat(jdbc.queryForObject(
+                "SELECT submission_comment FROM reviews WHERE analysis_id = ?",
+                String.class,
+                analysisId)).isEqualTo(submissionComment);
+    }
+
+    @Test
+    @DisplayName("REV-001: 공백뿐인 제출 의견은 null로 저장한다")
+    void blankSubmissionCommentNormalizesToNull() throws Exception {
+        mockMvc.perform(asPm(post("/api/reviews")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "analysisId", analysisId,
+                                "submissionComment", " \n\t ")))))
+                .andExpect(status().isCreated());
+
+        assertThat(jdbc.queryForObject(
+                "SELECT submission_comment FROM reviews WHERE analysis_id = ?",
+                String.class,
+                analysisId)).isNull();
+    }
+
+    @Test
+    @DisplayName("REV-001: 500자를 넘는 제출 의견은 검토를 만들지 않고 400으로 거절한다")
+    void oversizedSubmissionCommentIsRejectedWithoutCreatingReview() throws Exception {
+        mockMvc.perform(asPm(post("/api/reviews")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "analysisId", analysisId,
+                                "submissionComment", "가".repeat(501))))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value(ErrorCode.VALIDATION_ERROR.name()))
+                .andExpect(jsonPath("$.fieldErrors[0].field").value("submissionComment"));
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM reviews WHERE analysis_id = ?",
+                Integer.class,
+                analysisId)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM analyses WHERE id = ?",
+                String.class,
+                analysisId)).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    @DisplayName("REV-001/003: 제출 의견과 검토자의 결정 사유는 독립적으로 보존한다")
+    void submissionCommentRemainsIndependentFromDecisionComment() throws Exception {
+        String submissionComment = "고위험 Finding의 근거를 확인해 주세요.";
+        String body = mockMvc.perform(asPm(post("/api/reviews")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "analysisId", analysisId,
+                                "submissionComment", submissionComment)))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        Long reviewId = objectMapper.readTree(body).get("reviewId").asLong();
+
+        String decisionComment = "원금 손실 가능성을 첫 문장에 명시하세요.";
+        mockMvc.perform(asReviewer(decision(reviewId, Map.of(
+                        "status", "REJECTED",
+                        "comment", decisionComment))))
+                .andExpect(status().isOk());
+
+        Map<String, Object> review = jdbc.queryForMap(
+                "SELECT submission_comment, comment FROM reviews WHERE id = ?", reviewId);
+        assertThat(review.get("submission_comment")).isEqualTo(submissionComment);
+        assertThat(review.get("comment")).isEqualTo(decisionComment);
     }
 
     @Test
@@ -408,5 +505,173 @@ class ReviewApiTest extends IntegrationTestSupport {
         mockMvc.perform(asPm(get("/api/analyses/{id}/review", othersAnalysisId)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.FORBIDDEN_OWNERSHIP.name()));
+    }
+
+    @Test
+    @DisplayName("ISSUE-38: PENDING 상세는 상품 맥락과 비어 있는 결정 목록을 안정된 형태로 반환한다")
+    void pendingReviewDetailHasProductContextAndEmptyDecisionLists() throws Exception {
+        Long reviewId = createReview(analysisId);
+        Long productId = jdbc.queryForObject("""
+                SELECT pd.product_id
+                FROM analyses a
+                JOIN product_documents pd ON pd.id = a.product_document_id
+                WHERE a.id = ?""", Long.class, analysisId);
+
+        mockMvc.perform(asReviewer(get("/api/reviews/{id}", reviewId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reviewId").value(reviewId))
+                .andExpect(jsonPath("$.analysisId").value(analysisId))
+                .andExpect(jsonPath("$.productId").value(productId))
+                .andExpect(jsonPath("$.productName").value("스마트 인컴 투자상품"))
+                .andExpect(jsonPath("$.ownerId").value(PM_ID))
+                .andExpect(jsonPath("$.ownerName").value("박서준 대리"))
+                .andExpect(jsonPath("$.maxSeverity").value("HIGH"))
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.submissionComment").value(nullValue()))
+                .andExpect(jsonPath("$.reviewerId").value(nullValue()))
+                .andExpect(jsonPath("$.decidedAt").value(nullValue()))
+                .andExpect(jsonPath("$.comment").value(nullValue()))
+                .andExpect(jsonPath("$.selectedFindingIds").isEmpty())
+                .andExpect(jsonPath("$.riskPatternIds").isEmpty());
+    }
+
+    @Test
+    @DisplayName("ISSUE-38: 승인 상세은 선택 Finding과 DRAFT·ACTIVE RiskPattern provenance를 반환한다")
+    void approvedReviewDetailIncludesDraftAndActiveRiskPatternProvenance() throws Exception {
+        Long reviewId = createReview(analysisId);
+        mockMvc.perform(asReviewer(decision(reviewId, Map.of(
+                        "status", "APPROVED",
+                        "selectedFindingIds", List.of(lowFindingId, highFindingId)))))
+                .andExpect(status().isOk());
+        List<Long> patternIds = jdbc.queryForList(
+                "SELECT id FROM risk_patterns WHERE review_id = ? ORDER BY id", Long.class, reviewId);
+
+        mockMvc.perform(asPm(get("/api/reviews/{id}", reviewId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.selectedFindingIds[0]").value(highFindingId))
+                .andExpect(jsonPath("$.selectedFindingIds[1]").value(lowFindingId))
+                .andExpect(jsonPath("$.riskPatternIds[0]").value(patternIds.get(0)))
+                .andExpect(jsonPath("$.riskPatternIds[1]").value(patternIds.get(1)));
+
+        jdbc.update("UPDATE risk_patterns SET status = 'ACTIVE' WHERE id = ?", patternIds.get(0));
+
+        mockMvc.perform(asPm(get("/api/reviews/{id}", reviewId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.riskPatternIds[0]").value(patternIds.get(0)))
+                .andExpect(jsonPath("$.riskPatternIds[1]").value(patternIds.get(1)));
+    }
+
+    @Test
+    @DisplayName("ISSUE-38: 반려 상세는 결정자와 사유를 반환하고 provenance 목록은 비어 있다")
+    void rejectedReviewDetailHasDecisionWithoutProvenance() throws Exception {
+        Long reviewId = createReview(analysisId);
+        mockMvc.perform(asReviewer(decision(reviewId, Map.of(
+                        "status", "REJECTED",
+                        "comment", "근거를 보완하세요."))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(asPm(get("/api/reviews/{id}", reviewId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("REJECTED"))
+                .andExpect(jsonPath("$.reviewerId").value(REVIEWER_ID))
+                .andExpect(jsonPath("$.decidedAt").exists())
+                .andExpect(jsonPath("$.comment").value("근거를 보완하세요."))
+                .andExpect(jsonPath("$.selectedFindingIds").isEmpty())
+                .andExpect(jsonPath("$.riskPatternIds").isEmpty());
+    }
+
+    @Test
+    @DisplayName("ISSUE-38: 상품 소유 PM은 검토 상세을 조회할 수 있다")
+    void ownerProductManagerCanReadReviewDetail() throws Exception {
+        Long reviewId = createReview(analysisId);
+
+        mockMvc.perform(asPm(get("/api/reviews/{id}", reviewId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reviewId").value(reviewId));
+    }
+
+    @Test
+    @DisplayName("ISSUE-38: 결정을 내리지 않은 다른 준법 검토자도 상세을 조회할 수 있다")
+    void otherComplianceReviewerCanReadReviewDetail() throws Exception {
+        Long reviewId = createReview(analysisId);
+        mockMvc.perform(asReviewer(decision(reviewId, Map.of(
+                        "status", "REJECTED",
+                        "comment", "수정이 필요합니다."))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(asUser(
+                        get("/api/reviews/{id}", reviewId), OTHER_REVIEWER_ID, "COMPLIANCE_REVIEWER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reviewerId").value(REVIEWER_ID));
+    }
+
+    @Test
+    @DisplayName("ISSUE-38: 소유자가 아닌 PM의 검토 상세 조회는 403이다")
+    void foreignProductManagerCannotReadReviewDetail() throws Exception {
+        Long reviewId = createReview(analysisId);
+
+        mockMvc.perform(asUser(get("/api/reviews/{id}", reviewId), FOREIGN_PM_ID, "PRODUCT_MANAGER"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value(ErrorCode.FORBIDDEN_OWNERSHIP.name()));
+    }
+
+    @Test
+    @DisplayName("ISSUE-38: 인증 헤더가 없는 검토 상세 조회는 401 공통 오류 응답을 반환한다")
+    void anonymousCannotReadReviewDetail() throws Exception {
+        Long reviewId = createReview(analysisId);
+
+        mockMvc.perform(get("/api/reviews/{id}", reviewId))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.errorCode").value(ErrorCode.DEMO_AUTHENTICATION_REQUIRED.name()))
+                .andExpect(jsonPath("$.message").isNotEmpty())
+                .andExpect(jsonPath("$.fieldErrors").isEmpty())
+                .andExpect(jsonPath("$.retryable").value(false))
+                .andExpect(jsonPath("$.traceId").isNotEmpty())
+                .andExpect(jsonPath("$.timestamp").exists());
+    }
+
+    @Test
+    @DisplayName("ISSUE-38: 존재하지 않는 검토 상세 조회는 기존 NOT_FOUND 응답을 사용한다")
+    void missingReviewDetailIsNotFound() throws Exception {
+        mockMvc.perform(asReviewer(get("/api/reviews/{id}", Long.MAX_VALUE)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value(ErrorCode.NOT_FOUND.name()));
+    }
+
+    @Test
+    @DisplayName("ISSUE-38: Finding이 없는 검토 상세의 maxSeverity는 null이다")
+    void reviewDetailWithoutFindingsHasNullMaxSeverity() throws Exception {
+        Long noFindingAnalysisId = insertCompletedAnalysis(PM_ID, "무위험 상품", "hash-no-finding");
+        Long reviewId = createReview(noFindingAnalysisId);
+
+        mockMvc.perform(asPm(get("/api/reviews/{id}", reviewId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxSeverity").value(nullValue()));
+    }
+
+    @Test
+    @DisplayName("ISSUE-38: 제출 의견과 검토 결정 의견을 서로 다른 필드로 반환한다")
+    void reviewDetailSeparatesSubmissionAndDecisionComments() throws Exception {
+        String submissionComment = "고위험 지적의 근거를 확인해 주세요.";
+        String createdBody = mockMvc.perform(asPm(post("/api/reviews")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "analysisId", analysisId,
+                                "submissionComment", submissionComment)))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        Long reviewId = objectMapper.readTree(createdBody).get("reviewId").asLong();
+        String decisionComment = "근거 문구를 보완한 뒤 다시 제출하세요.";
+        mockMvc.perform(asReviewer(decision(reviewId, Map.of(
+                        "status", "REJECTED",
+                        "comment", decisionComment))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(asPm(get("/api/reviews/{id}", reviewId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.submissionComment").value(submissionComment))
+                .andExpect(jsonPath("$.comment").value(decisionComment));
     }
 }

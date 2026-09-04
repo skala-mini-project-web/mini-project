@@ -4,6 +4,7 @@ import com.crosschecklab.domain.review.dto.ReviewCreateRequest;
 import com.crosschecklab.domain.review.dto.ReviewCreatedResponse;
 import com.crosschecklab.domain.review.dto.ReviewDecisionRequest;
 import com.crosschecklab.domain.review.dto.ReviewDecisionResponse;
+import com.crosschecklab.domain.review.dto.ReviewDetailResponse;
 import com.crosschecklab.domain.review.dto.ReviewListItemResponse;
 import com.crosschecklab.global.common.PageResponse;
 import com.crosschecklab.global.common.enums.ReviewStatus;
@@ -51,6 +52,12 @@ public class ReviewController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(MAX_PAGE_SIZE) int size,
             @CurrentUser DemoUser currentUser) {
         return reviewService.list(status, severity, page, size, currentUser);
+    }
+
+    @GetMapping("/{reviewId}")
+    public ReviewDetailResponse detail(@PathVariable Long reviewId,
+                                       @CurrentUser DemoUser currentUser) {
+        return reviewService.detail(reviewId, currentUser);
     }
 
     @PostMapping("/{reviewId}/decision")
