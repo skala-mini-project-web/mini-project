@@ -174,7 +174,12 @@ public class AnalysisJobService {
             log.warn("분석 {} 원본 문서가 더 이상 유효하지 않음 errorCode={}", analysisId, e.getErrorCode());
             markFailed(analysisId, e.getErrorCode(), false, job.fence(), traceId);
         } catch (ProviderException e) {
-            log.warn("분석 {} 실패 errorCode={} retryable={}", analysisId, e.getErrorCode(), e.isRetryable());
+            log.warn(
+                    "분석 {} 실패 errorCode={} retryable={} detail={}",
+                    analysisId,
+                    e.getErrorCode(),
+                    e.isRetryable(),
+                    e.getMessage());
             markFailed(analysisId, e.getErrorCode(), e.isRetryable(), job.fence(), traceId);
         } catch (RuntimeException e) {
             log.error("분석 {} 결과 저장 실패", analysisId, e);

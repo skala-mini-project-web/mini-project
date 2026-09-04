@@ -72,6 +72,7 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
             AnalysisResult result = restClient.post()
                     .uri(ANALYZE_PATH)
                     .contentType(MediaType.APPLICATION_JSON)
+                    .accept(MediaType.APPLICATION_JSON)
                     .body(request)
                     .retrieve()
                     .onStatus(HttpStatusCode::isError, (req, response) -> {
