@@ -1,5 +1,6 @@
 package com.crosschecklab.domain.analysis;
 
+import static org.awaitility.Awaitility.await;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -7,17 +8,26 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.crosschecklab.analysis.provider.RiskAnalysisProvider;
+import com.crosschecklab.analysis.provider.dto.AnalysisRequest;
+import com.crosschecklab.analysis.provider.dto.AnalysisResult;
 import com.crosschecklab.global.config.AsyncConfig;
 import com.crosschecklab.global.error.ErrorCode;
 import com.crosschecklab.support.IntegrationTestSupport;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -27,6 +37,9 @@ import org.springframework.core.task.SyncTaskExecutor;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 // ANA-001~004 통합 검증. 외부 ai-service 없이 테스트 대역으로 전체 흐름을 돌린다.
 @Import(AnalysisApiTest.TestBeans.class)
@@ -57,6 +70,12 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @Autowired
     private RiskAnalysisProvider provider;
 
+    @Autowired
+    private AnalysisRepository analysisRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
     // V2 시드: 1 = pm_park(PRODUCT_MANAGER, 아래 상품의 소유자), 2 = reviewer_kim(COMPLIANCE_REVIEWER)
     private static final String USER_ID_HEADER = "X-Demo-User-Id";
     private static final String ROLE_HEADER = "X-Demo-Role";
@@ -72,8 +91,13 @@ class AnalysisApiTest extends IntegrationTestSupport {
         return builder.header(USER_ID_HEADER, "2").header(ROLE_HEADER, "COMPLIANCE_REVIEWER");
     }
 
-    // 컨테이너는 JVM 당 하나라 여기서 만든 행이 다른 테스트로 새어 나간다.
+    private MockHttpServletRequestBuilder traced(MockHttpServletRequestBuilder builder, String traceId) {
+        return builder.header("X-Trace-Id", traceId);
+    }
+
+    // 컨테이너는 JVM 당 하나라 여기서 만든 변경 가능한 행이 다른 테스트로 새어 나간다.
     // analyses 가 남으면 다른 테스트의 products 삭제가 FK 에 걸리므로 앞뒤로 비운다.
+    // append-only audit_events 는 비우지 않고 trace/resource 조건으로 검증 범위를 격리한다.
     @BeforeEach
     void setUp() {
         ((FakeRiskAnalysisProvider) provider).reset();
@@ -122,12 +146,54 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     private Long createAnalysis() throws Exception {
-        String body = mockMvc.perform(asPm(post("/api/analyses")
+        return createAnalysis(null);
+    }
+
+    private Long createAnalysis(String traceId) throws Exception {
+        MockHttpServletRequestBuilder builder = asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))))
+                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2))));
+        if (traceId != null) {
+            builder = traced(builder, traceId);
+        }
+        String body = mockMvc.perform(builder)
                 .andExpect(status().isAccepted())
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body).get("analysisId").asLong();
+    }
+
+    private void assertAudit(String traceId, String action, Long resourceId, Long actorId, Long analysisId) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT trace_id, actor_id, action, resource_type, resource_id, resource_label, analysis_id
+                FROM audit_events
+                WHERE trace_id = ?
+                  AND action = ?
+                  AND resource_type = 'ANALYSIS'
+                  AND resource_id = ?
+                """, traceId, action, resourceId);
+
+        assertThat(rows).singleElement().satisfies(row -> {
+            assertThat(row.get("trace_id")).isEqualTo(traceId);
+            assertThat(row.get("actor_id")).isEqualTo(actorId);
+            assertThat(row.get("action")).isEqualTo(action);
+            assertThat(row.get("resource_type")).isEqualTo("ANALYSIS");
+            assertThat(row.get("resource_id")).isEqualTo(resourceId);
+            assertThat(row.get("resource_label")).isNull();
+            assertThat(row.get("analysis_id")).isEqualTo(analysisId);
+        });
+    }
+
+    private void assertNoTerminalAudit(String traceId) {
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM audit_events
+                WHERE trace_id = ?
+                  AND action IN ('ANALYSIS_COMPLETED', 'ANALYSIS_FAILED')
+                """, Long.class, traceId)).isZero();
+    }
+
+    private void assertNoAudit(String traceId) {
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM audit_events WHERE trace_id = ?", Long.class, traceId)).isZero();
     }
 
     private String request(Long documentId, List<Integer> evidenceIds, List<Integer> personaIds) throws Exception {
@@ -141,9 +207,10 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @Test
     @DisplayName("ANA-001·004: 분석을 생성하면 202로 수락되고 riskScore 82 시나리오가 COMPLETED로 저장된다")
     void createAndComplete() throws Exception {
-        mockMvc.perform(asPm(post("/api/analyses")
+        String traceId = "analysis-create-success";
+        mockMvc.perform(traced(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))))
+                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))), traceId))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status").value("CREATED"))
                 .andExpect(jsonPath("$.statusUrl").exists())
@@ -168,6 +235,27 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.findings[0].severity").value("HIGH"))
                 .andExpect(jsonPath("$.findings[0].affectedPersonaCodes[0]").value("FINANCIAL_BEGINNER"))
                 .andExpect(jsonPath("$.findings[0].evidenceReferences[0].sourceType").value("INTERNAL_POLICY"));
+
+        assertAudit(traceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
+        assertAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
+    }
+
+    @Test
+    @DisplayName("비동기 스레드의 MDC가 달라도 완료 감사에는 요청 이벤트의 원래 trace가 보존된다")
+    void completionPreservesRequestTraceFromEvent() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        Function<AnalysisRequest, AnalysisResult> behavior = request -> {
+            MDC.put("traceId", "async-thread-trace");
+            return new AnalysisResult(0, "trace-test", "trace-test", List.of());
+        };
+        ReflectionTestUtils.setField(fake, "behavior", behavior);
+        String traceId = "analysis-original-request-trace";
+
+        Long analysisId = createAnalysis(traceId);
+
+        assertAudit(traceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
+        assertAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
+        assertNoAudit("async-thread-trace");
     }
 
     @Test
@@ -202,45 +290,53 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @DisplayName("확정되지 않은 문서로 분석을 요청하면 409 DOCUMENT_NOT_CONFIRMED")
     void documentNotConfirmed() throws Exception {
         Long documentId = insertDocument(false);
+        String traceId = "analysis-document-not-confirmed";
 
-        mockMvc.perform(asPm(post("/api/analyses")
+        mockMvc.perform(traced(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(documentId, List.of(1), List.of(1)))))
+                        .content(request(documentId, List.of(1), List.of(1)))), traceId))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("DOCUMENT_NOT_CONFIRMED"))
                 .andExpect(jsonPath("$.traceId").isNotEmpty());
+        assertNoAudit(traceId);
     }
 
     @Test
     @DisplayName("Persona 를 4개 선택하면 400 INVALID_SELECTION_COUNT")
     void invalidSelectionCount() throws Exception {
-        mockMvc.perform(asPm(post("/api/analyses")
+        String traceId = "analysis-invalid-selection";
+        mockMvc.perform(traced(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1, 2, 3, 4)))))
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1, 2, 3, 4)))), traceId))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_SELECTION_COUNT"));
+        assertNoAudit(traceId);
     }
 
     @Test
     @DisplayName("존재하지 않는 근거 문서를 선택하면 400 INVALID_EVIDENCE_DOCUMENT")
     void invalidEvidenceDocument() throws Exception {
-        mockMvc.perform(asPm(post("/api/analyses")
+        String traceId = "analysis-invalid-evidence";
+        mockMvc.perform(traced(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(999), List.of(1)))))
+                        .content(request(confirmedDocumentId, List.of(999), List.of(1)))), traceId))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_EVIDENCE_DOCUMENT"));
+        assertNoAudit(traceId);
     }
 
     @Test
     @DisplayName("동일 입력으로 다시 요청하면 409 DUPLICATE_ANALYSIS_REQUEST")
     void duplicateRequest() throws Exception {
         createAnalysis();
+        String traceId = "analysis-duplicate";
 
-        mockMvc.perform(asPm(post("/api/analyses")
+        mockMvc.perform(traced(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))))
+                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))), traceId))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("DUPLICATE_ANALYSIS_REQUEST"));
+        assertNoAudit(traceId);
     }
 
     @Test
@@ -248,7 +344,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     void retryAfterTemporaryFailure() throws Exception {
         FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
         fake.failWith(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true);
-        Long analysisId = createAnalysis();
+        String initialTraceId = "analysis-temporary-failure";
+        Long analysisId = createAnalysis(initialTraceId);
+        String traceId = "analysis-retry-success";
 
         mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
                 .andExpect(status().isOk())
@@ -258,7 +356,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.message").isNotEmpty());
 
         fake.reset();
-        mockMvc.perform(asPm(post("/api/analyses/{id}/retry", analysisId)))
+        mockMvc.perform(traced(asPm(post("/api/analyses/{id}/retry", analysisId)), traceId))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.analysisId").value(analysisId));
 
@@ -267,21 +365,112 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.riskScore").value(82))
                 .andExpect(jsonPath("$.retryable").value(false));
+        assertAudit(initialTraceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
+        assertAudit(initialTraceId, "ANALYSIS_FAILED", analysisId, null, analysisId);
+        assertAudit(traceId, "ANALYSIS_RETRIED", analysisId, 1L, analysisId);
+        assertAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
     }
 
     @Test
     @DisplayName("계약 위반 실패는 retryable=false 이고 재시도 시 409 ANALYSIS_NOT_RETRYABLE")
     void notRetryable() throws Exception {
         ((FakeRiskAnalysisProvider) provider).failWith(ErrorCode.PROVIDER_RESPONSE_INVALID, false);
-        Long analysisId = createAnalysis();
+        String failureTraceId = "analysis-terminal-failure";
+        Long analysisId = createAnalysis(failureTraceId);
+        String traceId = "analysis-retry-not-retryable";
 
         mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
                 .andExpect(jsonPath("$.status").value("FAILED"))
                 .andExpect(jsonPath("$.retryable").value(false));
 
-        mockMvc.perform(asPm(post("/api/analyses/{id}/retry", analysisId)))
+        mockMvc.perform(traced(asPm(post("/api/analyses/{id}/retry", analysisId)), traceId))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("ANALYSIS_NOT_RETRYABLE"));
+        assertAudit(failureTraceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
+        assertAudit(failureTraceId, "ANALYSIS_FAILED", analysisId, null, analysisId);
+        assertNoAudit(traceId);
+    }
+
+    @Test
+    @DisplayName("Provider 호출 뒤 재시도가 현재 회차가 되면 이전 회차는 새 결과와 감사를 덮어쓰지 않는다")
+    void supersededJobCannotFinalizeNewerRetry() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        String oldTraceId = "analysis-stale-execution";
+        String retryTraceId = "analysis-newer-retry";
+        AtomicReference<Long> currentAnalysisId = new AtomicReference<>();
+        CountDownLatch oldProviderEntered = new CountDownLatch(1);
+        CountDownLatch releaseOldProvider = new CountDownLatch(1);
+        Function<AnalysisRequest, AnalysisResult> staleResult = request -> {
+            currentAnalysisId.set(request.analysisId());
+            oldProviderEntered.countDown();
+            try {
+                if (!releaseOldProvider.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("이전 Provider 결과 해제 대기 시간이 초과되었습니다.");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("이전 Provider 결과 대기가 중단되었습니다.", e);
+            }
+            return new AnalysisResult(7, "stale-model", "stale-prompt", List.of());
+        };
+        ReflectionTestUtils.setField(fake, "behavior", staleResult);
+
+        CompletableFuture<Long> originalCreate = CompletableFuture.supplyAsync(() -> {
+            try {
+                return createAnalysis(oldTraceId);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }).orTimeout(10, TimeUnit.SECONDS);
+
+        assertThat(oldProviderEntered.await(5, TimeUnit.SECONDS)).isTrue();
+        Long analysisId = currentAnalysisId.get();
+        try {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                Analysis analysis = analysisRepository.findWithLockById(analysisId).orElseThrow();
+                analysis.fail(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true);
+                analysisRepository.flush();
+            });
+            mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status").value("FAILED"))
+                    .andExpect(jsonPath("$.retryable").value(true))
+                    .andExpect(jsonPath("$.errorCode").value("AI_SERVICE_TEMPORARY_FAILURE"));
+
+            fake.reset();
+            mockMvc.perform(traced(asPm(post("/api/analyses/{id}/retry", analysisId)), retryTraceId))
+                    .andExpect(status().isAccepted())
+                    .andExpect(jsonPath("$.analysisId").value(analysisId));
+
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                    assertThat(jdbc.queryForObject("""
+                            SELECT COUNT(*) FROM audit_events
+                            WHERE trace_id = ?
+                              AND action = 'ANALYSIS_COMPLETED'
+                              AND resource_type = 'ANALYSIS'
+                              AND resource_id = ?
+                            """, Long.class, retryTraceId, analysisId)).isEqualTo(1L));
+        } finally {
+            releaseOldProvider.countDown();
+        }
+        assertThat(originalCreate.join()).isEqualTo(analysisId);
+
+        Map<String, Object> analysis = jdbc.queryForMap("""
+                SELECT status, risk_score, model_version, prompt_version
+                FROM analyses
+                WHERE id = ?
+                """, analysisId);
+        assertThat(analysis)
+                .containsEntry("status", "COMPLETED")
+                .containsEntry("risk_score", 82)
+                .containsEntry("model_version", "mock-risk-v1")
+                .containsEntry("prompt_version", "mock-prompt-v1");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isEqualTo(1L);
+        assertAudit(oldTraceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
+        assertNoTerminalAudit(oldTraceId);
+        assertAudit(retryTraceId, "ANALYSIS_RETRIED", analysisId, 1L, analysisId);
+        assertAudit(retryTraceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
     }
 
     @Test
@@ -306,22 +495,26 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @DisplayName("다른 사용자의 문서로는 분석을 생성할 수 없다 (403)")
     void cannotCreateOnOthersDocument() throws Exception {
         Long othersDocumentId = insertDocumentOwnedBy(2L);
+        String traceId = "analysis-create-others";
 
-        mockMvc.perform(asPm(post("/api/analyses")
+        mockMvc.perform(traced(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(othersDocumentId, List.of(1), List.of(1)))))
+                        .content(request(othersDocumentId, List.of(1), List.of(1)))), traceId))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("FORBIDDEN_OWNERSHIP"));
+        assertNoAudit(traceId);
     }
 
     @Test
     @DisplayName("검토자는 분석을 생성할 수 없다 (403)")
     void reviewerCannotCreate() throws Exception {
-        mockMvc.perform(asReviewer(post("/api/analyses")
+        String traceId = "analysis-create-wrong-role";
+        mockMvc.perform(traced(asReviewer(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1)))))
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1)))), traceId))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+        assertNoAudit(traceId);
     }
 
     @Test
@@ -340,10 +533,12 @@ class AnalysisApiTest extends IntegrationTestSupport {
     void cannotRetryWhileRunning() throws Exception {
         Long analysisId = createAnalysis();
         jdbc.update("UPDATE analyses SET status = 'RUNNING', updated_at = NOW() WHERE id = ?", analysisId);
+        String traceId = "analysis-retry-running";
 
-        mockMvc.perform(asPm(post("/api/analyses/{id}/retry", analysisId)))
+        mockMvc.perform(traced(asPm(post("/api/analyses/{id}/retry", analysisId)), traceId))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("ANALYSIS_ALREADY_RUNNING"));
+        assertNoAudit(traceId);
     }
 
     @Test
@@ -365,10 +560,12 @@ class AnalysisApiTest extends IntegrationTestSupport {
     void cannotRetryOthersAnalysis() throws Exception {
         ((FakeRiskAnalysisProvider) provider).failWith(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true);
         Long analysisId = createAnalysis();
+        String traceId = "analysis-retry-others";
 
-        mockMvc.perform(asReviewer(post("/api/analyses/{id}/retry", analysisId)))
+        mockMvc.perform(traced(asReviewer(post("/api/analyses/{id}/retry", analysisId)), traceId))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("FORBIDDEN_OWNERSHIP"));
+        assertNoAudit(traceId);
     }
 
     @Test

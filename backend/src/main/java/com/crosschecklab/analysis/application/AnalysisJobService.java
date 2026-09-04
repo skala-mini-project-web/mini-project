@@ -9,6 +9,8 @@ import com.crosschecklab.domain.analysis.Analysis;
 import com.crosschecklab.domain.analysis.AnalysisRepository;
 import com.crosschecklab.domain.analysis.Finding;
 import com.crosschecklab.domain.analysis.FindingRepository;
+import com.crosschecklab.domain.audit.AuditAction;
+import com.crosschecklab.domain.audit.AuditService;
 import com.crosschecklab.domain.persona.PersonaTemplate;
 import com.crosschecklab.domain.persona.PersonaTemplateRepository;
 import com.crosschecklab.global.common.enums.PersonaCode;
@@ -45,18 +47,20 @@ public class AnalysisJobService {
     private final PersonaTemplateRepository personaTemplateRepository;
     private final AnalysisInputLoader inputLoader;
     private final RiskAnalysisProvider provider;
+    private final AuditService auditService;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
     public AnalysisJobService(AnalysisRepository analysisRepository, FindingRepository findingRepository,
                               PersonaTemplateRepository personaTemplateRepository, AnalysisInputLoader inputLoader,
-                              RiskAnalysisProvider provider, PlatformTransactionManager transactionManager,
-                              Clock clock) {
+                              RiskAnalysisProvider provider, AuditService auditService,
+                              PlatformTransactionManager transactionManager, Clock clock) {
         this.analysisRepository = analysisRepository;
         this.findingRepository = findingRepository;
         this.personaTemplateRepository = personaTemplateRepository;
         this.inputLoader = inputLoader;
         this.provider = provider;
+        this.auditService = auditService;
         this.clock = clock;
         // REQUIRES_NEW: 이 작업의 상태 전이는 요청 트랜잭션과 완전히 독립적으로 커밋되어야 한다.
         // (AFTER_COMMIT 콜백 안에서는 이미 완료된 트랜잭션에 합류해 커밋이 유실될 수 있다)
@@ -68,33 +72,35 @@ public class AnalysisJobService {
     @Async(AsyncConfig.ANALYSIS_EXECUTOR)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void handle(AnalysisRequestedEvent event) {
-        run(event.analysisId(), event.scenarioCode());
+        run(event.analysisId(), event.scenarioCode(), event.traceId());
     }
 
-    private void run(Long analysisId, String scenarioCode) {
+    private void run(Long analysisId, String scenarioCode, String traceId) {
         Job job;
         try {
             job = transactionTemplate.execute(status -> startRunning(analysisId, scenarioCode));
         } catch (BusinessException e) {
             // 생성 이후 입력이 바뀐 경우(문서 확정 해제, 근거 비활성화 등) 원인 코드를 그대로 남긴다.
             log.warn("분석 {} 입력이 더 이상 유효하지 않음 errorCode={}", analysisId, e.getErrorCode());
-            markFailed(analysisId, e.getErrorCode(), false, null);
+            markFailed(analysisId, e.getErrorCode(), false, null, traceId);
             return;
         } catch (RuntimeException e) {
             log.error("분석 {} 입력 준비 실패", analysisId, e);
-            markFailed(analysisId, ErrorCode.INTERNAL_ERROR, false, null);
+            markFailed(analysisId, ErrorCode.INTERNAL_ERROR, false, null, traceId);
             return;
         }
 
         try {
             AnalysisResult result = provider.analyze(job.request());
-            transactionTemplate.executeWithoutResult(status -> saveResult(analysisId, result, job.fence()));
+            transactionTemplate.executeWithoutResult(status -> saveResult(analysisId, result, job.fence(), traceId));
         } catch (ProviderException e) {
             log.warn("분석 {} 실패 errorCode={} retryable={}", analysisId, e.getErrorCode(), e.isRetryable());
-            markFailed(analysisId, e.getErrorCode(), e.isRetryable(), job.fence());
+            markFailed(analysisId, e.getErrorCode(), e.isRetryable(), job.fence(), traceId);
+        } catch (AuditAppendException e) {
+            throw e;
         } catch (RuntimeException e) {
             log.error("분석 {} 결과 저장 실패", analysisId, e);
-            markFailed(analysisId, ErrorCode.INTERNAL_ERROR, false, job.fence());
+            markFailed(analysisId, ErrorCode.INTERNAL_ERROR, false, job.fence(), traceId);
         }
     }
 
@@ -110,20 +116,21 @@ public class AnalysisJobService {
         return new Job(request, analysisRepository.findUpdatedAtById(analysisId).orElseThrow());
     }
 
-    // 이 회차가 아직 유효한가. 그 사이 재시도가 시작됐으면 false.
-    private boolean isCurrent(Long analysisId, OffsetDateTime fence) {
+    // 잠근 행을 기준으로 이 회차가 아직 유효한가. 그 사이 재시도가 시작됐으면 false.
+    private boolean isCurrent(Analysis analysis, OffsetDateTime fence) {
         if (fence == null) {
             return true;
         }
-        boolean current = analysisRepository.findUpdatedAtById(analysisId).filter(fence::isEqual).isPresent();
+        boolean current = fence.isEqual(analysis.getUpdatedAt());
         if (!current) {
-            log.warn("분석 {} 이전 회차 결과를 버린다 (재시도가 이미 시작됨)", analysisId);
+            log.warn("분석 {} 이전 회차 결과를 버린다 (재시도가 이미 시작됨)", analysis.getId());
         }
         return current;
     }
 
-    private void saveResult(Long analysisId, AnalysisResult result, OffsetDateTime fence) {
-        if (!isCurrent(analysisId, fence)) {
+    private void saveResult(Long analysisId, AnalysisResult result, OffsetDateTime fence, String traceId) {
+        Analysis analysis = findWithLock(analysisId);
+        if (!isCurrent(analysis, fence)) {
             return;
         }
         // 재시도면 이전 회차 Finding 을 먼저 비운다 (연관 행은 FK CASCADE).
@@ -140,16 +147,37 @@ public class AnalysisJobService {
                     .forEach(reference -> finding.addEvidenceReference(reference.evidenceDocumentId(), reference.excerpt()));
             findingRepository.save(finding);
         }
-        Analysis analysis = find(analysisId);
         analysis.complete(result.riskScore(), result.modelVersion(), result.promptVersion(), OffsetDateTime.now(clock));
+        analysisRepository.flush();
+        appendTerminalAudit(traceId, AuditAction.ANALYSIS_COMPLETED, analysisId);
     }
 
-    private void markFailed(Long analysisId, ErrorCode errorCode, boolean retryable, OffsetDateTime fence) {
+    private void markFailed(Long analysisId, ErrorCode errorCode, boolean retryable,
+                            OffsetDateTime fence, String traceId) {
         transactionTemplate.executeWithoutResult(status -> {
-            if (isCurrent(analysisId, fence)) {
-                find(analysisId).fail(errorCode, retryable);
+            Analysis analysis = findWithLock(analysisId);
+            if (!isCurrent(analysis, fence)) {
+                return;
             }
+            analysis.fail(errorCode, retryable);
+            analysisRepository.flush();
+            appendTerminalAudit(traceId, AuditAction.ANALYSIS_FAILED, analysisId);
         });
+    }
+
+    private void appendTerminalAudit(String traceId, AuditAction action, Long analysisId) {
+        try {
+            auditService.appendWithTrace(traceId, null, action, analysisId, null, analysisId);
+        } catch (RuntimeException e) {
+            throw new AuditAppendException(e);
+        }
+    }
+
+    private static final class AuditAppendException extends RuntimeException {
+
+        private AuditAppendException(RuntimeException cause) {
+            super(cause);
+        }
     }
 
     private Set<Long> personaIds(List<PersonaCode> codes, Map<PersonaCode, Long> personaIdsByCode) {
@@ -161,6 +189,11 @@ public class AnalysisJobService {
 
     private Analysis find(Long analysisId) {
         return analysisRepository.findById(analysisId)
+                .orElseThrow(() -> new IllegalStateException("분석 %d 가 존재하지 않습니다.".formatted(analysisId)));
+    }
+
+    private Analysis findWithLock(Long analysisId) {
+        return analysisRepository.findWithLockById(analysisId)
                 .orElseThrow(() -> new IllegalStateException("분석 %d 가 존재하지 않습니다.".formatted(analysisId)));
     }
 }

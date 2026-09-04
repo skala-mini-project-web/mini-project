@@ -9,6 +9,8 @@ import com.crosschecklab.domain.analysis.dto.AnalysisAcceptedResponse;
 import com.crosschecklab.domain.analysis.dto.AnalysisCreateRequest;
 import com.crosschecklab.domain.analysis.dto.AnalysisResultResponse;
 import com.crosschecklab.domain.analysis.dto.AnalysisStatusResponse;
+import com.crosschecklab.domain.audit.AuditAction;
+import com.crosschecklab.domain.audit.AuditService;
 import com.crosschecklab.domain.document.ProductDocument;
 import com.crosschecklab.domain.document.ProductDocumentRepository;
 import com.crosschecklab.domain.evidence.EvidenceDocument;
@@ -21,10 +23,12 @@ import com.crosschecklab.global.error.BusinessException;
 import com.crosschecklab.global.error.ErrorCode;
 import com.crosschecklab.global.security.DemoUser;
 import com.crosschecklab.global.security.OwnershipChecker;
+import com.crosschecklab.global.trace.TraceIdFilter;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +50,7 @@ public class AnalysisService {
     private final PersonaTemplateRepository personaTemplateRepository;
     private final AnalysisInputLoader inputLoader;
     private final OwnershipChecker ownershipChecker;
+    private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
     private final AiServiceProperties aiServiceProperties;
     private final Clock clock;
@@ -69,7 +74,10 @@ public class AnalysisService {
             throw new BusinessException(ErrorCode.DUPLICATE_ANALYSIS_REQUEST);
         }
 
-        eventPublisher.publishEvent(new AnalysisRequestedEvent(analysis.getId(), resolveScenario(scenarioCode)));
+        auditService.append(
+                currentUser, AuditAction.ANALYSIS_CREATED, analysis.getId(), null, analysis.getId());
+        eventPublisher.publishEvent(new AnalysisRequestedEvent(
+                analysis.getId(), resolveScenario(scenarioCode), currentRequestTraceId()));
         return AnalysisAcceptedResponse.from(analysis);
     }
 
@@ -101,7 +109,10 @@ public class AnalysisService {
             throw new BusinessException(ErrorCode.DUPLICATE_ANALYSIS_REQUEST);
         }
 
-        eventPublisher.publishEvent(new AnalysisRequestedEvent(analysisId, resolveScenario(scenarioCode)));
+        auditService.append(
+                currentUser, AuditAction.ANALYSIS_RETRIED, analysis.getId(), null, analysis.getId());
+        eventPublisher.publishEvent(new AnalysisRequestedEvent(
+                analysisId, resolveScenario(scenarioCode), currentRequestTraceId()));
         return AnalysisAcceptedResponse.from(analysis);
     }
 
@@ -126,6 +137,11 @@ public class AnalysisService {
     // X-Demo-Scenario 헤더가 없으면 설정의 기본 시나리오를 쓴다.
     private String resolveScenario(String scenarioCode) {
         return StringUtils.hasText(scenarioCode) ? scenarioCode.trim() : aiServiceProperties.defaultScenarioCode();
+    }
+
+    private String currentRequestTraceId() {
+        return Objects.requireNonNull(
+                TraceIdFilter.currentTraceId(), "analysis requests require a server trace");
     }
 
     // 소유자는 document → product → owner 로 파생한다.

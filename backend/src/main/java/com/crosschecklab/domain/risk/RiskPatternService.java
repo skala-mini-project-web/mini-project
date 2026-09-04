@@ -1,6 +1,8 @@
 package com.crosschecklab.domain.risk;
 
 import com.crosschecklab.domain.analysis.Finding;
+import com.crosschecklab.domain.audit.AuditAction;
+import com.crosschecklab.domain.audit.AuditService;
 import com.crosschecklab.domain.review.Review;
 import com.crosschecklab.domain.review.ReviewRepository;
 import com.crosschecklab.domain.risk.dto.RiskPatternResponse;
@@ -34,6 +36,7 @@ public class RiskPatternService {
     private final RiskPatternRepository riskPatternRepository;
     private final ReviewRepository reviewRepository;
     private final OwnershipChecker ownershipChecker;
+    private final AuditService auditService;
 
     // Review 상세 조회가 소유자·검토자 권한을 확인한 뒤 provenance 로 사용하는 내부 조회다.
     // 승인 직후의 DRAFT 도 이력에 포함해야 하므로 상태로 거르지 않는다.
@@ -98,10 +101,21 @@ public class RiskPatternService {
 
         RiskPattern pattern = riskPatternRepository.findWithLockById(riskPatternId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        RiskPatternStatus previousStatus = pattern.getStatus();
         pattern.update(request.name(), request.status());
 
         // updatedAt 은 flush 시점에 채워지므로 응답에 최신 값을 담으려면 여기서 밀어낸다.
-        return RiskPatternResponse.from(riskPatternRepository.saveAndFlush(pattern));
+        RiskPattern savedPattern = riskPatternRepository.saveAndFlush(pattern);
+        auditService.append(
+                currentUser,
+                previousStatus == RiskPatternStatus.DRAFT
+                                && savedPattern.getStatus() == RiskPatternStatus.ACTIVE
+                        ? AuditAction.RISK_PATTERN_ACTIVATED
+                        : AuditAction.RISK_PATTERN_UPDATED,
+                savedPattern.getId(),
+                savedPattern.getName(),
+                null);
+        return RiskPatternResponse.from(savedPattern);
     }
 
     // GF-001·GF-003 진입점. 보호조치는 ACTIVE 패턴에만 붙일 수 있다.
