@@ -48,15 +48,24 @@ public class GroundTruthFactService {
      */
     @Transactional
     public void refreshFromConfirmedDocument(ProductDocument document, User confirmer) {
-        requireConfirmedDocument(document);
-        String value = document.getExtractedText();
+        // updateText changes the managed document immediately before this call. Flush that
+        // change, then reload under the same row lock used by verification and analysis
+        // acceptance so none of those workflows can observe or decide different versions.
+        Long documentId = document.getId();
+        entityManager.flush();
+        entityManager.detach(document);
+        ProductDocument confirmedDocument = productDocumentRepository.findByIdForUpdate(documentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND));
+
+        requireConfirmedDocument(confirmedDocument);
+        String value = confirmedDocument.getExtractedText();
         String sourceTextSha256 = sha256(value);
 
-        GroundTruthFact fact = groundTruthFactRepository.findByDocumentId(document.getId())
+        GroundTruthFact fact = groundTruthFactRepository.findByDocumentId(documentId)
                 .orElse(null);
         if (fact == null) {
             groundTruthFactRepository.save(GroundTruthFact.create(
-                    document, SNAPSHOT_LABEL, value, sourceTextSha256, confirmer));
+                    confirmedDocument, SNAPSHOT_LABEL, value, sourceTextSha256, confirmer));
             return;
         }
         if (!fact.getValue().equals(value)) {

@@ -92,6 +92,7 @@ public class AnalysisJobService {
 
         try {
             AnalysisResult result = provider.analyze(job.request());
+            validateKnownFactReferences(job.request(), result);
             transactionTemplate.executeWithoutResult(status -> saveResult(analysisId, result, job.fence(), traceId));
         } catch (ProviderException e) {
             log.warn("분석 {} 실패 errorCode={} retryable={}", analysisId, e.getErrorCode(), e.isRetryable());
@@ -114,6 +115,31 @@ public class AnalysisJobService {
         analysisRepository.flush();
         AnalysisRequest request = inputLoader.load(analysis).toProviderRequest(analysisId, scenarioCode);
         return new Job(request, analysisRepository.findUpdatedAtById(analysisId).orElseThrow());
+    }
+
+    private void validateKnownFactReferences(AnalysisRequest request, AnalysisResult result) {
+        Set<Long> acceptedFactIds = request.knownFacts() == null ? Set.of() : request.knownFacts().stream()
+                .map(AnalysisRequest.KnownFactPayload::factId)
+                .collect(Collectors.toSet());
+
+        for (FindingPayload finding : result.findings()) {
+            Set<Long> citedFactIds = new LinkedHashSet<>();
+            for (Long factId : finding.knownFactIds()) {
+                if (factId == null) {
+                    throw invalidProviderResponse("사실 인용에 factId 가 없음");
+                }
+                if (!citedFactIds.add(factId)) {
+                    throw invalidProviderResponse("중복된 사실 인용: " + factId);
+                }
+                if (!acceptedFactIds.contains(factId)) {
+                    throw invalidProviderResponse("요청에 없는 사실 인용: " + factId);
+                }
+            }
+        }
+    }
+
+    private ProviderException invalidProviderResponse(String detail) {
+        return new ProviderException(ErrorCode.PROVIDER_RESPONSE_INVALID, false, detail);
     }
 
     // 잠근 행을 기준으로 이 회차가 아직 유효한가. 그 사이 재시도가 시작됐으면 false.

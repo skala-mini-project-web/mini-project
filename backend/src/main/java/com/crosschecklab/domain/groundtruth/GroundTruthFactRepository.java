@@ -9,4 +9,7 @@ public interface GroundTruthFactRepository extends JpaRepository<GroundTruthFact
     Optional<GroundTruthFact> findByDocumentId(Long documentId);
 
     List<GroundTruthFact> findAllByDocumentIdOrderByIdAsc(Long documentId);
+
+    List<GroundTruthFact> findAllByDocumentIdAndVerificationStatusOrderByIdAsc(
+            Long documentId, GroundTruthFact.VerificationStatus verificationStatus);
 }

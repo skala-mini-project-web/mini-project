@@ -1,6 +1,7 @@
 package com.crosschecklab.domain.analysis.dto;
 
 import com.crosschecklab.domain.analysis.Analysis;
+import com.crosschecklab.domain.analysis.AnalysisGroundTruthFactSnapshot;
 import com.crosschecklab.domain.analysis.Finding;
 import com.crosschecklab.domain.document.ProductDocument;
 import com.crosschecklab.domain.evidence.EvidenceDocument;
@@ -19,6 +20,7 @@ public record AnalysisResultResponse(
         Integer riskScore,
         SourceDocument sourceDocument,
         List<GroundingDocument> groundingDocuments,
+        List<GroundTruthFactView> groundTruthFacts,
         List<FindingView> findings
 ) {
 
@@ -26,6 +28,9 @@ public record AnalysisResultResponse(
     }
 
     public record GroundingDocument(Long documentId, String title) {
+    }
+
+    public record GroundTruthFactView(Long factId, String label, String value) {
     }
 
     public record FindingView(
@@ -41,7 +46,9 @@ public record AnalysisResultResponse(
     public record EvidenceReferenceView(Long evidenceDocumentId, EvidenceSourceType sourceType, String excerpt) {
     }
 
-    public static AnalysisResultResponse of(Analysis analysis, ProductDocument document, List<Finding> findings,
+    public static AnalysisResultResponse of(Analysis analysis, ProductDocument document,
+                                            List<AnalysisGroundTruthFactSnapshot> groundTruthFacts,
+                                            List<Finding> findings,
                                             Map<Long, PersonaCode> personaCodes,
                                             Map<Long, EvidenceDocument> evidenceDocuments) {
         return new AnalysisResultResponse(
@@ -52,6 +59,10 @@ public record AnalysisResultResponse(
                 analysis.getEvidenceDocumentIds().stream()
                         .map(evidenceDocuments::get).filter(Objects::nonNull)
                         .map(evidence -> new GroundingDocument(evidence.getId(), evidence.getTitle()))
+                        .toList(),
+                groundTruthFacts.stream()
+                        .map(fact -> new GroundTruthFactView(
+                                fact.getGroundTruthFact().getId(), fact.getLabel(), fact.getValue()))
                         .toList(),
                 findings.stream().map(finding -> toView(finding, personaCodes, evidenceDocuments)).toList());
     }

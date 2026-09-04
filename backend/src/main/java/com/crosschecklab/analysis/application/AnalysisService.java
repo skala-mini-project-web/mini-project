@@ -2,6 +2,8 @@ package com.crosschecklab.analysis.application;
 
 import com.crosschecklab.analysis.provider.http.AiServiceProperties;
 import com.crosschecklab.domain.analysis.Analysis;
+import com.crosschecklab.domain.analysis.AnalysisGroundTruthFactSnapshot;
+import com.crosschecklab.domain.analysis.AnalysisGroundTruthFactSnapshotRepository;
 import com.crosschecklab.domain.analysis.AnalysisRepository;
 import com.crosschecklab.domain.analysis.Finding;
 import com.crosschecklab.domain.analysis.FindingRepository;
@@ -44,6 +46,7 @@ import org.springframework.util.StringUtils;
 public class AnalysisService {
 
     private final AnalysisRepository analysisRepository;
+    private final AnalysisGroundTruthFactSnapshotRepository factSnapshotRepository;
     private final FindingRepository findingRepository;
     private final ProductDocumentRepository productDocumentRepository;
     private final EvidenceDocumentRepository evidenceDocumentRepository;
@@ -59,10 +62,9 @@ public class AnalysisService {
     @Transactional
     public AnalysisAcceptedResponse create(AnalysisCreateRequest request, String scenarioCode, DemoUser currentUser) {
         ownershipChecker.requireRole(currentUser, UserRole.PRODUCT_MANAGER);
-        // 문서 상태(409)를 알려주기 전에 소유권부터 판정한다.
-        ownershipChecker.requireOwner(ownerIdOf(request.productDocumentId()), currentUser);
-
-        AnalysisInput input = inputLoader.load(request.productDocumentId(), request.redTeamPackId(),
+        ProductDocument lockedDocument = inputLoader.lockDocument(request.productDocumentId());
+        ownershipChecker.requireOwner(lockedDocument.getProduct().getOwnerId(), currentUser);
+        AnalysisInput input = inputLoader.load(lockedDocument, request.redTeamPackId(),
                 request.personaIds(), request.evidenceDocumentIds());
 
         Analysis analysis = Analysis.create(input.document().getId(), input.redTeamPack().getId(),
@@ -73,6 +75,9 @@ public class AnalysisService {
         } catch (DataIntegrityViolationException e) {
             throw new BusinessException(ErrorCode.DUPLICATE_ANALYSIS_REQUEST);
         }
+        factSnapshotRepository.saveAll(input.knownFacts().stream()
+                .map(fact -> AnalysisGroundTruthFactSnapshot.of(analysis, fact.source()))
+                .toList());
 
         auditService.append(
                 currentUser, AuditAction.ANALYSIS_CREATED, analysis.getId(), null, analysis.getId());
@@ -124,6 +129,8 @@ public class AnalysisService {
         ownershipChecker.requireOwnerOrReviewer(document.getProduct().getOwnerId(), currentUser);
         analysis.requireCompleted();
         List<Finding> findings = findingRepository.findByAnalysisIdOrderByIdAsc(analysisId);
+        List<AnalysisGroundTruthFactSnapshot> groundTruthFacts =
+                factSnapshotRepository.findAllByAnalysisIdOrderByIdAsc(analysisId);
 
         Map<Long, PersonaCode> personaCodes = personaTemplateRepository.findAll().stream()
                 .collect(Collectors.toMap(PersonaTemplate::getId, PersonaTemplate::getCode));
@@ -131,7 +138,8 @@ public class AnalysisService {
                 .findAllById(analysis.getEvidenceDocumentIds()).stream()
                 .collect(Collectors.toMap(EvidenceDocument::getId, Function.identity()));
 
-        return AnalysisResultResponse.of(analysis, document, findings, personaCodes, evidenceDocuments);
+        return AnalysisResultResponse.of(
+                analysis, document, groundTruthFacts, findings, personaCodes, evidenceDocuments);
     }
 
     // X-Demo-Scenario 헤더가 없으면 설정의 기본 시나리오를 쓴다.

@@ -3,16 +3,21 @@ package com.crosschecklab.domain.analysis;
 import static org.awaitility.Awaitility.await;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.crosschecklab.analysis.provider.RiskAnalysisProvider;
 import com.crosschecklab.analysis.provider.dto.AnalysisRequest;
 import com.crosschecklab.analysis.provider.dto.AnalysisResult;
+import com.crosschecklab.analysis.provider.dto.FindingPayload;
+import com.crosschecklab.global.common.enums.Severity;
 import com.crosschecklab.global.config.AsyncConfig;
 import com.crosschecklab.global.error.ErrorCode;
 import com.crosschecklab.support.IntegrationTestSupport;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.List;
@@ -204,6 +209,40 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 "redTeamPackId", 1));
     }
 
+    private Long confirmFact(String text, String verificationStatus) throws Exception {
+        mockMvc.perform(asPm(patch("/api/documents/{documentId}/text", confirmedDocumentId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("extractedText", text, "confirmed", true)))))
+                .andExpect(status().isOk());
+
+        String response = mockMvc.perform(asPm(get(
+                        "/api/product-documents/{documentId}/ground-truth-facts", confirmedDocumentId)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode fact = objectMapper.readTree(response).get("items").get(0);
+        Long factId = fact.get("factId").asLong();
+        if (!"CANDIDATE".equals(verificationStatus)) {
+            mockMvc.perform(asPm(put("/api/ground-truth-facts/{factId}/verification", factId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "verificationStatus", verificationStatus,
+                                    "value", text)))))
+                    .andExpect(status().isOk());
+        }
+        return factId;
+    }
+
+    private AnalysisResult resultCiting(Long factId) {
+        return new AnalysisResult(82, "fact-aware-model", "fact-aware-prompt", List.of(new FindingPayload(
+                "검증된 사실을 인용한 분석 결과입니다.",
+                Severity.HIGH,
+                List.of(),
+                List.of(),
+                List.of(factId),
+                "검증된 사실을 기준으로 설명하세요.")));
+    }
+
     @Test
     @DisplayName("ANA-001·004: 분석을 생성하면 202로 수락되고 riskScore 82 시나리오가 COMPLETED로 저장된다")
     void createAndComplete() throws Exception {
@@ -271,6 +310,117 @@ class AnalysisApiTest extends IntegrationTestSupport {
         assertThat(request.personaCodes()).hasSize(2);
         assertThat(request.evidenceDocuments()).hasSize(2)
                 .allSatisfy(evidence -> assertThat(evidence.content()).isNotBlank());
+    }
+
+    @Test
+    @DisplayName("#43: VERIFIED가 아닌 사실은 분석 snapshot과 Provider 요청에 포함되지 않는다")
+    void nonVerifiedFactsAreNotAccepted() throws Exception {
+        confirmFact("검증에서 제외할 사실", "REJECTED");
+
+        Long analysisId = createAnalysis();
+
+        assertThat(((FakeRiskAnalysisProvider) provider).lastRequest().knownFacts()).isEmpty();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM analysis_ground_truth_fact_snapshots
+                WHERE analysis_id = ?
+                """, Long.class, analysisId)).isZero();
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.groundTruthFacts").isEmpty());
+    }
+
+    @Test
+    @DisplayName("#43: 재확정 뒤 재시도해도 수락 시점 VERIFIED 사실 snapshot을 사용한다")
+    void retryUsesAcceptedFactSnapshotAfterDocumentReconfirmation() throws Exception {
+        String acceptedValue = "분석 수락 시점에 검증된 사실";
+        Long factId = confirmFact(acceptedValue, "VERIFIED");
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        fake.failWith(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true);
+        Long analysisId = createAnalysis();
+
+        assertThat(jdbc.queryForMap("""
+                SELECT ground_truth_fact_id, label, value
+                FROM analysis_ground_truth_fact_snapshots
+                WHERE analysis_id = ?
+                """, analysisId))
+                .containsEntry("ground_truth_fact_id", factId)
+                .containsEntry("label", "확정 문서 텍스트")
+                .containsEntry("value", acceptedValue);
+        assertThat(fake.lastRequest().knownFacts())
+                .singleElement()
+                .satisfies(fact -> {
+                    assertThat(fact.factId()).isEqualTo(factId);
+                    assertThat(fact.text()).isEqualTo(acceptedValue);
+                });
+
+        String liveValue = "문서 재확정으로 바뀐 현재 사실";
+        assertThat(confirmFact(liveValue, "CANDIDATE")).isEqualTo(factId);
+        assertThat(jdbc.queryForMap("""
+                SELECT verification_status, value
+                FROM ground_truth_facts
+                WHERE id = ?
+                """, factId))
+                .containsEntry("verification_status", "CANDIDATE")
+                .containsEntry("value", liveValue);
+        assertThat(jdbc.queryForObject("""
+                SELECT value
+                FROM analysis_ground_truth_fact_snapshots
+                WHERE analysis_id = ?
+                """, String.class, analysisId)).isEqualTo(acceptedValue);
+
+        fake.reset();
+        mockMvc.perform(asPm(post("/api/analyses/{id}/retry", analysisId)))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.analysisId").value(analysisId));
+
+        assertThat(fake.lastRequest().knownFacts())
+                .singleElement()
+                .satisfies(fact -> {
+                    assertThat(fact.factId()).isEqualTo(factId);
+                    assertThat(fact.text()).isEqualTo(acceptedValue);
+                });
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.groundTruthFacts.length()").value(1))
+                .andExpect(jsonPath("$.groundTruthFacts[0].factId").value(factId))
+                .andExpect(jsonPath("$.groundTruthFacts[0].label").value("확정 문서 텍스트"))
+                .andExpect(jsonPath("$.groundTruthFacts[0].value").value(acceptedValue));
+    }
+
+    @Test
+    @DisplayName("#43: Provider가 수락된 factId를 인용하면 결과에 그 참조가 노출된다")
+    void acceptedProviderFactReferencesAreVisibleInResult() throws Exception {
+        Long factId = confirmFact("Provider가 인용할 검증된 사실", "VERIFIED");
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultCiting(factId));
+
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.groundTruthFacts[0].factId").value(factId));
+    }
+
+    @Test
+    @DisplayName("#43: Provider가 수락되지 않은 factId를 인용하면 결과를 저장하지 않는다")
+    void unacceptedProviderFactReferenceIsRejected() throws Exception {
+        Long acceptedFactId = confirmFact("허용된 검증 사실", "VERIFIED");
+        Long unknownFactId = acceptedFactId + 999_999L;
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultCiting(unknownFactId));
+
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.retryable").value(false))
+                .andExpect(jsonPath("$.errorCode").value("PROVIDER_RESPONSE_INVALID"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isZero();
     }
 
     @Test
