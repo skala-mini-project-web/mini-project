@@ -184,8 +184,8 @@ health endpoint와 `frontend/scripts/real-e2e-preflight.mjs`는 서비스·의�
 ### Frontend build
 
 ```bash
-npm run build
-VITE_USE_MOCK=false npm run build
+(cd frontend && npm run build)
+(cd frontend && VITE_USE_MOCK=false npm run build)
 ```
 
 Vue build와 real API mode build를 확인합니다.
@@ -208,7 +208,16 @@ python -m pytest -q
 
 ### 실제 전체 흐름
 
-`frontend/scripts/real-rag-full-flow-e2e.mjs`는 실제 PDF → RAG → Ollama → PM/reviewer → GuardFit을 확인합니다.
+`docker compose up --build -d`와 Ollama 모델 준비이 끝난 뒤, 저장소 루트에서 실행합니다.
+
+```bash
+PLAYWRIGHT_EXECUTABLE_PATH="/absolute/path/to/Chromium" \
+node frontend/scripts/real-rag-full-flow-e2e.mjs
+```
+
+`frontend/package.json`은 `playwright-core`를 사용하므로 Chromium 실행 파일 경로를 지정합니다. 일반 `playwright` browser를 별도로 설치한 환경에서는 해당 변수 없이 실행할 수 있습니다.
+
+이 script는 실제 PDF → RAG → Ollama → PM/reviewer → GuardFit을 확인합니다.
 
 실제 전체 흐름 script는 API interception이나 `mockServer`를 사용하지 않습니다. page error, request failure, 예상 밖 4xx/5xx도 실패로 처리합니다.
 
