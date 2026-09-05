@@ -239,14 +239,16 @@ ollama list
 
 ## 향후 구현 예정
 
-- 한글 스캔 PDF OCR
-  - 서버 측 PDF page rendering과 OCR engine 연동
-  - 한글 인식 품질·낮은 신뢰도 구간 검토·원문 대조 workflow 추가
-- AI 분석 점수 근거 명확화
-  - Finding severity, 적용 rule, 인용 evidence span, Persona 영향도를 점수 구성 요소로 분리
-  - 결과 화면에 점수 산정 근거와 항목별 기여도를 노출
+- 구현 계획: [`docs/plans/ARGUS-위험우선순위-배치-OCR-구현계획.md`](docs/plans/ARGUS-위험우선순위-배치-OCR-구현계획.md)
+- AI 분석 점수·상황 기반 Persona
+  - 상태: 설계 확정, 구현 대기
+  - 불변 근거·정책 version·reviewer 결정 기반의 결정론 score engine 예정
 - 대량 파일 자동 처리
-  - 다중 파일 업로드 queue, 추출·indexing·분석 batch 처리, 진행 상황·재시도 관리 추가
+  - 상태: 설계 확정, 구현 대기
+  - PostgreSQL durable queue, item별 retry·cancel·quarantine·audit 예정
+- PDF 한글 OCR
+  - 상태: 설계 확정, 구현 대기
+  - PDF만 1차 범위, page별 OCR·confidence·원본 대조·PM confirmation 예정
 
 ## 팀 구성
 
