@@ -1,0 +1,149 @@
+{
+  "schemaVersion": "1.0",
+  "scorePolicyVersion": "1.0.0",
+  "taxonomyVersion": "1.0.0",
+  "synthetic": true,
+  "demoOnly": true,
+  "authorityDisclaimer": "이 fixture는 합성 데모의 결정론 점수 engine 회귀 검증값입니다. 실제 금융상품 평가, 법률 판단, 투자 자문 또는 소비자 적합성 판단이 아닙니다.",
+  "cases": [
+    {
+      "caseId": "critical-unqualified-guarantee",
+      "state": "APPROVED",
+      "requiredPersonaSituationIds": [
+        "LOSS_RECOVERY_PRESSURE",
+        "LIMITED_PRODUCT_FAMILIARITY"
+      ],
+      "events": [
+        {
+          "eventId": "unqualified-guarantee",
+          "dedupKey": "source-v1|claim-substantiation|monthly-guarantee",
+          "dimension": "CLAIM_SUBSTANTIATION",
+          "magnitude": 5,
+          "likelihood": 5,
+          "requiresHumanEscalation": true
+        }
+      ],
+      "expected": {
+        "score": 100,
+        "scoreBand": "URGENT",
+        "requiresHumanEscalation": true
+      }
+    },
+    {
+      "caseId": "two-independent-material-disclosures",
+      "state": "APPROVED",
+      "requiredPersonaSituationIds": [
+        "NEAR_TERM_LIQUIDITY_NEED",
+        "EXPLANATION_ACCESS_SUPPORT"
+      ],
+      "events": [
+        {
+          "eventId": "termination-cost-omission",
+          "dedupKey": "source-v1|key-information-completeness|termination-cost",
+          "dimension": "KEY_INFORMATION_COMPLETENESS",
+          "magnitude": 4,
+          "likelihood": 4,
+          "requiresHumanEscalation": false
+        },
+        {
+          "eventId": "hidden-risk-qualification",
+          "dedupKey": "source-v1|balance-and-prominence|risk-qualification",
+          "dimension": "BALANCE_AND_PROMINENCE",
+          "magnitude": 3,
+          "likelihood": 4,
+          "requiresHumanEscalation": false
+        }
+      ],
+      "expected": {
+        "score": 81,
+        "scoreBand": "URGENT",
+        "requiresHumanEscalation": false
+      }
+    },
+    {
+      "caseId": "duplicate-model-phrases-do-not-inflate",
+      "state": "APPROVED",
+      "requiredPersonaSituationIds": [
+        "LOSS_RECOVERY_PRESSURE"
+      ],
+      "events": [
+        {
+          "eventId": "same-claim-first-phrase",
+          "dedupKey": "source-v1|claim-substantiation|monthly-guarantee",
+          "dimension": "CLAIM_SUBSTANTIATION",
+          "magnitude": 4,
+          "likelihood": 4,
+          "requiresHumanEscalation": false
+        },
+        {
+          "eventId": "same-claim-paraphrase",
+          "dedupKey": "source-v1|claim-substantiation|monthly-guarantee",
+          "dimension": "CLAIM_SUBSTANTIATION",
+          "magnitude": 4,
+          "likelihood": 4,
+          "requiresHumanEscalation": false
+        }
+      ],
+      "expected": {
+        "deduplicatedEventCount": 1,
+        "score": 64,
+        "scoreBand": "HIGH"
+      }
+    },
+    {
+      "caseId": "persona-order-does-not-change-global-score",
+      "state": "APPROVED",
+      "requiredPersonaSituationIds": [
+        "DIGITAL_CHANNEL_SUPPORT",
+        "LIFE_EVENT_FINANCIAL_STRESS",
+        "VARIABLE_CASH_FLOW_OR_REPAYMENT_CONSTRAINT"
+      ],
+      "events": [
+        {
+          "eventId": "repayment-condition-unclear",
+          "dedupKey": "source-v1|key-information-completeness|repayment-condition",
+          "dimension": "KEY_INFORMATION_COMPLETENESS",
+          "magnitude": 3,
+          "likelihood": 3,
+          "requiresHumanEscalation": false
+        }
+      ],
+      "expected": {
+        "score": 36,
+        "scoreBand": "ELEVATED",
+        "globalScoreInvariantToPersonaOrder": true,
+        "globalScoreInvariantToExploratoryPersonaSubset": true
+      }
+    },
+    {
+      "caseId": "missing-policy-anchor-is-not-zero-risk",
+      "state": "NEEDS_EVIDENCE",
+      "requiredPersonaSituationIds": [
+        "LIMITED_PRODUCT_FAMILIARITY"
+      ],
+      "events": [],
+      "expected": {
+        "score": null,
+        "scoreState": "NEEDS_EVIDENCE",
+        "mustNotRenderNoRisk": true
+      }
+    },
+    {
+      "caseId": "incomplete-situation-coverage-is-not-zero-risk",
+      "state": "INCOMPLETE_COVERAGE",
+      "requiredPersonaSituationIds": [
+        "NEAR_TERM_LIQUIDITY_NEED",
+        "EXPLANATION_ACCESS_SUPPORT"
+      ],
+      "executedPersonaSituationIds": [
+        "NEAR_TERM_LIQUIDITY_NEED"
+      ],
+      "events": [],
+      "expected": {
+        "score": null,
+        "scoreState": "INCOMPLETE_COVERAGE",
+        "mustNotRenderNoRisk": true
+      }
+    }
+  ]
+}

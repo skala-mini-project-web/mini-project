@@ -253,7 +253,7 @@ ollama list
 
 - 구현 계획: [`docs/plans/ARGUS-위험우선순위-배치-OCR-구현계획.md`](docs/plans/ARGUS-위험우선순위-배치-OCR-구현계획.md)
 - AI 분석 점수·상황 기반 Persona
-  - 상태: 설계 확정, 구현 대기
+  - 상태: 정책·synthetic TEVV fixture 로컬 검증 완료, score engine 구현 대기
   - 불변 근거·정책 version·reviewer 결정 기반의 결정론 score engine 예정
 - 대량 파일 자동 처리
   - 상태: 설계 확정, 구현 대기
