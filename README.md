@@ -68,6 +68,18 @@ Frontend
       └─ AI service → Ollama
 ```
 
+### 로컬 모델 선택 근거
+
+- 분석 모델: [`qwen2.5:7b-instruct`](https://ollama.com/library/qwen2.5/tags)
+  - 원 모델은 7.61B parameter instruct model이며, 현재 Ollama package는 약 4.7GB quantized build
+  - JSON schema를 따르는 구조화 Finding 생성과 로컬 Docker 환경의 실행 가능 크기 사이에서 선택
+  - 모델이 반환한 score·confidence는 권위 있는 판단으로 사용하지 않고, backend가 근거·Persona·공식 사실 범위를 검증
+- embedding 모델: [`bge-m3:latest`](https://huggingface.co/BAAI/bge-m3)
+  - 약 568M parameter, 1024차원 dense embedding, 100개 이상 언어 지원 model card 기준
+  - 한국어·영문 합성 corpus의 pgvector cosine retrieval과 현재 `vector(1024)` schema에 맞춰 선택
+  - BGE-M3의 sparse·multi-vector 기능은 사용하지 않으며, 검색 결과 chunk만 분석 모델에 전달
+- 모델 version·prompt version·embedding digest·retrieval snapshot은 결과 provenance로 보관
+
 ### 설계 이미지
 
 ![핵심 ERD](docs/assets/erd-core.png)
