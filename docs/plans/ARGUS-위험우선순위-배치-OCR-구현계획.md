@@ -223,6 +223,7 @@ Backend durable OCR job
 
 - branch: `feature/immutable-evidence-anchors`
 - Issue: [#95 불변 score evidence anchor와 Finding revision 도입](https://github.com/skala-mini-project-web/mini-project/issues/95)
+- 상태: 완료
 - 완료 기준: source·evidence offset/hash, append-only execution·retry·review history, migration upgrade·clean DB 검증
 - 데이터 원칙: 기존 excerpt-only 분석 이력에는 정확한 page·offset·hash를 추정해 넣지 않는다. 새 execution부터 anchored result만 score-eligible로 취급한다.
 
@@ -255,9 +256,9 @@ Backend durable OCR job
 - 실패·미검증 상태에서는 push·PR·merge 금지
 - `develop` 병합 뒤 release 검증을 통과한 feature 집합만 `main` release PR 생성
 
-## README roadmap 상태
+## README 고도화 진행 상태
 
-- 점수·Persona: 설계 확정, 구현 대기
+- 점수·Persona: 정책·불변 근거·review decision 기반 완료, score engine·UI·calibration 예정
 - batch: 설계 확정, 구현 대기
 - PDF 한글 OCR: 설계 확정, 구현 대기
 

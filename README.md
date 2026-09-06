@@ -255,18 +255,23 @@ ollama list
 - 데이터 유지 종료: `docker compose down`
 - DB·RAG index·분석·검토·감사 데이터 삭제: `docker compose down -v`
 
-## 향후 구현 예정
+## 고도화 진행 현황
 
 - 구현 계획: [`docs/plans/ARGUS-위험우선순위-배치-OCR-구현계획.md`](docs/plans/ARGUS-위험우선순위-배치-OCR-구현계획.md)
-- AI 분석 점수·상황 기반 Persona
-  - 상태: 정책·synthetic TEVV fixture와 불변 source revision 로컬 검증 완료, exact evidence anchor·score engine 구현 대기
-  - 불변 근거·정책 version·reviewer 결정 기반의 결정론 score engine 예정
+- 상태 표기: `[완료]` 검증·`develop` 반영 완료 / `[진행 중]` feature branch에서 구현·검증 중 / `[예정]` 설계는 확정됐지만 미구현
+- 근거 기반 문서 위험 우선순위·상황 기반 Persona
+  - `[완료]` 정책 v1·synthetic TEVV fixture, 불변 source revision, execution-bound Finding, exact evidence anchor, Finding별 reviewer decision 이력
+  - `[완료]` 실제 Docker/browser RAG E2E에서 immutable anchor·review decision 저장 확인
+  - `[예정]` 결정론 score engine·score ledger·score UI·TEVV calibration: [#85](https://github.com/skala-mini-project-web/mini-project/issues/85)
 - 대량 파일 자동 처리
-  - 상태: 설계 확정, 구현 대기
-  - PostgreSQL durable queue, item별 retry·cancel·quarantine·audit 예정
+  - `[완료]` PostgreSQL durable queue·storage·retry/cancel/quarantine 설계 확정
+  - `[예정]` one-item 호환 pipeline, item별 retry·cancel·quarantine·error report, browser E2E: [#86](https://github.com/skala-mini-project-web/mini-project/issues/86)
 - PDF 한글 OCR
-  - 상태: 설계 확정, 구현 대기
-  - PDF만 1차 범위, page별 OCR·confidence·원본 대조·PM confirmation 예정
+  - `[완료]` PDF-only OCR worker·page routing·confidence·원본 대조·PM confirmation 설계 확정
+  - `[예정]` pinned `kor+eng` OCR worker, page artifact, critical-field review, actual Compose/browser E2E: [#87](https://github.com/skala-mini-project-web/mini-project/issues/87)
+- 실서비스 검증·합성 corpus
+  - `[완료]` 실제 browser E2E: PM 수정·확정, 분석 후 수정 409, reviewer read-only, malformed PDF 실패 화면, RAG→review→Risk Pattern→GuardFit
+  - `[완료]` 6개 합성 상품군·30개 PDF·102페이지 corpus의 PDFBox extraction·SHA-256·source revision 검증
 
 ## 팀 구성
 
