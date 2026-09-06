@@ -166,10 +166,20 @@ public class AnalysisService {
         ProductDocument document = loadDocument(analysis.getProductDocumentId());
         ownershipChecker.requireOwnerOrReviewer(document.getProduct().getOwnerId(), currentUser);
         analysis.requireCompleted();
-        List<Finding> findings = findingRepository.findByAnalysisIdOrderByIdAsc(analysisId);
+        Long currentExecutionId = analysis.getCurrentSuccessfulExecutionId();
+        boolean historical = currentExecutionId == null;
+        List<Finding> findings = historical
+                ? findingRepository.findByAnalysisIdOrderByIdAsc(analysisId)
+                : findingRepository.findAllByAnalysisExecutionIdOrderByIdAsc(currentExecutionId);
         List<AnalysisGroundTruthFactSnapshot> groundTruthFacts =
                 factSnapshotRepository.findAllByAnalysisIdOrderByIdAsc(analysisId);
-        AnalysisRagRun ragRun = ragRunRepository.findByAnalysisId(analysisId)
+        AnalysisRagRun ragRun = (historical
+                ? ragRunRepository.findAllByAnalysisExecutionAnalysisIdOrderByAnalysisExecutionAttemptNoAsc(
+                                analysisId).stream()
+                        .filter(run -> run.getAnalysisExecution().isSucceeded())
+                        .reduce((previous, current) -> current)
+                        .or(() -> ragRunRepository.findByAnalysisId(analysisId))
+                : ragRunRepository.findByAnalysisExecutionId(currentExecutionId))
                 .orElseThrow(() -> new IllegalStateException(
                         "완료된 분석의 RAG 실행 기록이 없습니다: " + analysisId));
 
@@ -180,7 +190,8 @@ public class AnalysisService {
                 .collect(Collectors.toMap(EvidenceDocument::getId, Function.identity()));
 
         return AnalysisResultResponse.of(
-                analysis, document, groundTruthFacts, findings, personaCodes, evidenceDocuments, ragRun);
+                analysis, document, groundTruthFacts, findings, personaCodes, evidenceDocuments, ragRun,
+                historical);
     }
 
     // X-Demo-Scenario 헤더가 없으면 설정의 기본 시나리오를 쓴다.

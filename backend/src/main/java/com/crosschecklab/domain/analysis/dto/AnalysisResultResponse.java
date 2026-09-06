@@ -21,6 +21,9 @@ public record AnalysisResultResponse(
         Long analysisId,
         AnalysisStatus status,
         Integer riskScore,
+        Long currentExecutionId,
+        boolean scoreEligible,
+        boolean historical,
         SourceDocument sourceDocument,
         List<GroundingDocument> groundingDocuments,
         RetrievalTrace retrievalTrace,
@@ -75,11 +78,15 @@ public record AnalysisResultResponse(
                                             List<Finding> findings,
                                             Map<Long, PersonaCode> personaCodes,
                                             Map<Long, EvidenceDocument> evidenceDocuments,
-                                            AnalysisRagRun ragRun) {
+                                            AnalysisRagRun ragRun,
+                                            boolean historical) {
         return new AnalysisResultResponse(
                 analysis.getId(),
                 analysis.getStatus(),
-                analysis.getRiskScore(),
+                historical ? null : analysis.getRiskScore(),
+                analysis.getCurrentSuccessfulExecutionId(),
+                !historical,
+                historical,
                 new SourceDocument(document.getId(), document.getFileName()),
                 analysis.getEvidenceDocumentIds().stream()
                         .map(evidenceDocuments::get).filter(Objects::nonNull)

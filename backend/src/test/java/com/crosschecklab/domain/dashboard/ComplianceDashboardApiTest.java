@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.crosschecklab.support.IntegrationTestSupport;
 import java.time.LocalDate;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -33,10 +34,8 @@ class ComplianceDashboardApiTest extends IntegrationTestSupport {
     @BeforeEach
     @AfterEach
     void clearFixtures() {
-        jdbc.update("DELETE FROM guardfit_actions");
-        jdbc.update("DELETE FROM risk_patterns");
-        jdbc.update("DELETE FROM reviews");
-        jdbc.update("DELETE FROM findings");
+        // 실행 경계에 묶인 Finding/Review는 append-only이므로 FK 전체를 함께 초기화한다.
+        jdbc.execute("TRUNCATE TABLE analysis_executions CASCADE");
         jdbc.update("DELETE FROM analyses");
         jdbc.update("DELETE FROM product_documents");
         jdbc.update("DELETE FROM products");
@@ -69,30 +68,48 @@ class ComplianceDashboardApiTest extends IntegrationTestSupport {
 
     // red_team_pack_id 1 은 V2 시드 값이다.
     private long insertAnalysis(long documentId) {
-        return jdbc.queryForObject("""
+        long analysisId = jdbc.queryForObject("""
                 INSERT INTO analyses
                     (product_document_id, red_team_pack_id, status, progress, input_hash, created_at, updated_at)
                 VALUES (?, 1, 'IN_REVIEW', 100, ?, NOW(), NOW())
                 RETURNING id""", Long.class, documentId, "hash-" + documentId);
+        long executionId = jdbc.queryForObject("""
+                INSERT INTO analysis_executions
+                    (analysis_id, attempt_no, execution_token, status, retryable, retrieval_version,
+                     provider_risk_score, model_version, prompt_version, started_at, finished_at, created_at)
+                VALUES (?, 1, ?, 'SUCCEEDED', FALSE, 'compliance-dashboard-test',
+                        82, 'compliance-dashboard-test', 'compliance-dashboard-test', NOW(), NOW(), NOW())
+                RETURNING id""", Long.class, analysisId, UUID.randomUUID().toString());
+        jdbc.update(
+                "UPDATE analyses SET current_successful_execution_id = ? WHERE id = ?",
+                executionId,
+                analysisId);
+        return analysisId;
     }
 
     private long insertFinding(long analysisId, String severity) {
         return jdbc.queryForObject("""
-                INSERT INTO findings (analysis_id, statement, severity, created_at, updated_at)
-                VALUES (?, '안정성 표현이 원금보장으로 오인될 수 있습니다.', ?, NOW(), NOW())
-                RETURNING id""", Long.class, analysisId, severity);
+                INSERT INTO findings
+                    (analysis_id, analysis_execution_id, lineage_id, revision_number,
+                     statement, severity, created_at, updated_at)
+                VALUES (?, (SELECT current_successful_execution_id FROM analyses WHERE id = ?),
+                        ?, 1, '안정성 표현이 원금보장으로 오인될 수 있습니다.', ?, NOW(), NOW())
+                RETURNING id""",
+                Long.class, analysisId, analysisId, UUID.randomUUID().toString(), severity);
     }
 
     // decidedDaysAgo 가 null 이면 PENDING, 아니면 그날 결정된 검토다.
     private long insertReview(long analysisId, String status, Integer decidedDaysAgo) {
         return jdbc.queryForObject("""
-                INSERT INTO reviews (analysis_id, reviewer_id, status, decided_at, created_at, updated_at)
-                VALUES (?, ?, ?,
+                INSERT INTO reviews
+                    (analysis_id, analysis_execution_id, reviewer_id, status,
+                     decided_at, created_at, updated_at)
+                VALUES (?, (SELECT current_successful_execution_id FROM analyses WHERE id = ?), ?, ?,
                         CASE WHEN CAST(? AS int) IS NULL THEN NULL
                              ELSE NOW() - CAST(? AS int) * INTERVAL '1 day' END,
                         NOW(), NOW())
                 RETURNING id""",
-                Long.class, analysisId,
+                Long.class, analysisId, analysisId,
                 decidedDaysAgo == null ? null : REVIEWER, status, decidedDaysAgo, decidedDaysAgo);
     }
 

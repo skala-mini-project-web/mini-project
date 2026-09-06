@@ -28,9 +28,13 @@ import com.crosschecklab.global.error.ErrorCode;
 import com.crosschecklab.support.IntegrationTestSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Collection;
+import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -66,6 +70,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
     private static final String TEST_CHUNKING_VERSION = "analysis-api-test-v1";
     private static final String TEST_EMBEDDING_MODEL = "analysis-api-test-embedding";
+    private static final String TEST_DOCUMENT_SOURCE_HASH = "d".repeat(64);
     private static final Map<Long, String> TEST_RETRIEVED_CONTEXTS = Map.of(
             1L, "“안정”, “보장”, “확정”과 같은 표현이 있으면 원금손실 가능성과 변동 수익 정정문을 "
                     + "같은 페이지, 같은 화면, 같은 음성 구간에 표시한다.",
@@ -114,6 +119,10 @@ class AnalysisApiTest extends IntegrationTestSupport {
             List<Long> selectedIds = normalizedSelectedIds(selectedEvidenceDocumentIds);
             for (Long evidenceDocumentId : selectedIds) {
                 String chunkText = testContext(evidenceDocumentId);
+                String sourceContent = jdbcTemplate.queryForObject(
+                        "SELECT content FROM evidence_documents WHERE id = ? AND active = TRUE",
+                        String.class,
+                        evidenceDocumentId);
                 jdbcTemplate.update("""
                                 INSERT INTO evidence_document_chunks (
                                     evidence_document_id, source_hash, chunk_ordinal, chunking_version,
@@ -131,7 +140,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                                     chunk_text = EXCLUDED.chunk_text,
                                     created_at = CURRENT_TIMESTAMP
                                 """,
-                        testSourceHash(evidenceDocumentId),
+                        sha256(normalizeEvidenceContent(sourceContent)),
                         TEST_CHUNKING_VERSION,
                         testChunkHash(evidenceDocumentId),
                         chunkText,
@@ -165,7 +174,6 @@ class AnalysisApiTest extends IntegrationTestSupport {
                                        ?::integer AS rank, ?::double precision AS similarity
                                 FROM evidence_document_chunks
                                 WHERE evidence_document_id = ?
-                                  AND source_hash = ?
                                   AND chunking_version = ?
                                   AND embedding_model = ?
                                 """,
@@ -183,7 +191,6 @@ class AnalysisApiTest extends IntegrationTestSupport {
                         rank,
                         1.0d - (index * 0.1d),
                         evidenceDocumentId,
-                        testSourceHash(evidenceDocumentId),
                         TEST_CHUNKING_VERSION,
                         TEST_EMBEDDING_MODEL));
             }
@@ -204,12 +211,21 @@ class AnalysisApiTest extends IntegrationTestSupport {
         return context;
     }
 
-    private static String testSourceHash(Long evidenceDocumentId) {
-        return (evidenceDocumentId == 1L ? "1" : "2").repeat(64);
-    }
-
     private static String testChunkHash(Long evidenceDocumentId) {
         return (evidenceDocumentId == 1L ? "a" : "b").repeat(64);
+    }
+
+    private static String normalizeEvidenceContent(String content) {
+        return content.replace("\r\n", "\n").replace('\r', '\n').strip();
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 
     @Autowired
@@ -265,7 +281,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
     // append-only audit_events 는 비우지 않고 trace/resource 조건으로 검증 범위를 격리한다.
     @BeforeEach
     void setUp() {
-        ((FakeRiskAnalysisProvider) provider).reset();
+        useAnchoredDefaultResult();
         clearFixtures();
         productId = jdbc.queryForObject("""
                 INSERT INTO products (owner_id, name, product_type, created_at, updated_at)
@@ -279,8 +295,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
         clearFixtures();
     }
 
-    // 참조 순서대로 지운다 (analyses → product_documents → products).
+    // append-only 실행 이력은 TRUNCATE CASCADE로 분석과 자식 행을 함께 비운다.
     private void clearFixtures() {
+        jdbc.execute("TRUNCATE TABLE analysis_executions CASCADE");
         jdbc.update("DELETE FROM idempotency_claims");
         jdbc.update("DELETE FROM analyses");
         jdbc.update("DELETE FROM product_documents");
@@ -302,13 +319,22 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     private Long insertDocument(boolean confirmed) {
-        return jdbc.queryForObject("""
+        Long documentId = jdbc.queryForObject("""
                 INSERT INTO product_documents
-                    (product_id, file_name, media_type, storage_key, extract_status, extracted_text,
-                     confirmed, created_at, updated_at)
-                VALUES (?, '스마트인컴_상품설명서.pdf', 'application/pdf', 'mock://documents/guarantee',
-                        'READY', '최근 안정적인 수익률을 기록한 투자상품입니다.', ?, NOW(), NOW())
-                RETURNING id""", Long.class, productId, confirmed);
+                    (product_id, file_name, media_type, file_size, checksum, storage_key,
+                     extract_status, extracted_text, confirmed, created_at, updated_at)
+                VALUES (?, '스마트인컴_상품설명서.pdf', 'application/pdf', 1, ?,
+                        'mock://documents/guarantee', 'READY',
+                        '최근 안정적인 수익률을 기록한 투자상품입니다.', ?, NOW(), NOW())
+                RETURNING id""", Long.class, productId, TEST_DOCUMENT_SOURCE_HASH, confirmed);
+        jdbc.update("""
+                INSERT INTO document_source_revisions (
+                    product_document_id, revision_number, file_name, media_type, file_size,
+                    checksum, storage_key, source_hash)
+                VALUES (?, 1, '스마트인컴_상품설명서.pdf', 'application/pdf', 1, ?,
+                        'mock://documents/guarantee', ?)
+                """, documentId, TEST_DOCUMENT_SOURCE_HASH, TEST_DOCUMENT_SOURCE_HASH);
+        return documentId;
     }
 
     private Long createAnalysis() throws Exception {
@@ -416,22 +442,56 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     private AnalysisResult resultCiting(AnalysisRequest request, Long factId) {
+        AnalysisRequest.RetrievedContextPayload context = request.retrievedContexts().getFirst();
         return new AnalysisResult(82, "fact-aware-model", "fact-aware-prompt", List.of(new FindingPayload(
                 "검증된 사실을 인용한 분석 결과입니다.",
                 Severity.HIGH,
                 List.of(),
-                List.of(request.retrievedContexts().getFirst().chunkId()),
+                List.of(context.chunkId()),
+                List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText())),
                 List.of(factId),
                 "검증된 사실을 기준으로 설명하세요.")));
     }
 
-    private AnalysisResult resultCitingChunks(List<Long> chunkIds) {
+    private AnalysisResult resultCitingChunks(
+            List<Long> chunkIds, List<FindingPayload.EvidenceSpanPayload> spans) {
         return new AnalysisResult(82, "chunk-aware-model", "chunk-aware-prompt", List.of(new FindingPayload(
                 "검색된 근거 청크를 인용한 분석 결과입니다.",
                 Severity.HIGH,
                 List.of(),
                 chunkIds,
+                spans,
+                List.of(),
                 "검색된 근거를 기준으로 설명하세요.")));
+    }
+
+    private void useAnchoredDefaultResult() {
+        useAnchoredResult(
+                82,
+                Severity.HIGH,
+                "안정성 표현이 원금보장으로 오인될 가능성이 있습니다.");
+    }
+
+    private void useAnchoredResult(int riskScore, Severity severity, String statement) {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        fake.reset();
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    AnalysisRequest.RetrievedContextPayload context =
+                            request.retrievedContexts().getFirst();
+                    return new AnalysisResult(riskScore, "mock-risk-v1", "mock-prompt-v1",
+                            List.of(new FindingPayload(
+                                    statement,
+                                    severity,
+                                    List.of(
+                                            com.crosschecklab.global.common.enums.PersonaCode.FINANCIAL_BEGINNER,
+                                            com.crosschecklab.global.common.enums.PersonaCode.SENIOR),
+                                    List.of(context.chunkId()),
+                                    List.of(new FindingPayload.EvidenceSpanPayload(
+                                            context.chunkId(), context.chunkText())),
+                                    List.of(),
+                                    "안정성 표현과 같은 영역에 원금 손실 가능성을 명시하세요.")));
+                });
     }
 
     @Test
@@ -476,6 +536,53 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 """, analysisId))
                 .containsEntry("evidence_document_id", 1L)
                 .containsEntry("excerpt", TEST_RETRIEVED_CONTEXTS.get(1L));
+        Map<String, Object> execution = jdbc.queryForMap("""
+                SELECT execution.id, execution.attempt_no, execution.execution_token,
+                       execution.status, execution.retrieval_version,
+                       execution.provider_risk_score, execution.model_version,
+                       execution.prompt_version, analysis.current_successful_execution_id
+                FROM analysis_executions execution
+                JOIN analyses analysis ON analysis.id = execution.analysis_id
+                WHERE analysis.id = ?
+                """, analysisId);
+        assertThat(execution)
+                .containsEntry("attempt_no", 1)
+                .containsEntry("status", "SUCCEEDED")
+                .containsEntry("retrieval_version", "pgvector-cosine-v1")
+                .containsEntry("provider_risk_score", 82)
+                .containsEntry("model_version", "mock-risk-v1")
+                .containsEntry("prompt_version", "mock-prompt-v1")
+                .containsEntry("current_successful_execution_id", execution.get("id"));
+        assertThat(execution.get("execution_token")).isEqualTo(jdbc.queryForObject(
+                "SELECT execution_token FROM analyses WHERE id = ?", String.class, analysisId));
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM analysis_rag_runs rag_run
+                JOIN analysis_executions execution
+                  ON execution.id = rag_run.analysis_execution_id
+                WHERE execution.analysis_id = ?
+                """, Long.class, analysisId)).isEqualTo(1L);
+        Map<String, Object> anchoredFinding = jdbc.queryForMap("""
+                SELECT f.analysis_execution_id, f.lineage_id, f.revision_number,
+                       anchor.source_role, anchor.evidence_document_id,
+                       anchor.retrieved_chunk_id, anchor.page_number,
+                       anchor.utf8_end_offset - anchor.utf8_start_offset AS excerpt_bytes,
+                       anchor.exact_excerpt
+                FROM findings f
+                JOIN finding_evidence_anchors anchor ON anchor.finding_id = f.id
+                WHERE f.analysis_id = ?
+                """, analysisId);
+        assertThat(anchoredFinding)
+                .containsEntry("analysis_execution_id", execution.get("id"))
+                .containsEntry("revision_number", 1)
+                .containsEntry("source_role", "POLICY_REQUIREMENT")
+                .containsEntry("evidence_document_id", 1L)
+                .containsEntry("page_number", 1)
+                .containsEntry("exact_excerpt", TEST_RETRIEVED_CONTEXTS.get(1L));
+        assertThat(anchoredFinding.get("lineage_id").toString())
+                .matches("[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}");
+        assertThat(((Number) anchoredFinding.get("excerpt_bytes")).longValue())
+                .isEqualTo(TEST_RETRIEVED_CONTEXTS.get(1L).getBytes(StandardCharsets.UTF_8).length);
 
         assertAudit(traceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
         assertSingleTerminalAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
@@ -767,6 +874,20 @@ class AnalysisApiTest extends IntegrationTestSupport {
         mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.groundTruthFacts[0].factId").value(factId));
+        assertThat(jdbc.queryForMap("""
+                SELECT anchor.source_role, anchor.source_document_id, anchor.source_revision_id,
+                       anchor.source_hash, anchor.page_number, anchor.utf8_start_offset,
+                       anchor.utf8_end_offset, anchor.exact_excerpt
+                FROM finding_evidence_anchors anchor
+                JOIN findings finding ON finding.id = anchor.finding_id
+                WHERE finding.analysis_id = ? AND anchor.source_role = 'DOCUMENT_CLAIM'
+                """, analysisId))
+                .containsEntry("source_role", "DOCUMENT_CLAIM")
+                .containsEntry("source_document_id", confirmedDocumentId)
+                .containsEntry("source_hash", TEST_DOCUMENT_SOURCE_HASH)
+                .containsEntry("page_number", 1)
+                .containsEntry("utf8_start_offset", 0L)
+                .containsEntry("exact_excerpt", "Provider가 인용할 검증된 사실");
     }
 
     @Test
@@ -795,7 +916,10 @@ class AnalysisApiTest extends IntegrationTestSupport {
         FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
         ReflectionTestUtils.setField(fake, "behavior",
                 (Function<AnalysisRequest, AnalysisResult>) request ->
-                        resultCitingChunks(List.of(Long.MAX_VALUE)));
+                        resultCitingChunks(
+                                List.of(Long.MAX_VALUE),
+                                List.of(new FindingPayload.EvidenceSpanPayload(
+                                        Long.MAX_VALUE, "없는 근거"))));
 
         Long analysisId = createAnalysis();
 
@@ -815,7 +939,10 @@ class AnalysisApiTest extends IntegrationTestSupport {
         ReflectionTestUtils.setField(fake, "behavior",
                 (Function<AnalysisRequest, AnalysisResult>) request -> {
                     Long chunkId = request.retrievedContexts().getFirst().chunkId();
-                    return resultCitingChunks(List.of(chunkId, chunkId));
+                    return resultCitingChunks(
+                            List.of(chunkId, chunkId),
+                            List.of(new FindingPayload.EvidenceSpanPayload(
+                                    chunkId, request.retrievedContexts().getFirst().chunkText())));
                 });
 
         Long analysisId = createAnalysis();
@@ -824,6 +951,55 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("FAILED"))
                 .andExpect(jsonPath("$.retryable").value(false))
+                .andExpect(jsonPath("$.errorCode").value("PROVIDER_RESPONSE_INVALID"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isZero();
+    }
+
+    @Test
+    @DisplayName("같은 exact evidence span을 중복 반환하면 anchor를 일부도 저장하지 않는다")
+    void duplicateExactEvidenceSpanIsRejected() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    AnalysisRequest.RetrievedContextPayload context =
+                            request.retrievedContexts().getFirst();
+                    FindingPayload.EvidenceSpanPayload span =
+                            new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText());
+                    return resultCitingChunks(List.of(context.chunkId()), List.of(span, span));
+                });
+
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.errorCode").value("PROVIDER_RESPONSE_INVALID"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isZero();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM finding_evidence_anchors anchor
+                JOIN findings finding ON finding.id = anchor.finding_id
+                WHERE finding.analysis_id = ?
+                """, Long.class, analysisId)).isZero();
+    }
+
+    @Test
+    @DisplayName("pinned 근거 원문에서 UTF-8 범위가 둘 이상인 excerpt는 거부한다")
+    void ambiguousExactEvidenceSpanIsRejected() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    AnalysisRequest.RetrievedContextPayload context =
+                            request.retrievedContexts().getFirst();
+                    return resultCitingChunks(
+                            List.of(context.chunkId()),
+                            List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), "합성")));
+                });
+
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(jsonPath("$.status").value("FAILED"))
                 .andExpect(jsonPath("$.errorCode").value("PROVIDER_RESPONSE_INVALID"));
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isZero();
@@ -922,8 +1098,19 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.retryable").value(true))
                 .andExpect(jsonPath("$.errorCode").value("AI_SERVICE_TEMPORARY_FAILURE"))
                 .andExpect(jsonPath("$.message").isNotEmpty());
+        assertThat(jdbc.queryForMap("""
+                SELECT execution.status, execution.error_code, execution.retryable,
+                       analysis.current_successful_execution_id
+                FROM analysis_executions execution
+                JOIN analyses analysis ON analysis.id = execution.analysis_id
+                WHERE analysis.id = ?
+                """, analysisId))
+                .containsEntry("status", "FAILED")
+                .containsEntry("error_code", "AI_SERVICE_TEMPORARY_FAILURE")
+                .containsEntry("retryable", true)
+                .containsEntry("current_successful_execution_id", null);
 
-        fake.reset();
+        useAnchoredDefaultResult();
         mockMvc.perform(traced(asPm(post("/api/analyses/{id}/retry", analysisId)), traceId))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.analysisId").value(analysisId));
@@ -933,11 +1120,145 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.riskScore").value(82))
                 .andExpect(jsonPath("$.retryable").value(false));
+        List<Map<String, Object>> executions = jdbc.queryForList("""
+                SELECT id, attempt_no, status, provider_risk_score
+                FROM analysis_executions
+                WHERE analysis_id = ?
+                ORDER BY attempt_no
+                """, analysisId);
+        assertThat(executions)
+                .extracting(
+                        row -> row.get("attempt_no"),
+                        row -> row.get("status"),
+                        row -> row.get("provider_risk_score"))
+                .containsExactly(
+                        tuple(1, "FAILED", null),
+                        tuple(2, "SUCCEEDED", 82));
+        assertThat(jdbc.queryForObject("""
+                SELECT current_successful_execution_id
+                FROM analyses
+                WHERE id = ?
+                """, Long.class, analysisId))
+                .isEqualTo(((Number) executions.get(1).get("id")).longValue());
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM analysis_rag_runs rag_run
+                JOIN analysis_executions execution
+                  ON execution.id = rag_run.analysis_execution_id
+                WHERE execution.analysis_id = ?
+                """, Long.class, analysisId)).isEqualTo(2L);
         assertAudit(initialTraceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
         assertSingleTerminalAudit(
                 initialTraceId, "ANALYSIS_FAILED", analysisId, null, analysisId);
         assertAudit(traceId, "ANALYSIS_RETRIED", analysisId, 1L, analysisId);
         assertSingleTerminalAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
+    }
+
+    @Test
+    @DisplayName("재시도 성공은 이전 Finding을 보존하되 결과·검토·승격은 현재 execution에 한정한다")
+    void retryRetainsPriorAnchoredFindingHistory() throws Exception {
+        Long analysisId = createAnalysis();
+        Long firstExecutionId = jdbc.queryForObject("""
+                SELECT analysis_execution_id FROM findings WHERE analysis_id = ?
+                """, Long.class, analysisId);
+        Long firstFindingId = jdbc.queryForObject(
+                "SELECT id FROM findings WHERE analysis_id = ?", Long.class, analysisId);
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            Analysis analysis = analysisRepository.findWithLockById(analysisId).orElseThrow();
+            analysis.fail(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true);
+            analysisRepository.flush();
+        });
+        useAnchoredResult(37, Severity.LOW, "현재 execution에만 속한 Finding입니다.");
+        mockMvc.perform(asPm(post("/api/analyses/{id}/retry", analysisId)))
+                .andExpect(status().isAccepted());
+
+        List<Map<String, Object>> findings = jdbc.queryForList("""
+                SELECT id, analysis_execution_id, revision_number, supersedes_finding_id
+                FROM findings
+                WHERE analysis_id = ?
+                ORDER BY id
+                """, analysisId);
+        assertThat(findings).hasSize(2);
+        assertThat(findings.getFirst())
+                .containsEntry("id", firstFindingId)
+                .containsEntry("analysis_execution_id", firstExecutionId)
+                .containsEntry("revision_number", 1)
+                .containsEntry("supersedes_finding_id", null);
+        assertThat(findings.get(1).get("analysis_execution_id")).isNotEqualTo(firstExecutionId);
+        assertThat(findings.get(1))
+                .containsEntry("revision_number", 1)
+                .containsEntry("supersedes_finding_id", null);
+        Long currentFindingId = ((Number) findings.get(1).get("id")).longValue();
+        Long currentExecutionId = ((Number) findings.get(1).get("analysis_execution_id")).longValue();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM finding_evidence_anchors anchor
+                JOIN findings finding ON finding.id = anchor.finding_id
+                WHERE finding.analysis_id = ?
+                """, Long.class, analysisId)).isEqualTo(2L);
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.riskScore").value(37))
+                .andExpect(jsonPath("$.currentExecutionId").value(currentExecutionId))
+                .andExpect(jsonPath("$.scoreEligible").value(true))
+                .andExpect(jsonPath("$.historical").value(false))
+                .andExpect(jsonPath("$.findings.length()").value(1))
+                .andExpect(jsonPath("$.findings[0].findingId").value(currentFindingId))
+                .andExpect(jsonPath("$.findings[0].statement").value("현재 execution에만 속한 Finding입니다."));
+
+        String reviewBody = mockMvc.perform(asPm(post("/api/reviews")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("analysisId", analysisId)))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        Long reviewId = objectMapper.readTree(reviewBody).get("reviewId").asLong();
+        mockMvc.perform(asReviewer(get("/api/reviews/{id}", reviewId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxSeverity").value("LOW"));
+
+        mockMvc.perform(asReviewer(post("/api/reviews/{id}/decision", reviewId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "status", "APPROVED",
+                                "selectedFindingIds", List.of(firstFindingId))))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value(ErrorCode.INVALID_FINDING_SELECTION.name()));
+        mockMvc.perform(asReviewer(post("/api/reviews/{id}/decision", reviewId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "status", "APPROVED",
+                                "selectedFindingIds", List.of(currentFindingId))))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.riskPatternIds.length()").value(1));
+    }
+
+    @Test
+    @DisplayName("실행 포인터가 없는 레거시 결과는 historical 비점수 결과이며 검토를 생성할 수 없다")
+    void legacyResultIsHistoricalAndNotReviewable() throws Exception {
+        Long analysisId = createAnalysis();
+        jdbc.update("UPDATE analyses SET current_successful_execution_id = NULL WHERE id = ?", analysisId);
+
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM analysis_executions execution
+                JOIN findings finding ON finding.analysis_execution_id = execution.id
+                WHERE execution.analysis_id = ?
+                  AND execution.status = 'SUCCEEDED'
+                """, Long.class, analysisId)).isEqualTo(1L);
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.riskScore").isEmpty())
+                .andExpect(jsonPath("$.currentExecutionId").isEmpty())
+                .andExpect(jsonPath("$.scoreEligible").value(false))
+                .andExpect(jsonPath("$.historical").value(true))
+                .andExpect(jsonPath("$.findings.length()").value(1));
+
+        mockMvc.perform(asPm(post("/api/reviews")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("analysisId", analysisId)))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value(ErrorCode.ANALYSIS_NOT_COMPLETED.name()));
     }
 
     @Test
@@ -1012,7 +1333,17 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("이전 Provider 결과 대기가 중단되었습니다.", e);
             }
-            return new AnalysisResult(7, "stale-model", "stale-prompt", List.of());
+            AnalysisRequest.RetrievedContextPayload context =
+                    request.retrievedContexts().getFirst();
+            return new AnalysisResult(7, "stale-model", "stale-prompt", List.of(new FindingPayload(
+                    "이전 execution token의 저장되면 안 되는 Finding",
+                    Severity.HIGH,
+                    List.of(),
+                    List.of(context.chunkId()),
+                    List.of(new FindingPayload.EvidenceSpanPayload(
+                            context.chunkId(), context.chunkText())),
+                    List.of(),
+                    "저장되면 안 됩니다.")));
         };
         ReflectionTestUtils.setField(fake, "behavior", staleResult);
 
@@ -1042,7 +1373,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.retryable").value(true))
                     .andExpect(jsonPath("$.errorCode").value("AI_SERVICE_TEMPORARY_FAILURE"));
 
-            fake.reset();
+            useAnchoredDefaultResult();
             mockMvc.perform(traced(asPm(post("/api/analyses/{id}/retry", analysisId)), retryTraceId))
                     .andExpect(status().isAccepted())
                     .andExpect(jsonPath("$.analysisId").value(analysisId));
@@ -1077,6 +1408,40 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .containsEntry("prompt_version", "mock-prompt-v1");
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isEqualTo(1L);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM finding_evidence_anchors anchor
+                JOIN findings finding ON finding.id = anchor.finding_id
+                JOIN analysis_executions execution ON execution.id = finding.analysis_execution_id
+                WHERE finding.analysis_id = ?
+                  AND execution.status = 'SUCCEEDED'
+                """, Long.class, analysisId)).isEqualTo(1L);
+        List<Map<String, Object>> executions = jdbc.queryForList("""
+                SELECT id, attempt_no, status, provider_risk_score, model_version
+                FROM analysis_executions
+                WHERE analysis_id = ?
+                ORDER BY attempt_no
+                """, analysisId);
+        assertThat(executions)
+                .extracting(
+                        row -> row.get("attempt_no"),
+                        row -> row.get("status"),
+                        row -> row.get("provider_risk_score"),
+                        row -> row.get("model_version"))
+                .containsExactly(
+                        tuple(1, "DISCARDED", null, null),
+                        tuple(2, "SUCCEEDED", 82, "mock-risk-v1"));
+        assertThat(jdbc.queryForObject(
+                "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
+                Long.class,
+                analysisId))
+                .isEqualTo(((Number) executions.get(1).get("id")).longValue());
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM analysis_rag_runs rag_run
+                JOIN analysis_executions execution
+                  ON execution.id = rag_run.analysis_execution_id
+                WHERE execution.analysis_id = ?
+                """, Long.class, analysisId)).isEqualTo(2L);
         assertAudit(oldTraceId, "ANALYSIS_CREATED", analysisId, 1L, analysisId);
         assertNoTerminalAudit(oldTraceId);
         assertAudit(retryTraceId, "ANALYSIS_RETRIED", analysisId, 1L, analysisId);

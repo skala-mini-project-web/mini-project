@@ -14,6 +14,7 @@ import com.crosschecklab.global.error.ErrorCode;
 import com.crosschecklab.support.IntegrationTestSupport;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -96,11 +97,10 @@ class RiskPatternApiTest extends IntegrationTestSupport {
         clearFixtures();
     }
 
-    // 변경 가능한 fixture 만 참조 순서대로 지운다 (risk_patterns → reviews → findings → analyses → documents → products → 테스트 Pack).
+    // 변경 가능한 fixture 만 참조 순서대로 지운다.
     private void clearFixtures() {
-        jdbc.update("DELETE FROM risk_patterns");
-        jdbc.update("DELETE FROM reviews");
-        jdbc.update("DELETE FROM findings");
+        // 실행 경계에 묶인 Finding/Review는 append-only이므로 FK 전체를 함께 초기화한다.
+        jdbc.execute("TRUNCATE TABLE analysis_executions CASCADE");
         jdbc.update("DELETE FROM analyses");
         jdbc.update("DELETE FROM product_documents");
         jdbc.update("DELETE FROM products");
@@ -119,19 +119,35 @@ class RiskPatternApiTest extends IntegrationTestSupport {
                 VALUES (?, '상품설명서.pdf', 'application/pdf', 'mock://documents/guarantee',
                         'READY', '최근 안정적인 수익률을 기록한 투자상품입니다.', TRUE, NOW(), NOW())
                 RETURNING id""", Long.class, productId);
-        return jdbc.queryForObject("""
+        Long analysisId = jdbc.queryForObject("""
                 INSERT INTO analyses
                     (product_document_id, red_team_pack_id, status, progress, risk_score,
                      requires_human_approval, retryable, input_hash, completed_at, created_at, updated_at)
                 VALUES (?, ?, 'IN_REVIEW', 100, 82, TRUE, FALSE, ?, NOW(), NOW(), NOW())
                 RETURNING id""", Long.class, documentId, redTeamPackId, inputHash);
+        Long executionId = jdbc.queryForObject("""
+                INSERT INTO analysis_executions
+                    (analysis_id, attempt_no, execution_token, status, retryable, retrieval_version,
+                     provider_risk_score, model_version, prompt_version, started_at, finished_at, created_at)
+                VALUES (?, 1, ?, 'SUCCEEDED', FALSE, 'risk-pattern-test',
+                        82, 'risk-pattern-test', 'risk-pattern-test', NOW(), NOW(), NOW())
+                RETURNING id""", Long.class, analysisId, UUID.randomUUID().toString());
+        jdbc.update(
+                "UPDATE analyses SET current_successful_execution_id = ? WHERE id = ?",
+                executionId,
+                analysisId);
+        return analysisId;
     }
 
     private Long insertFinding(Long analysisId, String statement, String severity, Long... personaTemplateIds) {
         Long findingId = jdbc.queryForObject("""
-                INSERT INTO findings (analysis_id, statement, severity, recommendation, created_at, updated_at)
-                VALUES (?, ?, ?, '표현을 보완하세요.', NOW(), NOW())
-                RETURNING id""", Long.class, analysisId, statement, severity);
+                INSERT INTO findings
+                    (analysis_id, analysis_execution_id, lineage_id, revision_number,
+                     statement, severity, recommendation, created_at, updated_at)
+                VALUES (?, (SELECT current_successful_execution_id FROM analyses WHERE id = ?),
+                        ?, 1, ?, ?, '표현을 보완하세요.', NOW(), NOW())
+                RETURNING id""",
+                Long.class, analysisId, analysisId, UUID.randomUUID().toString(), statement, severity);
         for (Long personaTemplateId : personaTemplateIds) {
             jdbc.update("INSERT INTO finding_affected_personas (finding_id, persona_template_id) VALUES (?, ?)",
                     findingId, personaTemplateId);
@@ -141,9 +157,12 @@ class RiskPatternApiTest extends IntegrationTestSupport {
 
     private Long insertApprovedReview(Long analysisId, Long... selectedFindingIds) {
         Long insertedReviewId = jdbc.queryForObject("""
-                INSERT INTO reviews (analysis_id, reviewer_id, status, comment, decided_at, created_at, updated_at)
-                VALUES (?, ?, 'APPROVED', '표현을 보완하세요.', NOW(), NOW(), NOW())
-                RETURNING id""", Long.class, analysisId, REVIEWER_ID);
+                INSERT INTO reviews
+                    (analysis_id, analysis_execution_id, reviewer_id, status,
+                     comment, decided_at, created_at, updated_at)
+                VALUES (?, (SELECT current_successful_execution_id FROM analyses WHERE id = ?),
+                        ?, 'APPROVED', '표현을 보완하세요.', NOW(), NOW(), NOW())
+                RETURNING id""", Long.class, analysisId, analysisId, REVIEWER_ID);
         for (Long selectedFindingId : selectedFindingIds) {
             jdbc.update("""
                     INSERT INTO review_selected_findings (review_id, finding_id)
@@ -155,14 +174,19 @@ class RiskPatternApiTest extends IntegrationTestSupport {
     private Long insertReview(Long analysisId, String status) {
         if ("PENDING".equals(status)) {
             return jdbc.queryForObject("""
-                    INSERT INTO reviews (analysis_id, status, created_at, updated_at)
-                    VALUES (?, 'PENDING', NOW(), NOW())
-                    RETURNING id""", Long.class, analysisId);
+                    INSERT INTO reviews
+                        (analysis_id, analysis_execution_id, status, created_at, updated_at)
+                    VALUES (?, (SELECT current_successful_execution_id FROM analyses WHERE id = ?),
+                            'PENDING', NOW(), NOW())
+                    RETURNING id""", Long.class, analysisId, analysisId);
         }
         return jdbc.queryForObject("""
-                INSERT INTO reviews (analysis_id, reviewer_id, status, comment, decided_at, created_at, updated_at)
-                VALUES (?, ?, ?, '반려 사유입니다.', NOW(), NOW(), NOW())
-                RETURNING id""", Long.class, analysisId, REVIEWER_ID, status);
+                INSERT INTO reviews
+                    (analysis_id, analysis_execution_id, reviewer_id, status,
+                     comment, decided_at, created_at, updated_at)
+                VALUES (?, (SELECT current_successful_execution_id FROM analyses WHERE id = ?),
+                        ?, ?, '반려 사유입니다.', NOW(), NOW(), NOW())
+                RETURNING id""", Long.class, analysisId, analysisId, REVIEWER_ID, status);
     }
 
     private Long insertPattern(Long findingId, Long reviewId, String name, String severity, String status) {
