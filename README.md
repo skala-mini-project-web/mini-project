@@ -68,52 +68,12 @@ Frontend
       └─ AI service → Ollama
 ```
 
-### 로컬 모델 선정 기록
+### 로컬 모델 선택 근거
 
-#### 결정 상태
-
-- 현재 기준선은 generator `qwen2.5:7b-instruct`, embedder `bge-m3:latest`입니다.
-- 이는 합성 데이터 기반 데모의 **구성 기준선**이며, 보안·한국어 품질·금융 판단·B2B 적합성을 인증하거나 보장하지 않습니다.
-- `latest`와 Ollama tag는 immutable artifact 식별자가 아닙니다. B2B 배포 전에는 upstream revision, Ollama manifest digest, quantization, Ollama version, prompt·container digest, license notice를 고정·기록해야 합니다.
-
-#### 실제 데이터·보안 경계
-
-- 현재 경로는 `backend → AI service → host Ollama`입니다. Ollama에는 확정 문서 텍스트, 선택 Persona/rule/ID, 검색된 context chunk, VERIFIED fact, 서버가 만든 evidence option이 전달됩니다.
-- 전체 근거 문서를 그대로 전달하지 않지만, “검색 chunk만 전달한다”는 표현도 정확하지 않습니다.
-- 모델은 evidence option ID를 선택하고 AI service가 해당 option을 exact excerpt로 매핑·검증합니다.
-- local execution 또는 모델 제조사 이름만으로 보안을 판단하지 않습니다. 현재 Compose는 loopback 공개, container 간 HTTP, demo bearer token을 사용합니다. TLS, secret manager, egress control, 운영 인증·감사는 별도 B2B 보안 과제입니다.
-
-#### 왜 Qwen2.5 7B + BGE-M3인가
-
-| 구성 | 현재 선택 근거 | 아직 증명되지 않은 사항 |
-| --- | --- | --- |
-| [Qwen2.5 7B Instruct](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct) | 공식 model card상 7.61B parameter, Apache-2.0, 한국어를 포함한 다국어와 structured/JSON 개선을 표방합니다. 현재 system prompt·JSON schema·temperature 0·seed 42 계약에 가장 적은 변경으로 연결됩니다. | ARGUS 한국어 Finding 정확도, citation fidelity, p95 latency, 실제 메모리, 양자화 artifact 품질 |
-| [BGE-M3](https://huggingface.co/BAAI/bge-m3) | 공식 model card상 MIT, 1024차원, 100개 이상 언어, dense/sparse/multi-vector를 지원합니다. 현재 pgvector `vector(1024)`·dense cosine retrieval 계약과 맞습니다. | ARGUS 한국어/혼합 언어 retrieval quality, dense-only가 hybrid/rerank보다 나은지, 실제 latency |
-
-- parameter 수나 다운로드 크기만으로 RAM·latency를 판단하지 않습니다. quantization, context KV cache, concurrency, output token, runtime이 함께 결정합니다.
-- Qwen 7B는 현재 structured JSON contract에 맞는 **낮은 통합 위험의 기준선**입니다. “가장 좋은 모델”이라는 결론은 아직 내리지 않았습니다.
-
-#### DeepSeek·상위 모델 대안
-
-| 후보 | 평가 관점 | 현재 결론 |
-| --- | --- | --- |
-| 설치된 `deepseek-r1:8b` | [DeepSeek-R1 공식 문서](https://github.com/deepseek-ai/DeepSeek-R1)는 distill 모델의 prompt·temperature·thinking output 권고가 현재 Qwen JSON 계약과 다름을 설명합니다. reasoning token이 latency를 늘릴 수 있고, base model license·정확한 artifact provenance도 확인해야 합니다. | 제조사만으로 insecure라고 판단하지 않습니다. 동일 local boundary라면 외부 전송 여부는 배포 경계가 결정합니다. 별도 prompt profile과 동등 contract 평가를 통과한 challenger만 채택합니다. |
-| Qwen2.5 14B | 동일 family의 scale-up 후보로 JSON contract 변경 위험이 작습니다. | 7B 대비 메모리·latency budget 안에서 Korean/grounding 품질 이득이 재현될 때만 채택합니다. |
-
-#### 채택 전 실측 평가
-
-- 고정 held-out manifest: 한국어 40, 한·영 혼합 40, 영어 40의 synthetic case와 gold rule·chunk·exact excerpt·non-finding을 분리 보관합니다.
-- 비교 arm: 현재 Qwen 7B + BGE-M3 dense, DeepSeek-R1 8B의 권장 decoding profile, Qwen 14B, 필요 시 BGE-M3 hybrid/rerank입니다.
-- 필수 측정: JSON schema first-pass/repair/acceptance, option ID·citation entailment, rule별 precision/recall, Retrieval Recall@6/MRR, p50/p95 latency, cold start, token throughput, peak memory, timeout·error rate, artifact/license manifest 일치율입니다.
-- 동일 contract·governance gate를 모두 통과하고 언어·rule별 citation fidelity를 낮추지 않으며 승인된 latency·memory budget 안에서 통계적으로 유의한 개선이 있을 때만 기준선을 바꿉니다.
-
-#### 공식 근거
-
-- [Qwen2.5 7B Instruct model card](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct)
-- [BGE-M3 model card](https://huggingface.co/BAAI/bge-m3)
-- [DeepSeek-R1 repository·license·local-use guidance](https://github.com/deepseek-ai/DeepSeek-R1)
-- [Ollama Qwen tags](https://ollama.com/library/qwen2.5)
-- [Ollama DeepSeek-R1 tags](https://ollama.com/library/deepseek-r1)
+- **분석 — [Qwen2.5 7B Instruct](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct)**: 한국어를 포함한 다국어와 JSON 형태의 구조화 응답을 지원해, ARGUS의 Finding·근거 ID 응답 계약에 맞습니다. 7B는 local Ollama에서 개발·데모 흐름을 유지하기에 적절한 크기여서 현재 기준선으로 선택했습니다.
+- **검색 — [BGE-M3](https://huggingface.co/BAAI/bge-m3)**: 한국어·영문 혼합 문서 검색과 현재 pgvector `vector(1024)` schema에 맞는 1024차원 embedding 모델입니다.
+- **DeepSeek를 쓰지 않은 이유**: 보안 때문이 아닙니다. 같은 local 환경에서는 모델 제조사보다 배포 경계가 데이터 외부 전송을 결정합니다. DeepSeek-R1 8B는 reasoning 출력과 권장 prompt 방식이 현재의 짧은 JSON 응답 계약과 달라, 별도 품질·응답시간 비교 없이 교체하지 않았습니다.
+- Qwen 14B·DeepSeek 8B는 한국어 Finding 정확도, 근거 인용, 응답시간을 같은 synthetic test set에서 비교한 뒤 필요할 때 교체합니다.
 
 ### 설계 이미지
 
@@ -127,11 +87,10 @@ Frontend
 
 ```text
 확정 판매 문서 + VERIFIED 공식 사실 snapshot
-+ Persona 1~4개 + 활성 근거 문서 1~3개 + Red Team rule
++ Persona 1개 이상 + 활성 근거 문서 1~3개 + Red Team rule
 → 근거 문서 chunking
 → pgvector cosine top-6 검색
-→ 검색 chunk만 Ollama에 전달
-→ Finding + chunk ID + exact evidence span 반환
+→ Finding + policy rule + evidence option ID 반환
 → backend 검증
 → retrieval snapshot·Finding·audit 저장
 ```
