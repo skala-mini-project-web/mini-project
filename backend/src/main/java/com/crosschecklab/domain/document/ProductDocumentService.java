@@ -118,7 +118,7 @@ public class ProductDocumentService {
         ownershipChecker.requireOwner(document.getOwnerId(), currentUser);
 
         // 먼저 통과한 요청이 이미 EXTRACTING 으로 옮겨 두었으므로 뒤이은 요청은 여기서 409 가 된다.
-        if (!document.isFailed()) {
+        if (!document.isRetryableFailure()) {
             throw new BusinessException(ErrorCode.DOCUMENT_NOT_RETRYABLE);
         }
 

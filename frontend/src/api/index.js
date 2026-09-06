@@ -78,6 +78,13 @@ const normalizeDocument = (document) => ({
   status: document.status ?? document.extractStatus,
   rawExtractedText: document.rawExtractedText ?? document.extractedText,
   verifiedText: document.verifiedText ?? document.extractedText,
+  error: document.error == null
+    ? null
+    : {
+        errorCode: document.error.errorCode,
+        message: document.error.message,
+        retryable: document.error.retryable,
+      },
 })
 const normalizeProduct = (product) => ({
   ...product,

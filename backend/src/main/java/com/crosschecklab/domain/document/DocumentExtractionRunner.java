@@ -1,6 +1,7 @@
 package com.crosschecklab.domain.document;
 
 import com.crosschecklab.domain.document.extraction.ExtractionTarget;
+import com.crosschecklab.domain.document.extraction.TextExtractionException;
 import com.crosschecklab.domain.document.extraction.TextExtractionService;
 import com.crosschecklab.global.config.AsyncConfig;
 import java.util.Optional;
@@ -17,6 +18,12 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 @RequiredArgsConstructor
 public class DocumentExtractionRunner {
+
+    private static final String EXTRACTION_FAILED_CODE = "DOCUMENT_EXTRACTION_FAILED";
+    private static final String EXTRACTION_FAILED_MESSAGE = "문서에서 텍스트를 추출하지 못했습니다.";
+    private static final String TEMPORARY_FAILURE_CODE = "DOCUMENT_EXTRACTION_TEMPORARY_FAILURE";
+    private static final String TEMPORARY_FAILURE_MESSAGE =
+            "문서 추출 중 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
 
     private final DocumentExtractionTransitions transitions;
     private final TextExtractionService textExtractionService;
@@ -40,10 +47,20 @@ public class DocumentExtractionRunner {
             String extractedText = textExtractionService.extract(target.get());
             transitions.completeExtraction(documentId, extractedText);
             log.info("문서 {} 추출 완료 ({}자)", documentId, extractedText.length());
+        } catch (TextExtractionException e) {
+            log.warn("문서 {} 추출 실패", documentId, e);
+            transitions.failExtraction(
+                    documentId,
+                    EXTRACTION_FAILED_CODE,
+                    EXTRACTION_FAILED_MESSAGE,
+                    e.isRetryable());
         } catch (RuntimeException e) {
-            // 실패 사유는 로그로만 남긴다. 응답에는 FAILED 상태만 노출된다.
-            log.warn("문서 {} 추출 실패: {}", documentId, e.getMessage());
-            transitions.failExtraction(documentId);
+            log.error("문서 {} 추출 중 예기치 않은 오류", documentId, e);
+            transitions.failExtraction(
+                    documentId,
+                    TEMPORARY_FAILURE_CODE,
+                    TEMPORARY_FAILURE_MESSAGE,
+                    true);
         }
     }
 }

@@ -14,6 +14,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.crosschecklab.domain.document.extraction.TextExtractionException;
+import com.crosschecklab.domain.document.extraction.TextExtractionService;
 import com.crosschecklab.domain.product.ProductRepository;
 import com.crosschecklab.global.common.enums.ExtractStatus;
 import com.crosschecklab.support.IntegrationTestSupport;
@@ -54,6 +56,9 @@ class DocumentApiTest extends IntegrationTestSupport {
 
     @MockitoSpyBean
     private DocumentSourceRevisionRepository documentSourceRevisionRepository;
+
+    @MockitoSpyBean
+    private TextExtractionService textExtractionService;
 
     // 컨테이너는 JVM 당 하나라 여기서 만든 데이터가 다른 테스트로 새어 나간다.
     // 문서를 먼저 지워야 상품 삭제가 FK 에 걸리지 않는다.
@@ -327,6 +332,41 @@ class DocumentApiTest extends IntegrationTestSupport {
             JsonNode document = fetchDocument(documentId);
             assertThat(document.get("extractStatus").asText()).isEqualTo("FAILED");
             assertThat(document.get("extractedText").isNull()).isTrue();
+        }
+
+        @Test
+        @DisplayName("손상 PDF 추출 실패 응답은 공개용 non-retryable 오류만 포함한다")
+        void exposesSanitizedTerminalErrorForMalformedPdf() throws Exception {
+            String sensitiveDetail = "/private/uploads/customer-document.pdf: xref table is broken";
+            doThrow(new TextExtractionException(sensitiveDetail))
+                    .when(textExtractionService).extract(any());
+
+            try {
+                long productId = createProduct();
+                MockMultipartFile malformedPdf = new MockMultipartFile(
+                        "file",
+                        "손상된-설명서.pdf",
+                        PDF_CONTENT_TYPE,
+                        "%PDF-1.7\nmalformed".getBytes(StandardCharsets.UTF_8));
+                long documentId = upload(productId, malformedPdf, null);
+
+                assertThat(awaitExtractionFinished(documentId)).isEqualTo(ExtractStatus.FAILED);
+
+                JsonNode document = fetchDocument(documentId);
+                assertThat(document.get("extractStatus").asText()).isEqualTo("FAILED");
+                assertThat(document.at("/error/errorCode").asText())
+                        .isEqualTo("DOCUMENT_EXTRACTION_FAILED");
+                assertThat(document.at("/error/message").asText())
+                        .isEqualTo("문서에서 텍스트를 추출하지 못했습니다.");
+                assertThat(document.at("/error/retryable").asBoolean()).isFalse();
+                assertThat(document.toString()).doesNotContain(sensitiveDetail);
+
+                mockMvc.perform(asPm(post("/api/documents/{documentId}/retry", documentId)))
+                        .andExpect(status().isConflict())
+                        .andExpect(jsonPath("$.errorCode").value("DOCUMENT_NOT_RETRYABLE"));
+            } finally {
+                reset(textExtractionService);
+            }
         }
 
         @Test

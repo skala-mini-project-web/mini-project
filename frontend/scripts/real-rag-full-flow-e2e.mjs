@@ -9,6 +9,7 @@ const FRONTEND_URL = (process.env.RAG_FRONTEND_URL || 'http://127.0.0.1:5173').r
 const BACKEND_URL = (process.env.RAG_BACKEND_URL || process.env.VITE_API_BASE || 'http://127.0.0.1:8080').replace(/\/$/, '')
 const AI_URL = (process.env.RAG_AI_URL || process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
 const PDF_PATH = fileURLToPath(new URL('../../data/demo-corpus/documents/product/SMART-INCOME-SALES-v1.pdf', import.meta.url))
+const MALFORMED_PDF_PATH = fileURLToPath(new URL('../../data/demo-corpus/documents/product/MALFORMED-SYNTHETIC.pdf', import.meta.url))
 const EXPECTED_PDF_SHA256 = 'f7d1b5887dc9e55b58ac7c244e65c23daeeac7be6d017d23e61ec0e4804be0c9'
 const CANONICAL_TEXT = '매월 수익을 보장하는 안정형 선택'
 const REQUEST_TIMEOUT_MS = 8_000
@@ -46,6 +47,13 @@ async function preflight() {
   assert(file.isFile() && file.size > 0, `Canonical product PDF is empty: ${PDF_PATH}`)
   const pdfSha256 = createHash('sha256').update(await readFile(PDF_PATH)).digest('hex')
   assert.equal(pdfSha256, EXPECTED_PDF_SHA256, 'Canonical product PDF checksum does not match corpus metadata')
+  const malformedFile = await stat(MALFORMED_PDF_PATH).catch((error) => {
+    throw new Error(`Malformed synthetic PDF is unavailable at ${MALFORMED_PDF_PATH}: ${error.message}`)
+  })
+  assert(malformedFile.isFile() && malformedFile.size > 0, `Malformed synthetic PDF is empty: ${MALFORMED_PDF_PATH}`)
+  const malformedPdf = await readFile(MALFORMED_PDF_PATH)
+  assert.equal(malformedPdf.subarray(0, 4).toString('ascii'), '%PDF', 'Malformed synthetic PDF does not pass frontend magic-byte validation')
+  assert(malformedPdf.length < 128, 'Malformed synthetic PDF unexpectedly contains more than the minimal synthetic fixture')
 
   const [frontend, backend, ai] = await Promise.all([
     fetchBounded(FRONTEND_URL, 'Frontend'),
@@ -57,7 +65,12 @@ async function preflight() {
     const health = await response.json().catch(() => null)
     assert.equal(health?.status, 'UP', `${label} did not report status UP`)
   }
-  return { pdfBytes: file.size, pdfSha256 }
+  return {
+    pdfBytes: file.size,
+    pdfSha256,
+    malformedPdfBytes: malformedFile.size,
+    malformedPdfSha256: createHash('sha256').update(malformedPdf).digest('hex'),
+  }
 }
 
 const failures = {
@@ -68,6 +81,7 @@ const failures = {
   unexpectedApiResponses: [],
 }
 const responseTasks = new Set()
+const expectedApiFailures = []
 
 function apiPath(url) {
   const pathname = new URL(url).pathname
@@ -96,7 +110,12 @@ function monitorContext(context, label) {
           && /^\/api\/analyses\/[^/]+\/review$/.test(path)
           && response.status() === 404
           && body?.errorCode === 'REVIEW_NOT_FOUND'
-        if ((response.status() < 200 || response.status() >= 300) && !expectedMissingReview) {
+        const expectedApiFailure = expectedApiFailures.some((expected) =>
+          expected.method === request.method()
+            && expected.path === path
+            && expected.status === response.status()
+            && expected.errorCode === body?.errorCode)
+        if ((response.status() < 200 || response.status() >= 300) && !expectedMissingReview && !expectedApiFailure) {
           failures.unexpectedApiResponses.push(`${label}: ${request.method()} ${path} -> ${response.status()} ${body?.errorCode || ''}`.trim())
         }
       })()
@@ -169,14 +188,20 @@ function assertNoBrowserFailures() {
       && /^\/api\/analyses\/[^/]+\/review$/.test(entry.path)
       && entry.status === 404
       && entry.body?.errorCode === 'REVIEW_NOT_FOUND').length
-  const expectedMissingReviewConsoleErrors = failures.consoleErrors.filter((message) =>
-    /Failed to load resource: the server responded with a status of 404/.test(message))
+  const expectedMutationRejectionCount = failures.apiResponses.filter((entry) =>
+    expectedApiFailures.some((expected) =>
+      expected.method === entry.method
+        && expected.path === entry.path
+        && expected.status === entry.status
+        && expected.errorCode === entry.body?.errorCode)).length
+  const expectedNon2xxConsoleErrors = failures.consoleErrors.filter((message) =>
+    /Failed to load resource: the server responded with a status of (404|409)/.test(message))
   const unexpectedConsoleErrors = failures.consoleErrors.filter((message) =>
-    !/Failed to load resource: the server responded with a status of 404/.test(message))
+    !/Failed to load resource: the server responded with a status of (404|409)/.test(message))
   assert.deepEqual(failures.pageErrors, [], `Browser page errors:\n${failures.pageErrors.join('\n')}`)
   assert(
-    expectedMissingReviewConsoleErrors.length <= expectedMissingReviewCount,
-    `Unexpected 404 console errors:\n${expectedMissingReviewConsoleErrors.join('\n')}`,
+    expectedNon2xxConsoleErrors.length <= expectedMissingReviewCount + expectedMutationRejectionCount,
+    `Unexpected non-2xx console errors:\n${expectedNon2xxConsoleErrors.join('\n')}`,
   )
   assert.deepEqual(unexpectedConsoleErrors, [], `Browser console errors:\n${unexpectedConsoleErrors.join('\n')}`)
   assert.deepEqual(failures.requestFailures, [], `Browser request failures:\n${failures.requestFailures.join('\n')}`)
@@ -206,6 +231,7 @@ try {
 
   const runKey = `${new Date().toISOString().replace(/[-:.TZ]/g, '')}-${process.pid}`
   const productName = `RAG Full Flow ${runKey}`
+  const mutationMarker = `[real-browser-e2e:${runKey}]`
   await pmPage.goto(`${FRONTEND_URL}/products`, { waitUntil: 'domcontentloaded' })
   await pmPage.getByRole('heading', { name: '상품', exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
   await pmPage.getByRole('button', { name: '상품 등록' }).first().click()
@@ -241,14 +267,25 @@ try {
   assert.equal(readyDocument.extractStatus, 'READY', 'Canonical PDF did not reach READY')
   assert.equal(readyDocument.checksum?.toLowerCase(), EXPECTED_PDF_SHA256, 'Backend document checksum does not identify the canonical PDF')
   assert.match(readyDocument.extractedText || '', new RegExp(CANONICAL_TEXT), 'Server extraction did not contain canonical PDF text')
+  const rawExtractedText = readyDocument.extractedText
+  assert(typeof rawExtractedText === 'string' && rawExtractedText.length > 0, 'Server extraction did not return canonical text')
+  const confirmedText = `${rawExtractedText}\n\n${mutationMarker}`
   await pmPage.waitForURL(`**/documents/${documentId}`, { timeout: UI_TIMEOUT_MS })
   const rawText = pmPage.locator('.raw')
   await rawText.waitFor({ state: 'visible', timeout: EXTRACTION_TIMEOUT_MS })
   await assert.doesNotReject(() => pmPage.getByText(CANONICAL_TEXT, { exact: false }).first().waitFor({ timeout: UI_TIMEOUT_MS }))
+  assert.equal(await rawText.textContent(), rawExtractedText, 'Read-only raw extraction did not display the server extraction')
+  assert.equal(await rawText.getAttribute('contenteditable'), null, 'Raw extraction unexpectedly exposed an editable surface')
+  const confirmedTextArea = pmPage.locator('textarea')
+  await confirmedTextArea.fill(confirmedText)
+  assert.equal(await confirmedTextArea.inputValue(), confirmedText, 'PM textarea did not retain the run-key mutation')
+  const rawExtractionUnchangedDuringEdit = await rawText.textContent() === rawExtractedText
+  assert(rawExtractionUnchangedDuringEdit, 'Editing confirmed text also changed the read-only raw extraction')
 
   const confirm = await waitForApi(pmPage, 'PATCH', new RegExp(`^/api/documents/${String(documentId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/text$`), () => pmPage.getByRole('button', { name: '텍스트 확정' }).click())
   assert.equal(confirm.body?.confirmed, true, 'Document text confirmation was not persisted')
-  assert.match(confirm.body?.extractedText || '', new RegExp(CANONICAL_TEXT), 'Confirmed text lost the canonical PDF content')
+  assert.equal(confirm.body?.extractedText, confirmedText, 'API response did not persist the PM textarea mutation')
+  assert.match(confirm.body.extractedText, new RegExp(CANONICAL_TEXT), 'Confirmed text lost the canonical PDF content')
   await pmPage.getByText('확정됨', { exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
   await pmPage.getByRole('button', { name: '분석으로 이동' }).click()
   await pmPage.waitForURL(`**/products/${productId}/analyze`, { timeout: UI_TIMEOUT_MS })
@@ -352,6 +389,99 @@ try {
   await pmPage.getByText(guardLabel, { exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
   await pmPage.locator('.ba-place').filter({ hasText: `위치: ${guardPlacement}` }).first().waitFor({ timeout: UI_TIMEOUT_MS })
 
+  const documentApiPath = `/api/documents/${documentId}`
+  const documentTextApiPath = `${documentApiPath}/text`
+  await pmPage.goto(`${FRONTEND_URL}/documents/${documentId}`, { waitUntil: 'domcontentloaded' })
+  const postAnalysisTextArea = pmPage.locator('textarea')
+  await postAnalysisTextArea.waitFor({ state: 'visible', timeout: UI_TIMEOUT_MS })
+  assert.equal(await postAnalysisTextArea.inputValue(), confirmedText, 'Document workspace did not retain the confirmed PM mutation')
+  const rejectedMutationText = `${confirmedText}\n\n[post-analysis-attempt:${runKey}]`
+  await postAnalysisTextArea.fill(rejectedMutationText)
+  assert.equal(await postAnalysisTextArea.inputValue(), rejectedMutationText, 'PM could not attempt the post-analysis mutation through the textarea')
+  expectedApiFailures.push({
+    method: 'PATCH',
+    path: documentTextApiPath,
+    status: 409,
+    errorCode: 'DOCUMENT_ALREADY_ANALYZED',
+  })
+  const rejectedMutationPromise = pmPage.waitForResponse((response) =>
+    response.request().method() === 'PATCH' && apiPath(response.url()) === documentTextApiPath,
+  { timeout: UI_TIMEOUT_MS })
+  await pmPage.getByRole('button', { name: '확정 갱신', exact: true }).click()
+  const rejectedMutationResponse = await rejectedMutationPromise
+  const rejectedMutationBody = await rejectedMutationResponse.json().catch(() => null)
+  assert.equal(rejectedMutationResponse.status(), 409, 'Post-analysis document mutation was not rejected with HTTP 409')
+  assert.equal(rejectedMutationBody?.errorCode, 'DOCUMENT_ALREADY_ANALYZED', 'Post-analysis document mutation returned the wrong conflict')
+
+  const reloadedDocument = await waitForApi(pmPage, 'GET', new RegExp(`^${documentApiPath}$`), () =>
+    pmPage.reload({ waitUntil: 'domcontentloaded' }))
+  assert.equal(reloadedDocument.body?.extractedText, confirmedText, 'Rejected mutation changed the persisted confirmed document text')
+  await postAnalysisTextArea.waitFor({ state: 'visible', timeout: UI_TIMEOUT_MS })
+  assert.equal(await postAnalysisTextArea.inputValue(), confirmedText, 'Reload did not restore the previously confirmed document text')
+
+  const reviewerDocument = await waitForApi(reviewerPage, 'GET', new RegExp(`^${documentApiPath}$`), () =>
+    reviewerPage.goto(`${FRONTEND_URL}/documents/${documentId}`, { waitUntil: 'domcontentloaded' }))
+  assert.equal(reviewerDocument.body?.extractedText, confirmedText, 'Reviewer did not receive the persisted confirmed document text')
+  const reviewerTextArea = reviewerPage.locator('textarea')
+  await reviewerTextArea.waitFor({ state: 'visible', timeout: UI_TIMEOUT_MS })
+  assert.equal(await reviewerTextArea.inputValue(), confirmedText, 'Reviewer workspace did not display the confirmed document text')
+  const reviewerConfirmedTextDisabled = await reviewerTextArea.isDisabled()
+  assert(reviewerConfirmedTextDisabled, 'Reviewer confirmed-text textarea was enabled')
+  const reviewerOwnerMutationControlCount = await reviewerPage.getByRole('button', { name: /^(텍스트 확정|확정 갱신)$/ }).count()
+  assert.equal(
+    reviewerOwnerMutationControlCount,
+    0,
+    'Reviewer could see an owner document mutation control',
+  )
+
+  const failureProductName = `Malformed PDF Failure ${runKey}`
+  await pmPage.goto(`${FRONTEND_URL}/products`, { waitUntil: 'domcontentloaded' })
+  await pmPage.getByRole('heading', { name: '상품', exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
+  await pmPage.getByRole('button', { name: '상품 등록' }).first().click()
+  const failureProductDialog = pmPage.getByRole('dialog', { name: '상품 등록' })
+  await failureProductDialog.getByLabel('상품명').fill(failureProductName)
+  await failureProductDialog.getByLabel('설명').fill('Synthetic malformed-PDF extraction failure regression')
+  const failureProductCreate = await waitForApi(pmPage, 'POST', /^\/api\/products$/, () =>
+    failureProductDialog.getByRole('button', { name: '등록', exact: true }).click())
+  const failureProductId = failureProductCreate.body?.productId
+  assert(failureProductId != null, 'Failure product creation response did not include productId')
+  await pmPage.waitForURL(new RegExp(`/products/${String(failureProductId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`), { timeout: UI_TIMEOUT_MS })
+
+  const failedResponsePromise = pmPage.waitForResponse(async (response) => {
+    const path = apiPath(response.url())
+    if (response.request().method() !== 'GET' || !path || !/^\/api\/documents\/[^/]+$/.test(path) || !response.ok()) return false
+    const body = await response.json().catch(() => null)
+    return body?.fileName === 'MALFORMED-SYNTHETIC.pdf' && body.extractStatus === 'FAILED'
+  }, { timeout: EXTRACTION_TIMEOUT_MS })
+  const failureChooserPromise = pmPage.waitForEvent('filechooser', { timeout: UI_TIMEOUT_MS })
+  await pmPage.getByRole('button', { name: /^(문서 업로드|업로드)$/ }).first().click()
+  const failureChooser = await failureChooserPromise
+  const failureUploadResponsePromise = pmPage.waitForResponse((response) => {
+    const path = apiPath(response.url())
+    return response.request().method() === 'POST' && path != null && /^\/api\/products\/[^/]+\/documents$/.test(path)
+  }, { timeout: UI_TIMEOUT_MS })
+  await failureChooser.setFiles(MALFORMED_PDF_PATH)
+  const failureUploadResponse = await failureUploadResponsePromise
+  const failureUpload = await failureUploadResponse.json()
+  assert(failureUploadResponse.ok(), `Malformed synthetic PDF upload failed: HTTP ${failureUploadResponse.status()}`)
+  const failureDocumentId = failureUpload.documentId
+  assert(failureDocumentId != null, 'Malformed synthetic PDF upload response did not include documentId')
+  await pmPage.waitForURL(`**/documents/${failureDocumentId}`, { timeout: UI_TIMEOUT_MS })
+  const failedResponse = await failedResponsePromise
+  const failedDocument = await failedResponse.json()
+  assert.equal(failedDocument.documentId, failureDocumentId, 'Terminal FAILED response belonged to a different document')
+  assert.equal(failedDocument.extractStatus, 'FAILED', 'Malformed synthetic PDF did not reach terminal FAILED')
+
+  const failurePanel = pmPage.locator('.fail')
+  await failurePanel.getByText('추출 실패', { exact: true }).waitFor({ state: 'visible', timeout: UI_TIMEOUT_MS })
+  await failurePanel.getByText('재시도할 수 없습니다. OCR은 후속 확장 항목입니다.', { exact: true }).waitFor({ state: 'visible', timeout: UI_TIMEOUT_MS })
+  const failureRetryButtonCount = await failurePanel.getByRole('button', { name: '재시도', exact: true }).count()
+  assert.equal(failureRetryButtonCount, 0, 'Non-retryable extraction failure exposed a retry button')
+  const failureErrorCode = failedDocument.error?.errorCode ?? null
+  const failureErrorMessage = failedDocument.error?.message ?? null
+  const failureRetryable = failedDocument.error?.retryable ?? false
+  const errorMetadataAvailable = Boolean(failureErrorCode && failureErrorMessage)
+
   await Promise.all([...responseTasks])
   assertNoBrowserFailures()
 
@@ -374,6 +504,40 @@ try {
       canonicalTextObserved: CANONICAL_TEXT,
       factExtractionSource: factVerify.body.extractionSource,
     },
+    documentMutation: {
+      marker: mutationMarker,
+      preAnalysis: {
+        uiEdited: true,
+        patchStatus: confirm.response.status(),
+        confirmedTextPersisted: confirm.body.extractedText === confirmedText,
+        rawExtractionUnchangedDuringEdit,
+      },
+      postAnalysis: {
+        uiAttempted: true,
+        patchStatus: rejectedMutationResponse.status(),
+        errorCode: rejectedMutationBody.errorCode,
+        confirmedTextUnchangedAfterReload: reloadedDocument.body.extractedText === confirmedText,
+      },
+    },
+    authorization: {
+      reviewerConfirmedTextDisabled,
+      reviewerOwnerMutationControlVisible: reviewerOwnerMutationControlCount > 0,
+    },
+    failureUi: {
+      productId: failureProductId,
+      documentId: failureDocumentId,
+      fileName: 'MALFORMED-SYNTHETIC.pdf',
+      bytes: preflightReceipt.malformedPdfBytes,
+      checksumSha256: preflightReceipt.malformedPdfSha256,
+      terminalStatus: failedDocument.extractStatus,
+      failureLabelVisible: true,
+      retryable: failureRetryable,
+      retryButtonVisible: failureRetryButtonCount > 0,
+      errorMetadataAvailable,
+      errorCode: failureErrorCode,
+      message: failureErrorMessage,
+    },
+    deletionSupported: false,
     rag: {
       retrievalVersion: analysisResult.retrievalTrace.retrievalVersion,
       embeddingModel: analysisResult.retrievalTrace.embeddingModel,

@@ -60,6 +60,15 @@ public class ProductDocument extends BaseTimeEntity {
     @Column(name = "extracted_text", columnDefinition = "text")
     private String extractedText;
 
+    @Column(name = "extraction_error_code", length = 60)
+    private String extractionErrorCode;
+
+    @Column(name = "extraction_error_message", length = 500)
+    private String extractionErrorMessage;
+
+    @Column(name = "extraction_error_retryable", nullable = false)
+    private boolean extractionErrorRetryable;
+
     @Column(nullable = false)
     private boolean confirmed;
 
@@ -91,6 +100,7 @@ public class ProductDocument extends BaseTimeEntity {
 
     public void markExtracting() {
         this.extractStatus = ExtractStatus.EXTRACTING;
+        clearExtractionError();
     }
 
     // 재추출로 텍스트가 덮어써지면 이전에 확인한 내용이 아니므로 확인 상태를 되돌린다.
@@ -100,10 +110,14 @@ public class ProductDocument extends BaseTimeEntity {
         this.confirmed = false;
         this.confirmedBy = null;
         this.confirmedAt = null;
+        clearExtractionError();
     }
 
-    public void markFailed() {
+    public void markFailed(String errorCode, String publicMessage, boolean retryable) {
         this.extractStatus = ExtractStatus.FAILED;
+        this.extractionErrorCode = errorCode;
+        this.extractionErrorMessage = publicMessage;
+        this.extractionErrorRetryable = retryable;
     }
 
     // DOC-003. 담당자가 추출 텍스트를 고치고 확인 여부를 지정한다.
@@ -124,6 +138,10 @@ public class ProductDocument extends BaseTimeEntity {
         return extractStatus == ExtractStatus.FAILED;
     }
 
+    public boolean isRetryableFailure() {
+        return isFailed() && extractionErrorRetryable;
+    }
+
     public Long getProductId() {
         return product.getId();
     }
@@ -136,5 +154,11 @@ public class ProductDocument extends BaseTimeEntity {
     // 지연 로딩 프록시를 초기화하지 않고 식별자만 꺼낸다.
     public Long getConfirmedById() {
         return confirmedBy == null ? null : confirmedBy.getId();
+    }
+
+    private void clearExtractionError() {
+        this.extractionErrorCode = null;
+        this.extractionErrorMessage = null;
+        this.extractionErrorRetryable = false;
     }
 }
