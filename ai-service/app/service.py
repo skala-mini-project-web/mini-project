@@ -15,6 +15,7 @@ from app.schemas import (
     FindingPayload,
     HealthResponse,
     OllamaRiskAnalysisResponse,
+    RedTeamRuleCode,
     RiskAnalysisRequest,
     RiskAnalysisResponse,
 )
@@ -51,7 +52,13 @@ class ProviderResponseInvalidError(AiServiceError):
 
 
 class RiskAnalysisService:
-    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v11"
+    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v13"
+    FIXTURE_POLICY_RULE_CODES = {
+        "GUARANTEE_MISUNDERSTANDING_HIGH": RedTeamRuleCode.STABILITY_KEYWORD,
+        "EARLY_TERMINATION_COST_MEDIUM": RedTeamRuleCode.COST_OMISSION,
+        "ACCESSIBILITY_LOW": RedTeamRuleCode.COGNITIVE_ACCESSIBILITY,
+        "PROVIDER_RATE_LIMITED_THEN_SUCCESS": RedTeamRuleCode.STABILITY_KEYWORD,
+    }
     MAX_REPAIR_EXCERPTS_PER_CHUNK = 3
     MAX_REPAIR_EXCERPT_CHARS = 400
     MAX_REPAIR_EXCERPT_BYTES = 12_000
@@ -141,7 +148,34 @@ class RiskAnalysisService:
 
         attempt_number = self._next_attempt(request)
         payload = self.fixture_loader.load(request.scenario_code, attempt_number)
+        selected_known_fact_id = (
+            request.known_facts[0].fact_id if request.known_facts else None
+        )
         try:
+            payload = {
+                **payload,
+                "findings": [
+                    {
+                        **finding,
+                        "policyRuleCode": finding.get(
+                            "policyRuleCode",
+                            self.FIXTURE_POLICY_RULE_CODES[
+                                request.scenario_code
+                            ].value,
+                        ),
+                        "knownFactIds": (
+                            finding.get("knownFactIds")
+                            if finding.get("knownFactIds")
+                            else (
+                                [selected_known_fact_id]
+                                if selected_known_fact_id is not None
+                                else []
+                            )
+                        ),
+                    }
+                    for finding in payload["findings"]
+                ],
+            }
             response = RiskAnalysisResponse.model_validate(payload)
             self._validate_grounding(request, response)
         except (ValidationError, TypeError, ValueError):
@@ -173,12 +207,16 @@ class RiskAnalysisService:
             "free-text evidence excerpt; the server maps selected opaque "
             "option IDs to exact source excerpts. "
             "Never quote confirmedText or any other product text as evidence. "
-            "Do not cite unknown or unretrieved contexts. knownFactIds "
-            "may contain only exact factId values supplied in knownFacts; "
-            "leave it empty rather than inventing or substituting a fact "
-            "reference. "
+            "Do not cite unknown or unretrieved contexts. When knownFacts is "
+            "non-empty, every finding must select at least one applicable "
+            "exact factId supplied in knownFacts for knownFactIds. When "
+            "knownFacts is empty, knownFactIds must be empty. Never invent, "
+            "alter, or substitute a fact reference. "
             "affectedPersonaCodes may "
-            "contain only selected personaCodes. Set modelVersion to "
+            "contain only selected personaCodes. policyRuleCode must be one "
+            "exact value selected from ruleCodes; never derive it from "
+            "severity, personas, similarity, or finding text. Set "
+            "modelVersion to "
             f"{json.dumps(self.ollama_model)} and promptVersion to "
             f"{json.dumps(self.OLLAMA_PROMPT_VERSION)}."
         )
@@ -235,7 +273,13 @@ class RiskAnalysisService:
                             "selected option for every cited chunk and no "
                             "option for an uncited chunk. Do not return "
                             "evidenceSpans or any free-text evidence excerpt. "
-                            "Do not invent, alter, or duplicate option IDs. The "
+                            "Do not invent, alter, or duplicate option IDs. "
+                            "When knownFacts is non-empty, repair empty or "
+                            "unknown knownFactIds by selecting at least one "
+                            "applicable exact factId from knownFacts. When "
+                            "knownFacts is empty, keep knownFactIds empty. Do "
+                            "not invent, alter, or substitute a fact "
+                            "reference. The "
                             "allowed options are "
                             f"{serialized_options}. "
                             "Apply all other original constraints. Return "
@@ -376,6 +420,7 @@ class RiskAnalysisService:
         mapped_finding = FindingPayload(
             statement=finding.statement,
             severity=finding.severity,
+            policy_rule_code=finding.policy_rule_code,
             affected_persona_codes=finding.affected_persona_codes,
             retrieved_context_chunk_ids=finding.retrieved_context_chunk_ids,
             evidence_spans=[
@@ -418,12 +463,15 @@ class RiskAnalysisService:
         response: RiskAnalysisResponse,
     ) -> None:
         selected_personas = set(request.persona_codes)
+        selected_rule_codes = set(request.rule_codes)
         selected_evidence = set(request.selected_evidence_document_ids)
         contexts_by_chunk_id = {
             context.chunk_id: context for context in request.retrieved_contexts
         }
 
         for finding in response.findings:
+            if finding.policy_rule_code not in selected_rule_codes:
+                raise ValueError("Finding contains an unselected policy rule.")
             if not set(finding.affected_persona_codes) <= selected_personas:
                 raise ValueError("Finding contains an unselected persona.")
             if not finding.retrieved_context_chunk_ids:
@@ -465,6 +513,8 @@ class RiskAnalysisService:
     ) -> None:
         known_fact_ids = {fact.fact_id for fact in request.known_facts}
         for finding in response.findings:
+            if known_fact_ids and not finding.known_fact_ids:
+                raise ValueError("Finding is missing a known fact reference.")
             if not set(finding.known_fact_ids) <= known_fact_ids:
                 raise ValueError("Finding cites an unknown fact.")
 

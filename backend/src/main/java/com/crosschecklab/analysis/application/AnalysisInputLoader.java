@@ -35,7 +35,6 @@ public class AnalysisInputLoader {
 
     private static final int MIN_SELECTION = 1;
     private static final int MAX_EVIDENCE_SELECTION = 3;
-    private static final int MAX_PERSONA_SELECTION = 4;
 
     private final ProductDocumentRepository productDocumentRepository;
     private final PersonaTemplateRepository personaTemplateRepository;
@@ -58,7 +57,7 @@ public class AnalysisInputLoader {
                               Collection<Long> personaIds, Collection<Long> evidenceDocumentIds) {
         // 순서 = 오류 우선순위. 문서 상태(409)를 선택 값 오류(400)보다 먼저 판정한다.
         requireConfirmedDocument(document);
-        List<PersonaTemplate> personas = loadPersonas(personaIds);
+        List<PersonaTemplate> personas = loadPersonas(personaIds, true);
         List<EvidenceDocument> evidence = loadEvidenceDocuments(evidenceDocumentIds);
         RedTeamPack pack = loadPack(redTeamPackId);
         List<AnalysisInput.KnownFact> knownFacts = groundTruthFactRepository
@@ -73,7 +72,7 @@ public class AnalysisInputLoader {
     // 실행·재시도 시점: 이미 저장된 선택을 그대로 다시 읽는다.
     public AnalysisInput load(Analysis analysis) {
         ProductDocument document = loadDocument(analysis.getProductDocumentId());
-        List<PersonaTemplate> personas = loadPersonas(analysis.getPersonaTemplateIds());
+        List<PersonaTemplate> personas = loadPersonas(analysis.getPersonaTemplateIds(), false);
         List<EvidenceDocument> evidence = loadEvidenceDocuments(analysis.getEvidenceDocumentIds());
         RedTeamPack pack = loadPack(analysis.getRedTeamPackId());
         List<AnalysisInput.KnownFact> knownFacts = factSnapshotRepository
@@ -109,11 +108,12 @@ public class AnalysisInputLoader {
         }
     }
 
-    private List<PersonaTemplate> loadPersonas(Collection<Long> ids) {
-        Set<Long> selected = requireSelectionCount(ids, MAX_PERSONA_SELECTION);
+    private List<PersonaTemplate> loadPersonas(Collection<Long> ids, boolean requireActive) {
+        Set<Long> selected = requireSelection(ids);
         List<PersonaTemplate> personas = personaTemplateRepository.findAllById(selected).stream()
                 .sorted(Comparator.comparing(PersonaTemplate::getId)).toList();
-        if (personas.size() != selected.size() || personas.stream().anyMatch(persona -> !persona.isActive())) {
+        if (personas.size() != selected.size()
+                || requireActive && personas.stream().anyMatch(persona -> !persona.isActive())) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR,
                     List.of(new ErrorResponse.FieldError("personaIds", "사용할 수 없는 Persona 가 포함되어 있습니다.")));
         }
@@ -151,10 +151,18 @@ public class AnalysisInputLoader {
         return ruleCodes;
     }
 
+    private Set<Long> requireSelection(Collection<Long> ids) {
+        Set<Long> distinct = ids == null ? Set.of() : new LinkedHashSet<>(ids);
+        if (distinct.size() < MIN_SELECTION) {
+            throw new BusinessException(ErrorCode.INVALID_SELECTION_COUNT);
+        }
+        return distinct;
+    }
+
     // 중복 제거 후 최소 1개, 대상별 최대 선택 수를 적용한다.
     private Set<Long> requireSelectionCount(Collection<Long> ids, int maximumSelection) {
-        Set<Long> distinct = ids == null ? Set.of() : new LinkedHashSet<>(ids);
-        if (distinct.size() < MIN_SELECTION || distinct.size() > maximumSelection) {
+        Set<Long> distinct = requireSelection(ids);
+        if (distinct.size() > maximumSelection) {
             throw new BusinessException(ErrorCode.INVALID_SELECTION_COUNT);
         }
         return distinct;

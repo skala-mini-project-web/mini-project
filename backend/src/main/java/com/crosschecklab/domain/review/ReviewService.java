@@ -1,5 +1,6 @@
 package com.crosschecklab.domain.review;
 
+import com.crosschecklab.analysis.application.EvidenceRiskScoreService;
 import com.crosschecklab.domain.analysis.Analysis;
 import com.crosschecklab.domain.analysis.AnalysisRepository;
 import com.crosschecklab.domain.analysis.Finding;
@@ -49,6 +50,7 @@ public class ReviewService {
 
     private final ReviewRepository reviewRepository;
     private final FindingReviewDecisionRepository findingReviewDecisionRepository;
+    private final EvidenceRiskScoreService evidenceRiskScoreService;
     private final RiskPatternService riskPatternService;
     private final AnalysisRepository analysisRepository;
     private final FindingRepository findingRepository;
@@ -189,6 +191,7 @@ public class ReviewService {
                         findingRepository.findAllByAnalysisExecutionIdAndIdInOrderByIdAsc(
                                 review.getAnalysisExecutionId(), approvedFindingIds))
                 : List.of();
+        evidenceRiskScoreService.scoreAfterReview(review.getId());
         riskPatternIds.forEach(riskPatternId -> auditService.append(
                 currentUser,
                 AuditAction.RISK_PATTERN_PROMOTED,

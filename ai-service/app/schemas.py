@@ -35,6 +35,15 @@ class PersonaCode(StrEnum):
     LOSS_EXPERIENCED = "LOSS_EXPERIENCED"
     SHORT_TERM_LIQUIDITY = "SHORT_TERM_LIQUIDITY"
     SELF_EMPLOYED = "SELF_EMPLOYED"
+    LIMITED_PRODUCT_FAMILIARITY = "LIMITED_PRODUCT_FAMILIARITY"
+    LOSS_RECOVERY_PRESSURE = "LOSS_RECOVERY_PRESSURE"
+    NEAR_TERM_LIQUIDITY_NEED = "NEAR_TERM_LIQUIDITY_NEED"
+    VARIABLE_CASH_FLOW_OR_REPAYMENT_CONSTRAINT = (
+        "VARIABLE_CASH_FLOW_OR_REPAYMENT_CONSTRAINT"
+    )
+    EXPLANATION_ACCESS_SUPPORT = "EXPLANATION_ACCESS_SUPPORT"
+    DIGITAL_CHANNEL_SUPPORT = "DIGITAL_CHANNEL_SUPPORT"
+    LIFE_EVENT_FINANCIAL_STRESS = "LIFE_EVENT_FINANCIAL_STRESS"
 
 
 class RedTeamRuleCode(StrEnum):
@@ -101,7 +110,7 @@ class RiskAnalysisRequest(ApiModel):
         min_length=1,
         max_length=MAX_CONFIRMED_TEXT_LENGTH,
     )
-    persona_codes: list[PersonaCode] = Field(min_length=1, max_length=4)
+    persona_codes: list[PersonaCode] = Field(min_length=1)
     red_team_pack_code: RedTeamPackCode
     rule_codes: list[RedTeamRuleCode] = Field(
         min_length=1,
@@ -225,6 +234,7 @@ class EvidenceSpan(ApiModel):
 class FindingPayload(ApiModel):
     statement: str = Field(min_length=1, max_length=1000)
     severity: Severity
+    policy_rule_code: RedTeamRuleCode
     affected_persona_codes: list[PersonaCode] = Field(min_length=1)
     retrieved_context_chunk_ids: list[int] = Field(min_length=1)
     evidence_spans: list[EvidenceSpan] = Field(min_length=1)
@@ -281,6 +291,7 @@ class RiskAnalysisResponse(ApiModel):
 class OllamaFindingPayload(ApiModel):
     statement: str = Field(min_length=1, max_length=1000)
     severity: Severity
+    policy_rule_code: RedTeamRuleCode
     affected_persona_codes: list[PersonaCode] = Field(min_length=1)
     retrieved_context_chunk_ids: list[int] = Field(min_length=1)
     evidence_span_option_ids: list[str] = Field(min_length=1)

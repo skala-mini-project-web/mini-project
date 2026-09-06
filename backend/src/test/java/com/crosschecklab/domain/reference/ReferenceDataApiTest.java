@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
-// V10 canonical synthetic corpus 시드 데이터를 기준으로 검증한다.
+// V10 canonical synthetic corpus와 V20 상황 Persona 시드 데이터를 기준으로 검증한다.
 // 시드가 바뀌면 이 테스트가 먼저 깨지도록 개수와 id 를 명시적으로 단언한다.
 @DisplayName("기준 데이터 조회 API")
 class ReferenceDataApiTest extends IntegrationTestSupport {
@@ -109,27 +109,53 @@ class ReferenceDataApiTest extends IntegrationTestSupport {
     class PersonaTemplates {
 
         @Test
-        @DisplayName("Persona 5종을 시드 id 순서로 반환하고 jsonb 필드가 구조 그대로 내려간다")
-        void returnsFiveSeededPersonas() throws Exception {
-            mockMvc.perform(authorized("/api/persona-templates"))
+        @DisplayName("활성 상황 Persona 7종을 시드 id 순서로 반환하고 jsonb 필드가 구조 그대로 내려간다")
+        void returnsSevenActiveSituationPersonas() throws Exception {
+            mockMvc.perform(authorized("/api/persona-templates").param("active", "true"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.items.length()").value(7))
+                    .andExpect(jsonPath("$.items[0].personaTemplateId").value(6))
+                    .andExpect(jsonPath("$.items[0].code").value("LIMITED_PRODUCT_FAMILIARITY"))
+                    .andExpect(jsonPath("$.items[0].name").value("상품 이해 지원 필요 상황"))
+                    .andExpect(jsonPath("$.items[0].criteria.testSituation")
+                            .value("상품 구조·용어 이해 지원이 필요한 상황"))
+                    .andExpect(jsonPath("$.items[0].riskFocus").isArray())
+                    .andExpect(jsonPath("$.items[0].riskFocus[0]").value("상품 구조 설명"))
+                    .andExpect(jsonPath("$.items[0].active").value(true))
+                    .andExpect(jsonPath("$.items[1].code").value("LOSS_RECOVERY_PRESSURE"))
+                    .andExpect(jsonPath("$.items[1].active").value(true))
+                    .andExpect(jsonPath("$.items[2].code").value("NEAR_TERM_LIQUIDITY_NEED"))
+                    .andExpect(jsonPath("$.items[2].active").value(true))
+                    .andExpect(jsonPath("$.items[3].code")
+                            .value("VARIABLE_CASH_FLOW_OR_REPAYMENT_CONSTRAINT"))
+                    .andExpect(jsonPath("$.items[3].active").value(true))
+                    .andExpect(jsonPath("$.items[4].code").value("EXPLANATION_ACCESS_SUPPORT"))
+                    .andExpect(jsonPath("$.items[4].active").value(true))
+                    .andExpect(jsonPath("$.items[5].code").value("DIGITAL_CHANNEL_SUPPORT"))
+                    .andExpect(jsonPath("$.items[5].active").value(true))
+                    .andExpect(jsonPath("$.items[6].personaTemplateId").value(12))
+                    .andExpect(jsonPath("$.items[6].code").value("LIFE_EVENT_FINANCIAL_STRESS"))
+                    .andExpect(jsonPath("$.items[6].active").value(true));
+        }
+
+        @Test
+        @DisplayName("비활성 필터는 보존된 legacy Persona 5종만 반환한다")
+        void returnsOnlyInactiveLegacyPersonas() throws Exception {
+            mockMvc.perform(authorized("/api/persona-templates").param("active", "false"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.items.length()").value(5))
                     .andExpect(jsonPath("$.items[0].personaTemplateId").value(1))
                     .andExpect(jsonPath("$.items[0].code").value("FINANCIAL_BEGINNER"))
-                    .andExpect(jsonPath("$.items[0].name").value("금융 초보자"))
-                    .andExpect(jsonPath("$.items[0].criteria.financialLiteracy").value("LOW"))
-                    .andExpect(jsonPath("$.items[0].riskFocus").isArray())
-                    .andExpect(jsonPath("$.items[0].riskFocus[0]").value("확정수익 오해"))
+                    .andExpect(jsonPath("$.items[0].active").value(false))
+                    .andExpect(jsonPath("$.items[1].code").value("SENIOR"))
+                    .andExpect(jsonPath("$.items[1].active").value(false))
+                    .andExpect(jsonPath("$.items[2].code").value("LOSS_EXPERIENCED"))
+                    .andExpect(jsonPath("$.items[2].active").value(false))
+                    .andExpect(jsonPath("$.items[3].code").value("SHORT_TERM_LIQUIDITY"))
+                    .andExpect(jsonPath("$.items[3].active").value(false))
                     .andExpect(jsonPath("$.items[4].personaTemplateId").value(5))
-                    .andExpect(jsonPath("$.items[4].code").value("SELF_EMPLOYED"));
-        }
-
-        @Test
-        @DisplayName("active 필터가 적용된다")
-        void filtersByActive() throws Exception {
-            mockMvc.perform(authorized("/api/persona-templates").param("active", "false"))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.items").isEmpty());
+                    .andExpect(jsonPath("$.items[4].code").value("SELF_EMPLOYED"))
+                    .andExpect(jsonPath("$.items[4].active").value(false));
         }
 
         @Test

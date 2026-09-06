@@ -33,6 +33,7 @@ import com.crosschecklab.domain.persona.PersonaTemplateRepository;
 import com.crosschecklab.global.common.enums.AnalysisStatus;
 import com.crosschecklab.global.common.enums.ExtractStatus;
 import com.crosschecklab.global.common.enums.PersonaCode;
+import com.crosschecklab.global.common.enums.RedTeamRuleCode;
 import com.crosschecklab.global.config.AsyncConfig;
 import com.crosschecklab.global.error.BusinessException;
 import com.crosschecklab.global.error.ErrorCode;
@@ -91,6 +92,7 @@ public class AnalysisJobService {
     private final EvidenceChunkIndexer evidenceChunkIndexer;
     private final PgVectorEvidenceRetriever evidenceRetriever;
     private final RiskAnalysisProvider provider;
+    private final EvidenceRiskScoreService evidenceRiskScoreService;
     private final AuditEventRepository auditEventRepository;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
@@ -107,7 +109,9 @@ public class AnalysisJobService {
                               PersonaTemplateRepository personaTemplateRepository, AnalysisInputLoader inputLoader,
                               EvidenceChunkIndexer evidenceChunkIndexer,
                               PgVectorEvidenceRetriever evidenceRetriever,
-                              RiskAnalysisProvider provider, AuditEventRepository auditEventRepository,
+                              RiskAnalysisProvider provider,
+                              EvidenceRiskScoreService evidenceRiskScoreService,
+                              AuditEventRepository auditEventRepository,
                               PlatformTransactionManager transactionManager, Clock clock) {
         this.analysisRepository = analysisRepository;
         this.analysisExecutionRepository = analysisExecutionRepository;
@@ -123,6 +127,7 @@ public class AnalysisJobService {
         this.evidenceChunkIndexer = evidenceChunkIndexer;
         this.evidenceRetriever = evidenceRetriever;
         this.provider = provider;
+        this.evidenceRiskScoreService = evidenceRiskScoreService;
         this.auditEventRepository = auditEventRepository;
         this.clock = clock;
         // REQUIRES_NEW: 이 작업의 상태 전이는 요청 트랜잭션과 완전히 독립적으로 커밋되어야 한다.
@@ -467,6 +472,9 @@ public class AnalysisJobService {
     }
 
     private void validateProviderReferences(AnalysisRequest request, AnalysisResult result) {
+        Set<RedTeamRuleCode> selectedRuleCodes = request.ruleCodes() == null
+                ? Set.of()
+                : Set.copyOf(request.ruleCodes());
         Set<Long> acceptedChunkIds = request.retrievedContexts() == null ? Set.of()
                 : request.retrievedContexts().stream()
                         .map(AnalysisRequest.RetrievedContextPayload::chunkId)
@@ -476,6 +484,13 @@ public class AnalysisJobService {
                 .collect(Collectors.toSet());
 
         for (FindingPayload finding : result.findings()) {
+            if (finding.policyRuleCode() == null) {
+                throw invalidProviderResponse("finding 에 policyRuleCode 가 없음");
+            }
+            if (!selectedRuleCodes.contains(finding.policyRuleCode())) {
+                throw invalidProviderResponse(
+                        "요청에서 선택하지 않은 policyRuleCode: " + finding.policyRuleCode());
+            }
             if (finding.retrievedContextChunkIds() == null) {
                 throw invalidProviderResponse("finding 에 retrievedContextChunkIds 가 없음");
             }
@@ -536,20 +551,10 @@ public class AnalysisJobService {
     }
 
     private void validateAnchorPlan(AnalysisResult result, Job job) {
-        Map<Long, String> factsById = job.request().knownFacts().stream()
-                .collect(Collectors.toMap(
-                        AnalysisRequest.KnownFactPayload::factId,
-                        AnalysisRequest.KnownFactPayload::text));
         Map<Long, RagRetrievedChunk> contextsByChunkId = job.retrievedChunks().stream()
                 .collect(Collectors.toMap(RagRetrievedChunk::chunkId, context -> context));
 
         for (FindingPayload finding : result.findings()) {
-            for (Long factId : finding.knownFactIds()) {
-                uniqueUtf8Range(
-                        job.documentSnapshot().text(),
-                        factsById.get(factId),
-                        "known fact " + factId);
-            }
             for (FindingPayload.EvidenceSpanPayload span : finding.evidenceSpans()) {
                 RagRetrievedChunk context = contextsByChunkId.get(span.chunkId());
                 if (context == null || !finding.retrievedContextChunkIds().contains(span.chunkId())) {
@@ -614,8 +619,16 @@ public class AnalysisJobService {
         entityManager.flush();
         analysis.complete(result.riskScore(), result.modelVersion(), result.promptVersion(), finishedAt);
         analysis.markCurrentSuccessfulExecution(execution);
+        entityManager.flush();
+        evidenceRiskScoreService.createPendingReview(execution);
         appendTerminalAudit(traceId, AuditAction.ANALYSIS_COMPLETED, analysisId);
         analysisRepository.flush();
+        // The provider value remains execution provenance only. Until a reviewer decision creates
+        // a deterministic Policy v1 run, the legacy display column must not expose it as authority.
+        entityManager.createQuery(
+                        "update Analysis analysis set analysis.riskScore = null where analysis.id = :id")
+                .setParameter("id", analysisId)
+                .executeUpdate();
         return true;
     }
 
@@ -638,6 +651,7 @@ public class AnalysisJobService {
                     null,
                     payload.statement(),
                     payload.severity(),
+                    payload.policyRuleCode(),
                     payload.recommendation(),
                     personaIds(payload.affectedPersonaCodes(), personaIdsByCode));
             payload.retrievedContextChunkIds().stream()
@@ -684,15 +698,17 @@ public class AnalysisJobService {
                         AnalysisRequest.KnownFactPayload::text));
         for (Long factId : payload.knownFactIds()) {
             String excerpt = factsById.get(factId);
-            Utf8Range range = uniqueUtf8Range(job.documentSnapshot().text(), excerpt, "known fact " + factId);
-            anchors.add(AnchorPersistencePlan.documentClaim(
-                    finding,
-                    job.documentSnapshot().documentId(),
-                    sourceRevision.getId(),
-                    sourceRevision.getSourceHash(),
-                    TEXT_LAYER_PAGE,
-                    range,
-                    excerpt));
+            Utf8Range range = uniqueUtf8RangeIfPresent(job.documentSnapshot().text(), excerpt);
+            if (range != null) {
+                anchors.add(AnchorPersistencePlan.documentClaim(
+                        finding,
+                        job.documentSnapshot().documentId(),
+                        sourceRevision.getId(),
+                        sourceRevision.getSourceHash(),
+                        TEXT_LAYER_PAGE,
+                        range,
+                        excerpt));
+            }
         }
         for (FindingPayload.EvidenceSpanPayload span : payload.evidenceSpans()) {
             RagRetrievedChunk context = contextsByChunkId.get(span.chunkId());
@@ -723,16 +739,24 @@ public class AnalysisJobService {
     private record Utf8Range(long start, long end) {
     }
 
-    private Utf8Range uniqueUtf8Range(String source, String excerpt, String sourceName) {
+    private Utf8Range uniqueUtf8RangeIfPresent(String source, String excerpt) {
         if (source == null || excerpt == null || excerpt.isEmpty()) {
-            throw invalidProviderResponse(sourceName + " 의 exact excerpt 가 비어 있음");
+            return null;
         }
         int startIndex = source.indexOf(excerpt);
         if (startIndex < 0 || source.indexOf(excerpt, startIndex + 1) >= 0) {
-            throw invalidProviderResponse(sourceName + " 에 exact excerpt 범위가 없거나 둘 이상임");
+            return null;
         }
         long start = source.substring(0, startIndex).getBytes(StandardCharsets.UTF_8).length;
         return new Utf8Range(start, start + excerpt.getBytes(StandardCharsets.UTF_8).length);
+    }
+
+    private Utf8Range uniqueUtf8Range(String source, String excerpt, String sourceName) {
+        Utf8Range range = uniqueUtf8RangeIfPresent(source, excerpt);
+        if (range == null) {
+            throw invalidProviderResponse(sourceName + " 에 exact excerpt 범위가 없거나 둘 이상임");
+        }
+        return range;
     }
 
     private String lineageId(String executionToken, int providerOrdinal) {

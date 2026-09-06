@@ -1,12 +1,19 @@
 package com.crosschecklab.global.common.enums;
 
 /**
- * 고정 AI 소비자 Persona 5종. 분석 결과의 affectedPersonaCodes 매핑 키다.
+ * 문서 설명 실패를 검증하는 합성 상황 Persona와 역사 결과 조회용 legacy 코드.
  */
 public enum PersonaCode {
     FINANCIAL_BEGINNER,
     SENIOR,
     LOSS_EXPERIENCED,
     SHORT_TERM_LIQUIDITY,
-    SELF_EMPLOYED
+    SELF_EMPLOYED,
+    LIMITED_PRODUCT_FAMILIARITY,
+    LOSS_RECOVERY_PRESSURE,
+    NEAR_TERM_LIQUIDITY_NEED,
+    VARIABLE_CASH_FLOW_OR_REPAYMENT_CONSTRAINT,
+    EXPLANATION_ACCESS_SUPPORT,
+    DIGITAL_CHANNEL_SUPPORT,
+    LIFE_EVENT_FINANCIAL_STRESS
 }

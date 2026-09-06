@@ -1,6 +1,7 @@
 package com.crosschecklab.domain.analysis;
 
 import com.crosschecklab.global.common.BaseTimeEntity;
+import com.crosschecklab.global.common.enums.RedTeamRuleCode;
 import com.crosschecklab.global.common.enums.Severity;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.CollectionTable;
@@ -61,6 +62,10 @@ public class Finding extends BaseTimeEntity {
     @Column(nullable = false, length = 10)
     private Severity severity;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "policy_rule_code", updatable = false, length = 40)
+    private RedTeamRuleCode policyRuleCode;
+
     @Column(columnDefinition = "text")
     private String recommendation;
 
@@ -82,6 +87,7 @@ public class Finding extends BaseTimeEntity {
             Finding supersedesFinding,
             String statement,
             Severity severity,
+            RedTeamRuleCode policyRuleCode,
             String recommendation,
             Set<Long> affectedPersonaTemplateIds
     ) {
@@ -94,6 +100,7 @@ public class Finding extends BaseTimeEntity {
                 supersedesFinding);
         requireNonBlank(statement, "statement");
         requireNonNull(severity, "severity");
+        requireNonNull(policyRuleCode, "policyRuleCode");
         requireNonNull(affectedPersonaTemplateIds, "affectedPersonaTemplateIds");
         if (affectedPersonaTemplateIds.stream().anyMatch(id -> id == null || id <= 0)) {
             throw new IllegalArgumentException("affectedPersonaTemplateIds must contain only positive IDs");
@@ -107,6 +114,7 @@ public class Finding extends BaseTimeEntity {
         finding.supersedesFinding = supersedesFinding;
         finding.statement = statement;
         finding.severity = severity;
+        finding.policyRuleCode = policyRuleCode;
         finding.recommendation = recommendation;
         finding.affectedPersonaTemplateIds = new LinkedHashSet<>(affectedPersonaTemplateIds);
         return finding;

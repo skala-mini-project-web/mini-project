@@ -107,11 +107,23 @@ def test_returns_fixture_for_supported_scenario() -> None:
     assert body["riskScore"] == 82
     assert body["modelVersion"] == "mock-risk-v1"
     assert body["findings"][0]["severity"] == "HIGH"
+    assert body["findings"][0]["policyRuleCode"] == "STABILITY_KEYWORD"
     assert body["findings"][0]["affectedPersonaCodes"] == [
         "FINANCIAL_BEGINNER",
         "SENIOR",
     ]
     assert body["findings"][0]["retrievedContextChunkIds"] == [11]
+
+
+def test_fixture_without_known_facts_does_not_invent_fact_reference() -> None:
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["findings"][0]["knownFactIds"] == []
 
 
 def test_accepts_negative_cosine_similarity() -> None:
@@ -181,7 +193,7 @@ def test_accepts_four_selected_persona_codes() -> None:
     assert response.status_code == 200
 
 
-def test_rejects_more_than_four_selected_persona_codes() -> None:
+def test_accepts_more_than_four_selected_persona_codes() -> None:
     request = guarantee_request()
     request["personaCodes"] = [
         "FINANCIAL_BEGINNER",
@@ -193,8 +205,7 @@ def test_rejects_more_than_four_selected_persona_codes() -> None:
 
     response = call_api("POST", "/internal/v1/risk-analyses", json=request)
 
-    assert response.status_code == 422
-    assert response.json()["errorCode"] == "REQUEST_VALIDATION_FAILED"
+    assert response.status_code == 200
 
 
 def test_rejects_unknown_red_team_pack() -> None:
@@ -217,34 +228,26 @@ def test_rejects_scenario_without_required_rule() -> None:
     assert response.json()["errorCode"] == "REQUEST_VALIDATION_FAILED"
 
 
-def test_accepts_valid_known_facts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_fixture_cites_first_selected_known_fact() -> None:
     request = guarantee_request()
     request["knownFacts"] = [
         {"factId": 101, "text": "시장 상황에 따라 원금 손실이 발생할 수 있습니다."},
         {"factId": 202, "text": "중도 해지 시 비용이 부과될 수 있습니다."},
     ]
-    load_fixture = analysis_service.fixture_loader.load
-
-    def load_fixture_with_fact_reference(
-        scenario_code: str,
-        attempt_number: int = 1,
-    ) -> dict[str, Any]:
-        payload = deepcopy(load_fixture(scenario_code, attempt_number))
-        payload["findings"][0]["knownFactIds"] = [101]
-        return payload
-
-    monkeypatch.setattr(
-        analysis_service.fixture_loader,
-        "load",
-        load_fixture_with_fact_reference,
-    )
 
     response = call_api("POST", "/internal/v1/risk-analyses", json=request)
 
     assert response.status_code == 200
-    assert response.json()["findings"][0]["knownFactIds"] == [101]
+    finding = response.json()["findings"][0]
+    assert finding["knownFactIds"] == [101]
+    assert finding["policyRuleCode"] == "STABILITY_KEYWORD"
+    assert finding["retrievedContextChunkIds"] == [11]
+    assert finding["evidenceSpans"] == [
+        {
+            "chunkId": 11,
+            "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -287,6 +290,7 @@ def test_rejects_provider_output_citing_unknown_known_fact(
             {
                 "statement": "안정성 표현이 원금 손실 가능성을 가릴 수 있습니다.",
                 "severity": "HIGH",
+                "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": [11],
                 "evidenceSpanOptionIds": ["evidence-option-1"],
@@ -316,6 +320,78 @@ def test_rejects_provider_output_citing_unknown_known_fact(
     assert response.json()["retryable"] is False
 
 
+def test_ollama_repairs_missing_required_known_fact_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = guarantee_request()
+    request["knownFacts"] = [
+        {"factId": 101, "text": "시장 상황에 따라 원금 손실이 발생할 수 있습니다."}
+    ]
+    finding = {
+        "statement": "안정성 표현이 원금 손실 가능성을 가릴 수 있습니다.",
+        "severity": "HIGH",
+        "policyRuleCode": "STABILITY_KEYWORD",
+        "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+        "retrievedContextChunkIds": [11],
+        "evidenceSpanOptionIds": ["evidence-option-1"],
+        "knownFactIds": [],
+        "recommendation": "원금 손실 가능성을 함께 고지하세요.",
+    }
+    provider_outputs = [
+        {
+            "riskScore": 82,
+            "modelVersion": "ignored-provider-version",
+            "promptVersion": "ignored-prompt-version",
+            "findings": [finding],
+        },
+        {
+            "riskScore": 82,
+            "modelVersion": "ignored-provider-version",
+            "promptVersion": "ignored-prompt-version",
+            "findings": [{**finding, "knownFactIds": [101]}],
+        },
+    ]
+    provider_requests: list[dict[str, Any]] = []
+
+    def provider_response(provider_request: httpx.Request) -> httpx.Response:
+        provider_requests.append(json.loads(provider_request.content))
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "content": json.dumps(
+                        provider_outputs[len(provider_requests) - 1]
+                    )
+                }
+            },
+        )
+
+    monkeypatch.setattr(analysis_service, "provider", AnalysisProvider.OLLAMA)
+    monkeypatch.setattr(
+        analysis_service,
+        "http_client",
+        httpx.Client(transport=httpx.MockTransport(provider_response)),
+    )
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert response.status_code == 200
+    assert response.json()["findings"][0]["knownFactIds"] == [101]
+    assert len(provider_requests) == 2
+    system_prompt = provider_requests[0]["messages"][0]["content"]
+    repair_prompt = provider_requests[1]["messages"][-1]["content"]
+    assert (
+        "When knownFacts is non-empty, every finding must select at least one "
+        "applicable exact factId supplied in knownFacts for knownFactIds."
+        in system_prompt
+    )
+    assert (
+        "repair empty or unknown knownFactIds by selecting at least one "
+        "applicable exact factId from knownFacts"
+        in repair_prompt
+    )
+
+
 def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -328,6 +404,7 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
             {
                 "statement": "안정성 표현이 원금 손실 가능성을 가릴 수 있습니다.",
                 "severity": "HIGH",
+                "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": [11],
                 "evidenceSpanOptionIds": ["evidence-option-1"],
@@ -344,6 +421,7 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
         ]
         assert "retrievedContextChunkIds" in finding_schema["required"]
         assert "evidenceSpanOptionIds" in finding_schema["required"]
+        assert "policyRuleCode" in finding_schema["required"]
         assert "evidenceSpans" not in finding_schema["properties"]
         assert (
             finding_schema["properties"]["retrievedContextChunkIds"][
@@ -394,6 +472,10 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
             "allowedEvidenceSpanOptions supplied in the user message"
             in system_prompt
         )
+        assert (
+            "policyRuleCode must be one exact value selected from ruleCodes"
+            in system_prompt
+        )
         assert "Do not return evidenceSpans" in system_prompt
         assert (
             "Never quote confirmedText or any other product text as evidence."
@@ -420,6 +502,57 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
             "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    "policy_rule_code",
+    [None, "FORMAL_CONFIRMATION"],
+    ids=["missing", "unselected"],
+)
+def test_rejects_missing_or_unselected_ollama_policy_rule_code(
+    monkeypatch: pytest.MonkeyPatch,
+    policy_rule_code: str | None,
+) -> None:
+    finding = {
+        "statement": "안정성 표현이 원금 손실 가능성을 가릴 수 있습니다.",
+        "severity": "HIGH",
+        "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+        "retrievedContextChunkIds": [11],
+        "evidenceSpanOptionIds": ["evidence-option-1"],
+        "knownFactIds": [],
+        "recommendation": "원금 손실 가능성을 함께 고지하세요.",
+    }
+    if policy_rule_code is not None:
+        finding["policyRuleCode"] = policy_rule_code
+    provider_output = {
+        "riskScore": 82,
+        "modelVersion": "ignored-provider-version",
+        "promptVersion": "ignored-prompt-version",
+        "findings": [finding],
+    }
+
+    def provider_response(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"message": {"content": json.dumps(provider_output)}},
+        )
+
+    monkeypatch.setattr(analysis_service, "provider", AnalysisProvider.OLLAMA)
+    monkeypatch.setattr(
+        analysis_service,
+        "http_client",
+        httpx.Client(transport=httpx.MockTransport(provider_response)),
+    )
+
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+    )
+
+    assert response.status_code == 500
+    assert response.json()["errorCode"] == "AI_PROVIDER_RESPONSE_INVALID"
+    assert response.json()["retryable"] is False
 
 
 @pytest.mark.parametrize(
@@ -459,6 +592,7 @@ def test_rejects_invalid_ollama_evidence_option_mapping(
             {
                 "statement": "안정성 표현이 원금 손실 가능성을 가릴 수 있습니다.",
                 "severity": "HIGH",
+                "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": cited_chunk_ids,
                 "evidenceSpanOptionIds": option_ids,
@@ -497,6 +631,7 @@ def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
     valid_finding = {
         "statement": "안정성 표현이 원금 손실 가능성을 가릴 수 있습니다.",
         "severity": "HIGH",
+        "policyRuleCode": "STABILITY_KEYWORD",
         "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
         "retrievedContextChunkIds": [11],
         "evidenceSpanOptionIds": ["evidence-option-1"],
@@ -546,6 +681,7 @@ def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
         {
             "statement": valid_finding["statement"],
             "severity": "HIGH",
+            "policyRuleCode": "STABILITY_KEYWORD",
             "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
             "retrievedContextChunkIds": [11],
             "evidenceSpans": [
@@ -588,6 +724,7 @@ def test_rejects_ollama_output_that_remains_invalid_after_one_repair(
             {
                 "statement": "상품 문구를 근거로 삼은 지원되지 않는 지적입니다.",
                 "severity": "HIGH",
+                "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": [11],
                 "evidenceSpanOptionIds": ["unknown-option"],
@@ -659,6 +796,7 @@ def test_ollama_repair_excerpt_options_are_bounded_and_exact(
             {
                 "statement": "지원되지 않는 지적입니다.",
                 "severity": "HIGH",
+                "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": [11],
                 "evidenceSpanOptionIds": ["unknown-option"],
@@ -750,6 +888,7 @@ def test_rejects_ollama_output_omitting_retrieved_chunk_ids(
             {
                 "statement": "안정성 표현이 투자 위험을 축소할 수 있습니다.",
                 "severity": "LOW",
+                "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "evidenceSpanOptionIds": ["evidence-option-1"],
                 "knownFactIds": [],
@@ -799,6 +938,7 @@ def test_rejects_invalid_ollama_retrieved_chunk_ids(
             {
                 "statement": "안정성 표현이 투자 위험을 축소할 수 있습니다.",
                 "severity": "LOW",
+                "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": chunk_ids,
                 "evidenceSpanOptionIds": ["evidence-option-1"],
@@ -837,6 +977,36 @@ def test_rejects_fixture_output_with_unselected_persona() -> None:
     request["personaCodes"] = ["FINANCIAL_BEGINNER"]
 
     response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert response.status_code == 500
+    assert response.json()["errorCode"] == "AI_PROVIDER_RESPONSE_INVALID"
+    assert response.json()["retryable"] is False
+
+
+def test_rejects_fixture_output_with_unselected_policy_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    load_fixture = analysis_service.fixture_loader.load
+
+    def load_fixture_with_unselected_policy_rule(
+        scenario_code: str,
+        attempt_number: int = 1,
+    ) -> dict[str, Any]:
+        payload = deepcopy(load_fixture(scenario_code, attempt_number))
+        payload["findings"][0]["policyRuleCode"] = "FORMAL_CONFIRMATION"
+        return payload
+
+    monkeypatch.setattr(
+        analysis_service.fixture_loader,
+        "load",
+        load_fixture_with_unselected_policy_rule,
+    )
+
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+    )
 
     assert response.status_code == 500
     assert response.json()["errorCode"] == "AI_PROVIDER_RESPONSE_INVALID"

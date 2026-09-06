@@ -297,7 +297,8 @@ ollama list
 - 근거 기반 문서 위험 우선순위·상황 기반 Persona
   - `[완료]` 정책 v1·synthetic TEVV fixture, 불변 source revision, execution-bound Finding, exact evidence anchor, Finding별 reviewer decision 이력
   - `[완료]` 실제 Docker/browser RAG E2E에서 immutable anchor·review decision 저장 확인
-  - `[예정]` 결정론 score engine·score ledger·score UI·TEVV calibration: [#85](https://github.com/skala-mini-project-web/mini-project/issues/85)
+  - `[완료]` 결정론 Policy v1 score engine·score ledger·state-first score UI, reviewer 승인 뒤 actual `SCORED` browser E2E
+  - `[예정]` held-out TEVV calibration·artifact-pinned model comparison과 score band 재보정
 - 대량 파일 자동 처리
   - `[완료]` PostgreSQL durable queue·storage·retry/cancel/quarantine 설계 확정
   - `[예정]` one-item 호환 pipeline, item별 retry·cancel·quarantine·error report, browser E2E: [#86](https://github.com/skala-mini-project-web/mini-project/issues/86)
