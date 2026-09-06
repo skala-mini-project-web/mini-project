@@ -31,7 +31,7 @@ const localAi = ref((() => { try { return localStorage.getItem('guardlab.ai.loca
 const debugControls = import.meta.env.VITE_DEBUG_AI_CONTROLS === 'true'
 function setLocalAi(v) { localAi.value = v; try { localStorage.setItem('guardlab.ai.local', v ? '1' : '0') } catch {} }
 const evOk = computed(() => selEv.value.length >= 1 && selEv.value.length <= 3)
-const perOk = computed(() => selPer.value.length >= 1 && selPer.value.length <= 4)
+const perOk = computed(() => selPer.value.length >= 1)
 const factsVerified = computed(() => facts.value.some((fact) => fact.verificationStatus === 'VERIFIED'))
 const canManage = computed(() => session.owns(productOwnerId.value))
 const canSubmit = computed(() => canManage.value && selDoc.value && evOk.value && perOk.value && selPack.value && factsVerified.value && !submitting.value)
@@ -53,10 +53,10 @@ async function load() {
     productName.value = product.name
     productOwnerId.value = product.ownerId
     docs.value = (product.documents || []).filter((d) => d.extractStatus === 'READY' && d.confirmed)
-    evidence.value = ev.items; personas.value = ps.items; packs.value = pk.items
+    evidence.value = ev.items; personas.value = ps.items.filter((persona) => persona.active); packs.value = pk.items
     if (docs.value.length) selDoc.value = docs.value[0].documentId
     if (evidence.value.length) selEv.value = evidence.value.slice(0, 2).map((item) => item.documentId)
-    if (personas.value.length) selPer.value = personas.value.slice(0, 4).map((p) => p.personaId)
+    if (personas.value.length) selPer.value = personas.value.map((p) => p.personaId)
     if (packs.value.length) selPack.value = packs.value[0].redTeamPackId
     await loadFacts()
     loadError.value = null
@@ -76,7 +76,7 @@ async function verifyFact(fact, verificationStatus) {
   } catch (error) { toast.fromError(error) }
 }
 // 템플릿에서 넘어오는 list는 이미 언랩된 반응형 배열이므로 .value가 아니라 배열을 직접 변형한다.
-function toggle(list, id, max) { const i = list.indexOf(id); if (i >= 0) list.splice(i, 1); else if (list.length < max) list.push(id); else toast.info('선택 한도', `최대 ${max}개`) }
+function toggle(list, id, max) { const i = list.indexOf(id); if (i >= 0) list.splice(i, 1); else if (max == null || list.length < max) list.push(id); else toast.info('선택 한도', `최대 ${max}개`) }
 async function submit() {
   if (!canSubmit.value) return; submitting.value = true
   try {
@@ -152,10 +152,10 @@ async function submit() {
       </section>
 
       <section class="blk">
-        <div class="bh"><span class="mono n">04</span><h2 class="d-h3">분석 대상 Persona</h2><GBadge class="bcount" :tone="perOk ? 'ok' : 'high'">{{ selPer.length }}/1-4</GBadge></div>
+        <div class="bh"><span class="mono n">04</span><h2 class="d-h3">분석 대상 Persona</h2><GBadge class="bcount" :tone="perOk ? 'ok' : 'high'">{{ selPer.length }}개 선택</GBadge></div>
         <div class="chips">
           <label v-for="p in personas" :key="p.personaId" class="chip" :class="{ on: selPer.includes(p.personaId) }">
-            <input type="checkbox" class="sr-only" :checked="selPer.includes(p.personaId)" @change="toggle(selPer, p.personaId, 4)" />
+            <input type="checkbox" class="sr-only" :checked="selPer.includes(p.personaId)" @change="toggle(selPer, p.personaId)" />
             <span class="fw-medium">{{ p.name }}</span><span class="t-xs mute">{{ Array.isArray(p.riskFocus) ? p.riskFocus.join(' · ') : p.riskFocus }}</span><span v-if="p.criteria" class="t-xs mute">{{ Object.values(p.criteria).join(' · ') }}</span><span v-if="p.questionSummary" class="t-xs mute">{{ p.questionSummary }}</span>
           </label>
         </div>

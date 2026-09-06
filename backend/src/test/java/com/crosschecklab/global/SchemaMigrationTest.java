@@ -10,7 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
-@DisplayName("V1/V2 마이그레이션")
+@DisplayName("스키마 마이그레이션")
 class SchemaMigrationTest extends IntegrationTestSupport {
 
     private static final List<String> EXPECTED_TABLES = List.of(
@@ -24,6 +24,9 @@ class SchemaMigrationTest extends IntegrationTestSupport {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    private record PersonaSeed(long id, String code, boolean active) {
+    }
 
     @Test
     @DisplayName("확정 ERD 17테이블이 모두 생성된다")
@@ -51,14 +54,28 @@ class SchemaMigrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("Persona 5종이 API 명세와 동일한 id로 시딩된다")
-    void seedsPersonaTemplatesWithFixedIds() {
-        List<String> codes = jdbcTemplate.queryForList(
-                "SELECT code FROM persona_templates ORDER BY id", String.class);
+    @DisplayName("legacy Persona 5종은 비활성으로 보존되고 상황 Persona 7종은 활성으로 시딩된다")
+    void seedsCompleteLegacyAndSituationPersonaTaxonomy() {
+        List<PersonaSeed> personas = jdbcTemplate.query(
+                "SELECT id, code, active FROM persona_templates ORDER BY id",
+                (resultSet, rowNumber) -> new PersonaSeed(
+                        resultSet.getLong("id"),
+                        resultSet.getString("code"),
+                        resultSet.getBoolean("active")));
 
-        assertThat(codes).containsExactly(
-                "FINANCIAL_BEGINNER", "SENIOR", "LOSS_EXPERIENCED",
-                "SHORT_TERM_LIQUIDITY", "SELF_EMPLOYED");
+        assertThat(personas).containsExactly(
+                new PersonaSeed(1L, "FINANCIAL_BEGINNER", false),
+                new PersonaSeed(2L, "SENIOR", false),
+                new PersonaSeed(3L, "LOSS_EXPERIENCED", false),
+                new PersonaSeed(4L, "SHORT_TERM_LIQUIDITY", false),
+                new PersonaSeed(5L, "SELF_EMPLOYED", false),
+                new PersonaSeed(6L, "LIMITED_PRODUCT_FAMILIARITY", true),
+                new PersonaSeed(7L, "LOSS_RECOVERY_PRESSURE", true),
+                new PersonaSeed(8L, "NEAR_TERM_LIQUIDITY_NEED", true),
+                new PersonaSeed(9L, "VARIABLE_CASH_FLOW_OR_REPAYMENT_CONSTRAINT", true),
+                new PersonaSeed(10L, "EXPLANATION_ACCESS_SUPPORT", true),
+                new PersonaSeed(11L, "DIGITAL_CHANNEL_SUPPORT", true),
+                new PersonaSeed(12L, "LIFE_EVENT_FINANCIAL_STRESS", true));
     }
 
     @Test

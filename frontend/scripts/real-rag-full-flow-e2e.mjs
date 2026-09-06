@@ -356,6 +356,52 @@ try {
   assert(Array.isArray(riskPatternIds) && riskPatternIds.length > 0, 'Approved review did not create Risk Patterns')
   const riskPatternId = riskPatternIds[0]
 
+  const scoredResultReload = await waitForApi(pmPage, 'GET', new RegExp(`^/api/analyses/${String(analysisId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/result$`), () =>
+    pmPage.reload({ waitUntil: 'domcontentloaded' }))
+  const scoredAnalysisResult = scoredResultReload.body
+  assert.equal(scoredAnalysisResult?.score?.state, 'SCORED', 'Approved analysis did not produce a SCORED run')
+  assert.equal(typeof scoredAnalysisResult.score.value, 'number', 'Deterministic score value is not numeric')
+  assert(
+    scoredAnalysisResult.score.value >= 0 && scoredAnalysisResult.score.value <= 100,
+    `Deterministic score value is outside 0–100: ${scoredAnalysisResult.score.value}`,
+  )
+  assert.equal(scoredAnalysisResult.score.policyVersion, '1.0.0', 'Deterministic score used an unexpected policy version')
+  assert(
+    Array.isArray(scoredAnalysisResult.score.ledgerEntries) && scoredAnalysisResult.score.ledgerEntries.length > 0,
+    'SCORED run did not include ledger entries',
+  )
+  assert.equal(
+    Object.hasOwn(scoredAnalysisResult, 'riskScore'),
+    false,
+    'Analysis result exposed the raw provider riskScore instead of the deterministic score run',
+  )
+
+  await pmPage.getByText(/^SCORED · Policy v1 \(1\.0\.0\)$/).waitFor({ state: 'visible', timeout: UI_TIMEOUT_MS })
+  await pmPage.getByRole('heading', { name: '점수 산출 원장', exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
+  const scoreLedgerRows = pmPage.locator('.score-ledger .ledger-entry')
+  assert.equal(
+    await scoreLedgerRows.count(),
+    scoredAnalysisResult.score.ledgerEntries.length,
+    'PM score ledger row count did not match the server response',
+  )
+  for (const [index, entry] of scoredAnalysisResult.score.ledgerEntries.entries()) {
+    const ledgerRow = scoreLedgerRows.nth(index)
+    await ledgerRow.getByText(entry.policyRuleCode, { exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
+    await ledgerRow.getByText(`Finding ${entry.findingId}`, { exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
+    assert.equal(
+      normalizedText(await ledgerRow.locator('.ledger-contribution').innerText()),
+      `${entry.contributionBasisPoints} bp`,
+      `PM score ledger contribution did not match entry ${index}`,
+    )
+    const ledgerValues = ledgerRow.locator('.ledger-values')
+    const ledgerFields = ledgerValues.locator(':scope > div')
+    assert.equal(await ledgerFields.count(), 4, `PM score ledger entry ${index} did not render all M/L/anchor fields`)
+    assert.equal(normalizedText(await ledgerFields.nth(0).innerText()), `M ${entry.magnitudeBasisPoints} bp`, `PM score ledger M field did not match entry ${index}`)
+    assert.equal(normalizedText(await ledgerFields.nth(1).innerText()), `L ${entry.likelihoodBasisPoints} bp`, `PM score ledger L field did not match entry ${index}`)
+    assert.equal(normalizedText(await ledgerFields.nth(2).innerText()), `문서 주장 Anchor ${entry.documentClaimAnchorId}`, `PM score ledger document anchor did not match entry ${index}`)
+    assert.equal(normalizedText(await ledgerFields.nth(3).innerText()), `정책 요구 Anchor ${entry.policyRequirementAnchorId}`, `PM score ledger policy anchor did not match entry ${index}`)
+  }
+
   await reviewerPage.waitForURL('**/risk-library', { timeout: UI_TIMEOUT_MS })
   const riskRow = reviewerPage.locator('li.row').filter({ hasText: /초안|DRAFT/ }).first()
   await riskRow.waitFor({ state: 'visible', timeout: UI_TIMEOUT_MS })
@@ -551,6 +597,12 @@ try {
         findingId,
         evidenceReferences: (evidenceReferences || []).map(({ evidenceDocumentId, sourceType, excerpt }) => ({ evidenceDocumentId, sourceType, excerpt })),
       })),
+    },
+    deterministicScore: {
+      state: scoredAnalysisResult.score.state,
+      value: scoredAnalysisResult.score.value,
+      policyVersion: scoredAnalysisResult.score.policyVersion,
+      ledgerEntryCount: scoredAnalysisResult.score.ledgerEntries.length,
     },
     findings: { count: analysisResult.findings.length, promotedRiskPatternIds: riskPatternIds },
     terminalState: { review: decision.body.status, riskPattern: activation.body.status, guardFit: guardApproval.body.status, pmVisible: true },

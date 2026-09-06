@@ -231,7 +231,9 @@ Backend durable OCR job
 
 - branch: `feature/evidence-risk-score`
 - Issue: [#85 근거 기반 문서 위험 우선순위 지수 구현](https://github.com/skala-mini-project-web/mini-project/issues/85)
+- 상태: 완료
 - 완료 기준: provider raw score 비권위화, M/L policy engine, score ledger, reviewer override audit, UI score states, golden fixture·Docker E2E
+- 완료 근거: Policy v1 score run·immutable ledger, Finding별 reviewer 승인/제외 결정 이력, `SCORED`/`PENDING_REVIEW`/`NOT_SCORED` UI, actual Docker/browser E2E
 
 ### Feature 3. durable batch ingestion
 
@@ -258,7 +260,7 @@ Backend durable OCR job
 
 ## README 고도화 진행 상태
 
-- 점수·Persona: 정책·불변 근거·review decision 기반 완료, score engine·UI·calibration 예정
+- 점수·Persona: 정책·불변 근거·review decision·score engine·UI 완료, held-out calibration·artifact-pinned model comparison 예정
 - batch: 설계 확정, 구현 대기
 - PDF 한글 OCR: 설계 확정, 구현 대기
 

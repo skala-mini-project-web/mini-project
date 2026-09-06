@@ -12,6 +12,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.crosschecklab.analysis.application.EvidenceRiskScorePolicyV1;
+import com.crosschecklab.analysis.application.EvidenceRiskScoreService;
 import com.crosschecklab.analysis.provider.RiskAnalysisProvider;
 import com.crosschecklab.analysis.provider.dto.AnalysisRequest;
 import com.crosschecklab.analysis.provider.dto.AnalysisResult;
@@ -22,6 +24,8 @@ import com.crosschecklab.analysis.rag.RagRetrievedChunk;
 import com.crosschecklab.domain.audit.AuditAction;
 import com.crosschecklab.domain.audit.AuditEvent;
 import com.crosschecklab.domain.audit.AuditEventRepository;
+import com.crosschecklab.global.common.enums.PersonaCode;
+import com.crosschecklab.global.common.enums.RedTeamRuleCode;
 import com.crosschecklab.global.common.enums.Severity;
 import com.crosschecklab.global.config.AsyncConfig;
 import com.crosschecklab.global.error.ErrorCode;
@@ -71,6 +75,29 @@ class AnalysisApiTest extends IntegrationTestSupport {
     private static final String TEST_CHUNKING_VERSION = "analysis-api-test-v1";
     private static final String TEST_EMBEDDING_MODEL = "analysis-api-test-embedding";
     private static final String TEST_DOCUMENT_SOURCE_HASH = "d".repeat(64);
+    private static final int LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID = 6;
+    private static final int LOSS_RECOVERY_PRESSURE_PERSONA_ID = 7;
+    private static final int NEAR_TERM_LIQUIDITY_NEED_PERSONA_ID = 8;
+    private static final int VARIABLE_CASH_FLOW_OR_REPAYMENT_CONSTRAINT_PERSONA_ID = 9;
+    private static final int EXPLANATION_ACCESS_SUPPORT_PERSONA_ID = 10;
+    private static final List<Integer> DEFAULT_PERSONA_IDS = List.of(
+            LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID,
+            LOSS_RECOVERY_PRESSURE_PERSONA_ID);
+    private static final List<Integer> FIVE_ACTIVE_PERSONA_IDS = List.of(
+            LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID,
+            LOSS_RECOVERY_PRESSURE_PERSONA_ID,
+            NEAR_TERM_LIQUIDITY_NEED_PERSONA_ID,
+            VARIABLE_CASH_FLOW_OR_REPAYMENT_CONSTRAINT_PERSONA_ID,
+            EXPLANATION_ACCESS_SUPPORT_PERSONA_ID);
+    private static final List<PersonaCode> DEFAULT_PERSONA_CODES = List.of(
+            PersonaCode.LIMITED_PRODUCT_FAMILIARITY,
+            PersonaCode.LOSS_RECOVERY_PRESSURE);
+    private static final List<PersonaCode> FIVE_ACTIVE_PERSONA_CODES = List.of(
+            PersonaCode.LIMITED_PRODUCT_FAMILIARITY,
+            PersonaCode.LOSS_RECOVERY_PRESSURE,
+            PersonaCode.NEAR_TERM_LIQUIDITY_NEED,
+            PersonaCode.VARIABLE_CASH_FLOW_OR_REPAYMENT_CONSTRAINT,
+            PersonaCode.EXPLANATION_ACCESS_SUPPORT);
     private static final Map<Long, String> TEST_RETRIEVED_CONTEXTS = Map.of(
             1L, "“안정”, “보장”, “확정”과 같은 표현이 있으면 원금손실 가능성과 변동 수익 정정문을 "
                     + "같은 페이지, 같은 화면, 같은 음성 구간에 표시한다.",
@@ -244,6 +271,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     private AnalysisRepository analysisRepository;
 
     @Autowired
+    private EvidenceRiskScoreService evidenceRiskScoreService;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     // V2 시드: 1 = pm_park(PRODUCT_MANAGER, 아래 상품의 소유자), 2 = reviewer_kim(COMPLIANCE_REVIEWER)
@@ -342,9 +372,19 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     private Long createAnalysis(String traceId) throws Exception {
+        return createAnalysis(
+                confirmedDocumentId, List.of(1, 2), DEFAULT_PERSONA_IDS, traceId);
+    }
+
+    private Long createAnalysis(
+            Long documentId,
+            List<Integer> evidenceIds,
+            List<Integer> personaIds,
+            String traceId
+    ) throws Exception {
         MockHttpServletRequestBuilder builder = withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))));
+                        .content(request(documentId, evidenceIds, personaIds))));
         if (traceId != null) {
             builder = traced(builder, traceId);
         }
@@ -352,6 +392,25 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(status().isAccepted())
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body).get("analysisId").asLong();
+    }
+
+    private Long createReview(Long analysisId) throws Exception {
+        String body = mockMvc.perform(asPm(post("/api/reviews")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("analysisId", analysisId)))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body).get("reviewId").asLong();
+    }
+
+    private void decideReview(Long reviewId, String decision, List<Long> findingIds) throws Exception {
+        Map<String, Object> requestBody = "APPROVED".equals(decision)
+                ? Map.of("status", decision, "selectedFindingIds", findingIds)
+                : Map.of("status", decision, "comment", "정책 근거를 보완하세요.");
+        mockMvc.perform(asReviewer(post("/api/reviews/{id}/decision", reviewId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(requestBody))))
+                .andExpect(status().isOk());
     }
 
     private void assertAudit(String traceId, String action, Long resourceId, Long actorId, Long analysisId) {
@@ -418,14 +477,18 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     private Long confirmFact(String text, String verificationStatus) throws Exception {
-        mockMvc.perform(asPm(patch("/api/documents/{documentId}/text", confirmedDocumentId)
+        return confirmFact(confirmedDocumentId, text, verificationStatus);
+    }
+
+    private Long confirmFact(Long documentId, String text, String verificationStatus) throws Exception {
+        mockMvc.perform(asPm(patch("/api/documents/{documentId}/text", documentId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 Map.of("extractedText", text, "confirmed", true)))))
                 .andExpect(status().isOk());
 
         String response = mockMvc.perform(asPm(get(
-                        "/api/product-documents/{documentId}/ground-truth-facts", confirmedDocumentId)))
+                        "/api/product-documents/{documentId}/ground-truth-facts", documentId)))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         JsonNode fact = objectMapper.readTree(response).get("items").get(0);
@@ -446,6 +509,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
         return new AnalysisResult(82, "fact-aware-model", "fact-aware-prompt", List.of(new FindingPayload(
                 "검증된 사실을 인용한 분석 결과입니다.",
                 Severity.HIGH,
+                RedTeamRuleCode.RETURN_FRAMING,
                 List.of(),
                 List.of(context.chunkId()),
                 List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText())),
@@ -458,6 +522,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
         return new AnalysisResult(82, "chunk-aware-model", "chunk-aware-prompt", List.of(new FindingPayload(
                 "검색된 근거 청크를 인용한 분석 결과입니다.",
                 Severity.HIGH,
+                RedTeamRuleCode.RETURN_FRAMING,
                 List.of(),
                 chunkIds,
                 spans,
@@ -483,9 +548,8 @@ class AnalysisApiTest extends IntegrationTestSupport {
                             List.of(new FindingPayload(
                                     statement,
                                     severity,
-                                    List.of(
-                                            com.crosschecklab.global.common.enums.PersonaCode.FINANCIAL_BEGINNER,
-                                            com.crosschecklab.global.common.enums.PersonaCode.SENIOR),
+                                    RedTeamRuleCode.STABILITY_KEYWORD,
+                                    DEFAULT_PERSONA_CODES,
                                     List.of(context.chunkId()),
                                     List.of(new FindingPayload.EvidenceSpanPayload(
                                             context.chunkId(), context.chunkText())),
@@ -495,12 +559,12 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("ANA-001·004: 분석을 생성하면 202로 수락되고 riskScore 82 시나리오가 COMPLETED로 저장된다")
+    @DisplayName("ANA-001·004·#85: provider 점수는 provenance로만 남고 PENDING_REVIEW가 생성된다")
     void createAndComplete() throws Exception {
         String traceId = "analysis-create-success";
         mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2))))), traceId))
+                        .content(request(confirmedDocumentId, List.of(1, 2), DEFAULT_PERSONA_IDS)))), traceId))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status").value("CREATED"))
                 .andExpect(jsonPath("$.statusUrl").exists())
@@ -512,18 +576,24 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.progress").value(100))
-                .andExpect(jsonPath("$.riskScore").value(82))
+                .andExpect(jsonPath("$.riskScore").isEmpty())
                 .andExpect(jsonPath("$.requiresHumanApproval").value(true))
                 .andExpect(jsonPath("$.errorCode").isEmpty());
 
         mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.riskScore").value(82))
+                .andExpect(jsonPath("$.riskScore").doesNotExist())
+                .andExpect(jsonPath("$.score.state").value("PENDING_REVIEW"))
+                .andExpect(jsonPath("$.score.policyVersion").value(EvidenceRiskScorePolicyV1.VERSION))
+                .andExpect(jsonPath("$.score.value").isEmpty())
+                .andExpect(jsonPath("$.score.notScoredReason").isEmpty())
+                .andExpect(jsonPath("$.score.ledgerEntries").isEmpty())
                 .andExpect(jsonPath("$.sourceDocument.fileName").value("스마트인컴_상품설명서.pdf"))
                 .andExpect(jsonPath("$.groundingDocuments.length()").value(2))
                 .andExpect(jsonPath("$.findings.length()").value(1))
                 .andExpect(jsonPath("$.findings[0].severity").value("HIGH"))
-                .andExpect(jsonPath("$.findings[0].affectedPersonaCodes[0]").value("FINANCIAL_BEGINNER"))
+                .andExpect(jsonPath("$.findings[0].affectedPersonaCodes[0]")
+                        .value("LIMITED_PRODUCT_FAMILIARITY"))
                 .andExpect(jsonPath("$.findings[0].evidenceReferences[0].sourceType").value("INTERNAL_POLICY"))
                 .andExpect(jsonPath("$.findings[0].evidenceReferences[0].evidenceDocumentId").value(1))
                 .andExpect(jsonPath("$.findings[0].evidenceReferences[0].excerpt")
@@ -553,6 +623,15 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .containsEntry("model_version", "mock-risk-v1")
                 .containsEntry("prompt_version", "mock-prompt-v1")
                 .containsEntry("current_successful_execution_id", execution.get("id"));
+        assertThat(jdbc.queryForMap("""
+                SELECT state, policy_version, score_value, not_scored_reason
+                FROM risk_score_runs
+                WHERE analysis_execution_id = ?
+                """, execution.get("id")))
+                .containsEntry("state", "PENDING_REVIEW")
+                .containsEntry("policy_version", EvidenceRiskScorePolicyV1.VERSION)
+                .containsEntry("score_value", null)
+                .containsEntry("not_scored_reason", null);
         assertThat(execution.get("execution_token")).isEqualTo(jdbc.queryForObject(
                 "SELECT execution_token FROM analyses WHERE id = ?", String.class, analysisId));
         assertThat(jdbc.queryForObject("""
@@ -589,6 +668,346 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("#85: 여러 policy anchor의 입력 순서와 무관하게 점수와 canonical ledger anchor를 결정한다")
+    void approvedAnchoredFindingCreatesIdempotentDeterministicScore() throws Exception {
+        Long factId = confirmFact("정책에 비추어 검토할 확정 문서 주장", "VERIFIED");
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    AnalysisRequest.RetrievedContextPayload first = request.retrievedContexts().getFirst();
+                    AnalysisRequest.RetrievedContextPayload second = request.retrievedContexts().getLast();
+                    return new AnalysisResult(
+                            82,
+                            "fact-aware-model",
+                            "fact-aware-prompt",
+                            List.of(new FindingPayload(
+                                    "검증된 사실을 인용한 분석 결과입니다.",
+                                    Severity.HIGH,
+                                    RedTeamRuleCode.RETURN_FRAMING,
+                                    List.of(),
+                                    List.of(second.chunkId(), first.chunkId()),
+                                    List.of(
+                                            new FindingPayload.EvidenceSpanPayload(
+                                                    second.chunkId(), second.chunkText()),
+                                            new FindingPayload.EvidenceSpanPayload(
+                                                    first.chunkId(), first.chunkText())),
+                                    List.of(factId),
+                                    "검증된 사실을 기준으로 설명하세요.")));
+                });
+
+        Long analysisId = createAnalysis();
+        Long executionId = jdbc.queryForObject(
+                "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
+                Long.class,
+                analysisId);
+        Long findingId = jdbc.queryForObject(
+                "SELECT id FROM findings WHERE analysis_execution_id = ?", Long.class, executionId);
+        List<Map<String, Object>> anchors = jdbc.queryForList("""
+                SELECT id, source_role, source_document_id, source_revision_id, evidence_document_id,
+                       retrieved_chunk_id, source_hash, page_number, utf8_start_offset,
+                       utf8_end_offset, excerpt_hash, exact_excerpt
+                FROM finding_evidence_anchors
+                WHERE finding_id = ?
+                ORDER BY source_role, id
+                """, findingId);
+        assertThat(anchors)
+                .extracting(
+                        anchor -> anchor.get("source_role"),
+                        anchor -> anchor.get("source_document_id"),
+                        anchor -> anchor.get("evidence_document_id"))
+                .containsExactly(
+                        tuple("DOCUMENT_CLAIM", confirmedDocumentId, null),
+                        tuple("POLICY_REQUIREMENT", null, 2L),
+                        tuple("POLICY_REQUIREMENT", null, 1L));
+        assertThat(anchors.subList(1, anchors.size()))
+                .extracting(anchor -> anchor.get("exact_excerpt"))
+                .containsExactly(
+                        TEST_RETRIEVED_CONTEXTS.get(2L),
+                        TEST_RETRIEVED_CONTEXTS.get(1L));
+        Map<String, Object> documentClaim = anchors.getFirst();
+        assertThat(documentClaim)
+                .containsEntry("source_hash", TEST_DOCUMENT_SOURCE_HASH)
+                .containsEntry("page_number", 1)
+                .containsEntry("utf8_start_offset", 0L)
+                .containsEntry(
+                        "utf8_end_offset",
+                        (long) "정책에 비추어 검토할 확정 문서 주장".getBytes(StandardCharsets.UTF_8).length)
+                .containsEntry("excerpt_hash", sha256("정책에 비추어 검토할 확정 문서 주장"))
+                .containsEntry("exact_excerpt", "정책에 비추어 검토할 확정 문서 주장");
+        assertThat(documentClaim.get("source_revision_id")).isEqualTo(jdbc.queryForObject("""
+                SELECT id FROM document_source_revisions
+                WHERE product_document_id = ? AND source_hash = ?
+                """, Long.class, confirmedDocumentId, TEST_DOCUMENT_SOURCE_HASH));
+        Long reviewId = createReview(analysisId);
+        decideReview(reviewId, "APPROVED", List.of(findingId));
+
+        Map<String, Object> scored = jdbc.queryForMap("""
+                SELECT id, state, score_value, policy_version, input_fingerprint
+                FROM risk_score_runs
+                WHERE analysis_execution_id = ? AND state = 'SCORED'
+                """, executionId);
+        assertThat(scored)
+                .containsEntry("state", "SCORED")
+                .containsEntry("score_value", 64)
+                .containsEntry("policy_version", EvidenceRiskScorePolicyV1.VERSION);
+        assertThat(scored.get("input_fingerprint").toString()).matches("[0-9a-f]{64}");
+        assertThat(jdbc.queryForMap("""
+                SELECT policy_rule_id, magnitude_basis_points, likelihood_basis_points,
+                       contribution_basis_points
+                FROM risk_score_ledger_entries
+                WHERE risk_score_run_id = ?
+                """, scored.get("id")))
+                .containsEntry("policy_rule_id", "RETURN_FRAMING")
+                .containsEntry("magnitude_basis_points", 8000)
+                .containsEntry("likelihood_basis_points", 8000)
+                .containsEntry("contribution_basis_points", 6400);
+        Map<String, Object> anchorIds = jdbc.queryForMap("""
+                SELECT document_claim_anchor_id, policy_requirement_anchor_id
+                FROM risk_score_ledger_entries
+                WHERE risk_score_run_id = ?
+                """, scored.get("id"));
+        Long canonicalPolicyAnchorId = anchors.stream()
+                .filter(anchor -> "POLICY_REQUIREMENT".equals(anchor.get("source_role")))
+                .map(anchor -> ((Number) anchor.get("id")).longValue())
+                .min(Long::compareTo)
+                .orElseThrow();
+        assertThat(((Number) anchorIds.get("policy_requirement_anchor_id")).longValue())
+                .isEqualTo(canonicalPolicyAnchorId);
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.riskScore").doesNotExist())
+                .andExpect(jsonPath("$.score.state").value("SCORED"))
+                .andExpect(jsonPath("$.score.policyVersion").value(EvidenceRiskScorePolicyV1.VERSION))
+                .andExpect(jsonPath("$.score.value").value(64))
+                .andExpect(jsonPath("$.score.notScoredReason").isEmpty())
+                .andExpect(jsonPath("$.score.ledgerEntries.length()").value(1))
+                .andExpect(jsonPath("$.score.ledgerEntries[0].findingId").value(findingId))
+                .andExpect(jsonPath("$.score.ledgerEntries[0].policyRuleCode").value("RETURN_FRAMING"))
+                .andExpect(jsonPath("$.score.ledgerEntries[0].magnitudeBasisPoints").value(8000))
+                .andExpect(jsonPath("$.score.ledgerEntries[0].likelihoodBasisPoints").value(8000))
+                .andExpect(jsonPath("$.score.ledgerEntries[0].contributionBasisPoints").value(6400))
+                .andExpect(jsonPath("$.score.ledgerEntries[0].documentClaimAnchorId")
+                        .value(((Number) anchorIds.get("document_claim_anchor_id")).longValue()))
+                .andExpect(jsonPath("$.score.ledgerEntries[0].policyRequirementAnchorId")
+                        .value(((Number) anchorIds.get("policy_requirement_anchor_id")).longValue()));
+
+        Long firstRunId = ((Number) scored.get("id")).longValue();
+        assertThat(evidenceRiskScoreService.scoreAfterReview(reviewId).getId()).isEqualTo(firstRunId);
+        assertThat(evidenceRiskScoreService.scoreAfterReview(reviewId).getId()).isEqualTo(firstRunId);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM risk_score_runs
+                WHERE analysis_execution_id = ? AND state = 'SCORED'
+                """, Long.class, executionId)).isEqualTo(1L);
+        assertThat(jdbc.queryForObject(
+                "SELECT risk_score FROM analyses WHERE id = ?", Integer.class, analysisId))
+                .isEqualTo(64);
+    }
+
+    @Test
+    @DisplayName("#85: noisy-OR는 순서 불변이고 중간 반올림 없이 마지막에만 반올림한다")
+    void policyNoisyOrHasStableScoreInvariants() {
+        assertThat(EvidenceRiskScorePolicyV1.components(RedTeamRuleCode.RETURN_FRAMING))
+                .isEqualTo(new EvidenceRiskScorePolicyV1.Components(8000, 8000));
+        assertThat(EvidenceRiskScorePolicyV1.components(RedTeamRuleCode.LOSS_SOFTENING))
+                .isEqualTo(new EvidenceRiskScorePolicyV1.Components(10_000, 8000));
+        assertThat(EvidenceRiskScorePolicyV1.components(RedTeamRuleCode.COST_OMISSION))
+                .isEqualTo(new EvidenceRiskScorePolicyV1.Components(8000, 8000));
+        assertThat(EvidenceRiskScorePolicyV1.components(RedTeamRuleCode.STABILITY_KEYWORD))
+                .isEqualTo(new EvidenceRiskScorePolicyV1.Components(10_000, 10_000));
+        assertThat(EvidenceRiskScorePolicyV1.components(RedTeamRuleCode.FORMAL_CONFIRMATION))
+                .isEqualTo(new EvidenceRiskScorePolicyV1.Components(6000, 6000));
+        assertThat(EvidenceRiskScorePolicyV1.components(RedTeamRuleCode.COGNITIVE_ACCESSIBILITY))
+                .isEqualTo(new EvidenceRiskScorePolicyV1.Components(6000, 6000));
+        assertThat(EvidenceRiskScorePolicyV1.aggregate(List.of(6400, 8000, 3600)))
+                .isEqualTo(EvidenceRiskScorePolicyV1.aggregate(List.of(3600, 6400, 8000)))
+                .isEqualTo(95);
+        assertThat(EvidenceRiskScorePolicyV1.aggregate(List.of(6400))).isEqualTo(64);
+        assertThat(EvidenceRiskScorePolicyV1.aggregate(List.of(6400, 8000))).isEqualTo(93);
+        assertThat(EvidenceRiskScorePolicyV1.aggregate(List.of(10_000))).isEqualTo(100);
+    }
+
+    @Test
+    @DisplayName("#85: provider 점수·severity·persona·similarity·원문이 달라도 같은 rule은 같은 점수다")
+    void prohibitedProviderInputsDoNotChangePolicyScore() throws Exception {
+        Long firstFactId = confirmFact("첫 번째 확정 주장", "VERIFIED");
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    AnalysisRequest.RetrievedContextPayload context =
+                            request.retrievedContexts().getFirst();
+                    return new AnalysisResult(3, "model-a", "prompt-a", List.of(new FindingPayload(
+                            "낮은 severity의 첫 원문",
+                            Severity.LOW,
+                            RedTeamRuleCode.RETURN_FRAMING,
+                            List.of(PersonaCode.LIMITED_PRODUCT_FAMILIARITY),
+                            List.of(context.chunkId()),
+                            List.of(new FindingPayload.EvidenceSpanPayload(
+                                    context.chunkId(), context.chunkText())),
+                            List.of(firstFactId),
+                            "첫 권고")));
+                });
+        Long firstAnalysisId = createAnalysis(
+                confirmedDocumentId,
+                List.of(1),
+                List.of(LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID),
+                null);
+
+        Long secondDocumentId = insertDocument(true);
+        Long secondFactId = confirmFact(secondDocumentId, "두 번째 확정 주장은 원문도 다름", "VERIFIED");
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    AnalysisRequest.RetrievedContextPayload context =
+                            request.retrievedContexts().getLast();
+                    return new AnalysisResult(99, "model-b", "prompt-b", List.of(new FindingPayload(
+                            "높은 severity의 완전히 다른 원문",
+                            Severity.HIGH,
+                            RedTeamRuleCode.RETURN_FRAMING,
+                            List.of(
+                                    PersonaCode.LOSS_RECOVERY_PRESSURE,
+                                    PersonaCode.LIMITED_PRODUCT_FAMILIARITY),
+                            List.of(context.chunkId()),
+                            List.of(new FindingPayload.EvidenceSpanPayload(
+                                    context.chunkId(), context.chunkText())),
+                            List.of(secondFactId),
+                            "다른 권고")));
+                });
+        Long secondAnalysisId = createAnalysis(
+                secondDocumentId,
+                List.of(1, 2),
+                List.of(LOSS_RECOVERY_PRESSURE_PERSONA_ID, LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID),
+                null);
+
+        for (Long analysisId : List.of(firstAnalysisId, secondAnalysisId)) {
+            Long executionId = jdbc.queryForObject(
+                    "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
+                    Long.class,
+                    analysisId);
+            Long findingId = jdbc.queryForObject(
+                    "SELECT id FROM findings WHERE analysis_execution_id = ?", Long.class, executionId);
+            decideReview(createReview(analysisId), "APPROVED", List.of(findingId));
+        }
+
+        assertThat(jdbc.queryForList("""
+                SELECT run.score_value
+                FROM risk_score_runs run
+                JOIN analysis_executions execution ON execution.id = run.analysis_execution_id
+                WHERE execution.analysis_id IN (?, ?) AND run.state = 'SCORED'
+                ORDER BY execution.analysis_id
+                """, Integer.class, firstAnalysisId, secondAnalysisId))
+                .containsExactly(64, 64);
+        assertThat(jdbc.queryForList("""
+                SELECT provider_risk_score
+                FROM analysis_executions
+                WHERE analysis_id IN (?, ?)
+                ORDER BY analysis_id
+                """, Integer.class, firstAnalysisId, secondAnalysisId))
+                .containsExactly(3, 99);
+    }
+
+    @Test
+    @DisplayName("#85: reviewer 반려는 숫자 0 대신 NOT_SCORED를 만든다")
+    void rejectedReviewCreatesNotScored() throws Exception {
+        Long analysisId = createAnalysis();
+        Long executionId = jdbc.queryForObject(
+                "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
+                Long.class,
+                analysisId);
+        Long reviewId = createReview(analysisId);
+        decideReview(reviewId, "REJECTED", List.of());
+
+        assertThat(jdbc.queryForMap("""
+                SELECT state, score_value, not_scored_reason
+                FROM risk_score_runs
+                WHERE analysis_execution_id = ? AND state = 'NOT_SCORED'
+                """, executionId))
+                .containsEntry("state", "NOT_SCORED")
+                .containsEntry("score_value", null)
+                .containsEntry("not_scored_reason", "REVIEW_REJECTED");
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.score.state").value("NOT_SCORED"))
+                .andExpect(jsonPath("$.score.policyVersion").value(EvidenceRiskScorePolicyV1.VERSION))
+                .andExpect(jsonPath("$.score.value").isEmpty())
+                .andExpect(jsonPath("$.score.notScoredReason").value("REVIEW_REJECTED"))
+                .andExpect(jsonPath("$.score.ledgerEntries").isEmpty());
+    }
+
+    @Test
+    @DisplayName("#85: 승인 Finding의 source anchor가 없으면 0점이 아니라 NOT_SCORED다")
+    void approvedFindingMissingRequiredAnchorIsNotScored() throws Exception {
+        Long analysisId = createAnalysis();
+        Long executionId = jdbc.queryForObject(
+                "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
+                Long.class,
+                analysisId);
+        Long findingId = jdbc.queryForObject(
+                "SELECT id FROM findings WHERE analysis_execution_id = ?", Long.class, executionId);
+        Long reviewId = createReview(analysisId);
+        decideReview(reviewId, "APPROVED", List.of(findingId));
+
+        assertThat(jdbc.queryForMap("""
+                SELECT state, score_value, not_scored_reason
+                FROM risk_score_runs
+                WHERE analysis_execution_id = ? AND state = 'NOT_SCORED'
+                """, executionId))
+                .containsEntry("state", "NOT_SCORED")
+                .containsEntry("score_value", null)
+                .containsEntry("not_scored_reason", "REQUIRED_ANCHOR_CARDINALITY");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM risk_score_ledger_entries ledger
+                JOIN risk_score_runs run ON run.id = ledger.risk_score_run_id
+                WHERE run.analysis_execution_id = ?
+                """, Long.class, executionId)).isZero();
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.score.state").value("NOT_SCORED"))
+                .andExpect(jsonPath("$.score.value").isEmpty())
+                .andExpect(jsonPath("$.score.notScoredReason").value("REQUIRED_ANCHOR_CARDINALITY"))
+                .andExpect(jsonPath("$.score.ledgerEntries").isEmpty());
+    }
+
+    @Test
+    @DisplayName("#85: cited fact가 원문에서 모호하면 claim anchor를 만들지 않고 NOT_SCORED다")
+    void approvedFindingWithAmbiguousFactAnchorIsNotScored() throws Exception {
+        String sourceText = "반복된 문서 주장 / 반복된 문서 주장";
+        Long factId = confirmFact(sourceText, "CANDIDATE");
+        jdbc.update("""
+                UPDATE ground_truth_facts
+                SET value = '반복된 문서 주장',
+                    verification_status = 'VERIFIED',
+                    decided_by = 1,
+                    decided_at = NOW()
+                WHERE id = ?
+                """, factId);
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultCiting(request, factId));
+
+        Long analysisId = createAnalysis();
+        Long executionId = jdbc.queryForObject(
+                "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
+                Long.class,
+                analysisId);
+        Long findingId = jdbc.queryForObject(
+                "SELECT id FROM findings WHERE analysis_execution_id = ?", Long.class, executionId);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM finding_evidence_anchors
+                WHERE finding_id = ? AND source_role = 'DOCUMENT_CLAIM'
+                """, Long.class, findingId)).isZero();
+        Long reviewId = createReview(analysisId);
+        decideReview(reviewId, "APPROVED", List.of(findingId));
+
+        assertThat(jdbc.queryForMap("""
+                SELECT state, score_value, not_scored_reason
+                FROM risk_score_runs
+                WHERE analysis_execution_id = ? AND state = 'NOT_SCORED'
+                """, executionId))
+                .containsEntry("state", "NOT_SCORED")
+                .containsEntry("score_value", null)
+                .containsEntry("not_scored_reason", "REQUIRED_ANCHOR_CARDINALITY");
+    }
+
+    @Test
     @DisplayName("#46: 같은 키와 정규화된 같은 요청은 최초 CREATED 응답을 재생하고 부수 효과를 반복하지 않는다")
     void sameIdempotencyKeyReplaysCreatedResponse() throws Exception {
         FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
@@ -605,7 +1024,13 @@ class AnalysisApiTest extends IntegrationTestSupport {
         String firstBody = mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                                 .header("X-Demo-Scenario", "  ORIGINAL_SCENARIO  ")
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content(request(confirmedDocumentId, List.of(2, 1, 2), List.of(2, 1, 2)))),
+                                .content(request(
+                                        confirmedDocumentId,
+                                        List.of(2, 1, 2),
+                                        List.of(
+                                                LOSS_RECOVERY_PRESSURE_PERSONA_ID,
+                                                LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID,
+                                                LOSS_RECOVERY_PRESSURE_PERSONA_ID)))),
                         key), firstTraceId))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status").value("CREATED"))
@@ -616,7 +1041,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
         String replayBody = mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                                 .header("X-Demo-Scenario", "ORIGINAL_SCENARIO")
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2)))),
+                                .content(request(confirmedDocumentId, List.of(1, 2), DEFAULT_PERSONA_IDS))),
                         key), replayTraceId))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status").value("CREATED"))
@@ -637,13 +1062,19 @@ class AnalysisApiTest extends IntegrationTestSupport {
         String key = "analysis-conflict-key";
         mockMvc.perform(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1)))), key))
+                        .content(request(
+                                confirmedDocumentId,
+                                List.of(1),
+                                List.of(LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID)))), key))
                 .andExpect(status().isAccepted());
 
         String traceId = "analysis-key-reused";
         mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content(request(confirmedDocumentId, List.of(2), List.of(1)))),
+                                .content(request(
+                                        confirmedDocumentId,
+                                        List.of(2),
+                                        List.of(LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID)))),
                         key), traceId))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("IDEMPOTENCY_KEY_REUSED"));
@@ -675,7 +1106,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 String body = mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content(request(
-                                                confirmedDocumentId, List.of(1, 2), List.of(1, 2)))),
+                                                confirmedDocumentId, List.of(1, 2), DEFAULT_PERSONA_IDS))),
                                 key), traceId))
                         .andExpect(status().isAccepted())
                         .andExpect(jsonPath("$.status").value("CREATED"))
@@ -712,12 +1143,18 @@ class AnalysisApiTest extends IntegrationTestSupport {
         String key = "actor-scoped-key";
         mockMvc.perform(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1)))), key))
+                        .content(request(
+                                confirmedDocumentId,
+                                List.of(1),
+                                List.of(LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID)))), key))
                 .andExpect(status().isAccepted());
 
         mockMvc.perform(withIdempotencyKey(asReviewer(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1)))), key))
+                        .content(request(
+                                confirmedDocumentId,
+                                List.of(1),
+                                List.of(LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID)))), key))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
 
@@ -734,7 +1171,10 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @Test
     @DisplayName("#46: 생성 요청의 Idempotency-Key는 필수이며 blank 또는 255자를 넘을 수 없다")
     void createRequiresValidIdempotencyKey() throws Exception {
-        String body = request(confirmedDocumentId, List.of(1), List.of(1));
+        String body = request(
+                confirmedDocumentId,
+                List.of(1),
+                List.of(LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID));
 
         mockMvc.perform(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -784,7 +1224,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
         assertThat(request.scenarioCode()).isEqualTo("GUARANTEE_MISUNDERSTANDING_HIGH");
         assertThat(request.redTeamPackCode()).isEqualTo("CORE_FINANCIAL_RISK_V1");
         assertThat(request.ruleCodes()).hasSize(6);
-        assertThat(request.personaCodes()).hasSize(2);
+        assertThat(request.personaCodes()).containsExactlyElementsOf(DEFAULT_PERSONA_CODES);
         assertThat(request.selectedEvidenceDocumentIds()).containsExactly(1L, 2L);
         assertThat(request.retrievedContexts())
                 .extracting(
@@ -1026,7 +1466,10 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
         mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(documentId, List.of(1), List.of(1))))), traceId))
+                        .content(request(
+                                documentId,
+                                List.of(1),
+                                List.of(LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID))))), traceId))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("DOCUMENT_NOT_CONFIRMED"))
                 .andExpect(jsonPath("$.traceId").isNotEmpty());
@@ -1034,27 +1477,52 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("Persona 를 5개 선택하면 400 INVALID_SELECTION_COUNT")
-    void invalidSelectionCount() throws Exception {
-        String traceId = "analysis-invalid-selection";
+    @DisplayName("활성 상황 Persona 5개 선택은 분석 요청에 포함되어 202로 수락된다")
+    void acceptsFiveActiveSituationPersonas() throws Exception {
+        mockMvc.perform(withIdempotencyKey(asPm(post("/api/analyses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request(confirmedDocumentId, List.of(1), FIVE_ACTIVE_PERSONA_IDS)))))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("CREATED"));
+
+        assertThat(((FakeRiskAnalysisProvider) provider).lastRequest().personaCodes())
+                .containsExactlyElementsOf(FIVE_ACTIVE_PERSONA_CODES);
+    }
+
+    @Test
+    @DisplayName("Persona 를 선택하지 않으면 400 INVALID_SELECTION_COUNT")
+    void requiresAtLeastOnePersona() throws Exception {
+        String traceId = "analysis-no-persona";
         mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1, 2, 3, 4, 5))))), traceId))
+                        .content(request(confirmedDocumentId, List.of(1), List.of())))), traceId))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errorCode").value("INVALID_SELECTION_COUNT"));
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
         assertNoAudit(traceId);
     }
 
     @Test
-    @DisplayName("Persona 4개 선택은 분석 요청에 포함되어 202로 수락된다")
-    void acceptsFourPersonas() throws Exception {
-        mockMvc.perform(withIdempotencyKey(asPm(post("/api/analyses")
+    @DisplayName("존재하지 않는 Persona 를 선택하면 400 VALIDATION_ERROR")
+    void rejectsUnknownPersona() throws Exception {
+        String traceId = "analysis-unknown-persona";
+        mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1, 2, 3, 4))))))
-                .andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.status").value("CREATED"));
+                        .content(request(confirmedDocumentId, List.of(1), List.of(999))))), traceId))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+        assertNoAudit(traceId);
+    }
 
-        assertThat(((FakeRiskAnalysisProvider) provider).lastRequest().personaCodes()).hasSize(4);
+    @Test
+    @DisplayName("비활성 legacy Persona 를 선택하면 400 VALIDATION_ERROR")
+    void rejectsInactiveLegacyPersona() throws Exception {
+        String traceId = "analysis-inactive-persona";
+        mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request(confirmedDocumentId, List.of(1), List.of(1))))), traceId))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+        assertNoAudit(traceId);
     }
 
     @Test
@@ -1063,7 +1531,10 @@ class AnalysisApiTest extends IntegrationTestSupport {
         String traceId = "analysis-invalid-evidence";
         mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(999), List.of(1))))), traceId))
+                        .content(request(
+                                confirmedDocumentId,
+                                List.of(999),
+                                List.of(LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID))))), traceId))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_EVIDENCE_DOCUMENT"));
         assertNoAudit(traceId);
@@ -1077,7 +1548,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
         mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1, 2), List.of(1, 2))))), traceId))
+                        .content(request(confirmedDocumentId, List.of(1, 2), DEFAULT_PERSONA_IDS)))), traceId))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("DUPLICATE_ANALYSIS_REQUEST"));
         assertNoAudit(traceId);
@@ -1118,7 +1589,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
         mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
-                .andExpect(jsonPath("$.riskScore").value(82))
+                .andExpect(jsonPath("$.riskScore").isEmpty())
                 .andExpect(jsonPath("$.retryable").value(false));
         List<Map<String, Object>> executions = jdbc.queryForList("""
                 SELECT id, attempt_no, status, provider_risk_score
@@ -1199,7 +1670,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
         mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.riskScore").value(37))
+                .andExpect(jsonPath("$.riskScore").doesNotExist())
+                .andExpect(jsonPath("$.score.state").value("PENDING_REVIEW"))
+                .andExpect(jsonPath("$.score.value").isEmpty())
                 .andExpect(jsonPath("$.currentExecutionId").value(currentExecutionId))
                 .andExpect(jsonPath("$.scoreEligible").value(true))
                 .andExpect(jsonPath("$.historical").value(false))
@@ -1248,7 +1721,12 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 """, Long.class, analysisId)).isEqualTo(1L);
         mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.riskScore").isEmpty())
+                .andExpect(jsonPath("$.riskScore").doesNotExist())
+                .andExpect(jsonPath("$.score.state").value("NOT_SCORED"))
+                .andExpect(jsonPath("$.score.policyVersion").isEmpty())
+                .andExpect(jsonPath("$.score.value").isEmpty())
+                .andExpect(jsonPath("$.score.notScoredReason").value("LEGACY_RESULT"))
+                .andExpect(jsonPath("$.score.ledgerEntries").isEmpty())
                 .andExpect(jsonPath("$.currentExecutionId").isEmpty())
                 .andExpect(jsonPath("$.scoreEligible").value(false))
                 .andExpect(jsonPath("$.historical").value(true))
@@ -1338,6 +1816,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
             return new AnalysisResult(7, "stale-model", "stale-prompt", List.of(new FindingPayload(
                     "이전 execution token의 저장되면 안 되는 Finding",
                     Severity.HIGH,
+                    RedTeamRuleCode.STABILITY_KEYWORD,
                     List.of(),
                     List.of(context.chunkId()),
                     List.of(new FindingPayload.EvidenceSpanPayload(
@@ -1403,9 +1882,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 """, analysisId);
         assertThat(analysis)
                 .containsEntry("status", "COMPLETED")
-                .containsEntry("risk_score", 82)
                 .containsEntry("model_version", "mock-risk-v1")
                 .containsEntry("prompt_version", "mock-prompt-v1");
+        assertThat(analysis.get("risk_score")).isNull();
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isEqualTo(1L);
         assertThat(jdbc.queryForObject("""
@@ -1475,7 +1954,10 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
         mockMvc.perform(traced(withIdempotencyKey(asPm(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(othersDocumentId, List.of(1), List.of(1))))), traceId))
+                        .content(request(
+                                othersDocumentId,
+                                List.of(1),
+                                List.of(LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID))))), traceId))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("FORBIDDEN_OWNERSHIP"));
         assertNoAudit(traceId);
@@ -1487,7 +1969,10 @@ class AnalysisApiTest extends IntegrationTestSupport {
         String traceId = "analysis-create-wrong-role";
         mockMvc.perform(traced(withIdempotencyKey(asReviewer(post("/api/analyses")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request(confirmedDocumentId, List.of(1), List.of(1))))), traceId))
+                        .content(request(
+                                confirmedDocumentId,
+                                List.of(1),
+                                List.of(LIMITED_PRODUCT_FAMILIARITY_PERSONA_ID))))), traceId))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
         assertNoAudit(traceId);

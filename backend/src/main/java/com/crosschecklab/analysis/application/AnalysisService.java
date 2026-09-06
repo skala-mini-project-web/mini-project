@@ -9,6 +9,8 @@ import com.crosschecklab.domain.analysis.AnalysisRagRunRepository;
 import com.crosschecklab.domain.analysis.AnalysisRepository;
 import com.crosschecklab.domain.analysis.Finding;
 import com.crosschecklab.domain.analysis.FindingRepository;
+import com.crosschecklab.domain.analysis.RiskScoreRun;
+import com.crosschecklab.domain.analysis.RiskScoreRunRepository;
 import com.crosschecklab.domain.analysis.dto.AnalysisAcceptedResponse;
 import com.crosschecklab.domain.analysis.dto.AnalysisCreateRequest;
 import com.crosschecklab.domain.analysis.dto.AnalysisResultResponse;
@@ -62,6 +64,7 @@ public class AnalysisService {
     private final AnalysisGroundTruthFactSnapshotRepository factSnapshotRepository;
     private final AnalysisRagRunRepository ragRunRepository;
     private final FindingRepository findingRepository;
+    private final RiskScoreRunRepository riskScoreRunRepository;
     private final ProductDocumentRepository productDocumentRepository;
     private final EvidenceDocumentRepository evidenceDocumentRepository;
     private final PersonaTemplateRepository personaTemplateRepository;
@@ -182,6 +185,11 @@ public class AnalysisService {
                 : ragRunRepository.findByAnalysisExecutionId(currentExecutionId))
                 .orElseThrow(() -> new IllegalStateException(
                         "완료된 분석의 RAG 실행 기록이 없습니다: " + analysisId));
+        RiskScoreRun scoreRun = historical ? null : riskScoreRunRepository
+                .findAllByAnalysisExecutionIdOrderByCreatedAtDescIdDesc(currentExecutionId)
+                .stream()
+                .findFirst()
+                .orElse(null);
 
         Map<Long, PersonaCode> personaCodes = personaTemplateRepository.findAll().stream()
                 .collect(Collectors.toMap(PersonaTemplate::getId, PersonaTemplate::getCode));
@@ -191,7 +199,7 @@ public class AnalysisService {
 
         return AnalysisResultResponse.of(
                 analysis, document, groundTruthFacts, findings, personaCodes, evidenceDocuments, ragRun,
-                historical);
+                scoreRun, historical);
     }
 
     // X-Demo-Scenario 헤더가 없으면 설정의 기본 시나리오를 쓴다.

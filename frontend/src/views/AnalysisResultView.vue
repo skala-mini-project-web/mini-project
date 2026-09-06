@@ -49,7 +49,8 @@ const isRunning = computed(() => ['CREATED', 'RUNNING'].includes(status.value?.s
 const isFailed = computed(() => status.value?.status === 'FAILED')
 const isDone = computed(() => ['COMPLETED', 'IN_REVIEW'].includes(status.value?.status))
 const band = computed(() => {
-  const s = result.value?.riskScore ?? 0
+  if (result.value?.score?.state !== 'SCORED' || result.value.score.value == null) return null
+  const s = result.value.score.value
   if (s >= 70) return { tone: 'high', label: '고위험' }
   if (s >= 40) return { tone: 'med', label: '중위험' }
   if (s > 0) return { tone: 'low', label: '저위험' }
@@ -90,7 +91,10 @@ async function refreshReview() {
     const nextReview = await api.getReviewByAnalysis(props.analysisId)
     reviewInfo.value = nextReview
     reviewRequested.value = false
-    if (nextReview?.status !== 'PENDING') stopReviewRefresh()
+    if (nextReview?.status !== 'PENDING') {
+      stopReviewRefresh()
+      result.value = await api.getAnalysisResult(props.analysisId)
+    }
   } catch (e) {
     if (e?.status !== 404) stopReviewRefresh()
   }
@@ -234,20 +238,35 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
         </GButton>
       </div>
 
-      <div class="score" :class="`b-${band.tone}`">
-        <div class="score-num">
-          <span class="mono sn">{{ result.riskScore }}</span>
-          <span class="mono su">/100</span>
-        </div>
-        <div class="score-mid">
-          <span class="band" :class="`tone-${band.tone}`">{{ band.label }}</span>
-          <GProgress class="score-bar" :value="result.riskScore" :tone="band.tone" />
-          <div class="score-src">
-            <span class="t-sm soft"><PhFileText :size="14" /> {{ result.sourceDocument?.fileName }}</span>
-            <span class="t-sm mute"><PhScales :size="14" /> 선택 근거 문서 {{ result.groundingDocuments?.length || 0 }}건</span>
+      <div class="score" :class="band ? `b-${band.tone}` : 'score-unavailable'">
+        <template v-if="result.score?.state === 'SCORED' && band">
+          <div class="score-num">
+            <span class="mono sn">{{ result.score.value }}</span>
+            <span class="mono su">/100</span>
           </div>
+          <div class="score-mid">
+            <div class="score-state">
+              <span class="band" :class="`tone-${band.tone}`">{{ band.label }}</span>
+              <span class="mono t-xs mute">SCORED · Policy v1 ({{ result.score.policyVersion }})</span>
+            </div>
+            <GProgress class="score-bar" :value="result.score.value" :tone="band.tone" />
+            <div class="score-src">
+              <span class="t-sm soft"><PhFileText :size="14" /> {{ result.sourceDocument?.fileName }}</span>
+              <span class="t-sm mute"><PhScales :size="14" /> 선택 근거 문서 {{ result.groundingDocuments?.length || 0 }}건</span>
+            </div>
+          </div>
+        </template>
+        <div v-else-if="result.score?.state === 'PENDING_REVIEW'" class="score-mid score-message">
+          <span class="band tone-med">검토 필요</span>
+          <strong>점수를 산출하려면 사람의 검토가 필요합니다.</strong>
+          <span class="mono t-xs mute">PENDING_REVIEW · Policy v1 ({{ result.score.policyVersion }})</span>
         </div>
-        <div v-if="canManage" class="score-act">
+        <div v-else class="score-mid score-message">
+          <span class="band">점수 미산출</span>
+          <strong>이 결과에는 표시할 위험 점수가 없습니다.</strong>
+          <span class="mono t-xs mute">NOT_SCORED · {{ result.score?.notScoredReason || 'SCORE_RUN_NOT_FOUND' }}</span>
+        </div>
+        <div v-if="canManage && result.score?.state !== 'NOT_SCORED'" class="score-act">
           <template v-if="!reviewInfo && !reviewRequested">
             <p class="t-xs mute act-note">사람 승인 전까지 승격되지 않습니다.</p>
             <GButton variant="primary" @click="openReviewRequest"><template #icon><PhClipboardText :size="15" /></template>검토 요청</GButton>
@@ -268,14 +287,23 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
         <p v-if="reviewInfo.status === 'APPROVED' && reviewInfo.riskPatternIds?.length" class="t-xs mute mono">승격된 패턴: {{ reviewInfo.riskPatternIds.join(', ') }}</p>
       </div>
 
-      <section v-if="result.scoreBreakdown" class="grounding">
-        <div class="fh"><h2 class="d-h3">점수 산출 근거</h2><span class="mono mute">{{ result.scoreBreakdown.scorePolicyVersion }}</span></div>
-        <div class="chips">
-          <GBadge tone="neutral">심각도 {{ result.scoreBreakdown.severityBase }}</GBadge>
-          <GBadge tone="neutral">Persona {{ result.scoreBreakdown.personaBonus }}</GBadge>
-          <GBadge tone="neutral">규칙 {{ result.scoreBreakdown.ruleBonus }}</GBadge>
-          <GBadge tone="neutral">근거 {{ result.scoreBreakdown.groundingBonus }}</GBadge>
-        </div>
+      <section v-if="result.score?.state === 'SCORED'" class="grounding">
+        <div class="fh"><h2 class="d-h3">점수 산출 원장</h2><span class="mono mute">Policy v1 · {{ result.score.policyVersion }}</span></div>
+        <ol class="score-ledger">
+          <li v-for="entry in result.score.ledgerEntries" :key="`${entry.findingId}-${entry.documentClaimAnchorId}-${entry.policyRuleCode}`" class="ledger-entry">
+            <div class="frow">
+              <GBadge tone="neutral">{{ entry.policyRuleCode }}</GBadge>
+              <span class="mono t-xs mute">Finding {{ entry.findingId }}</span>
+              <strong class="mono ledger-contribution">{{ entry.contributionBasisPoints }} bp</strong>
+            </div>
+            <dl class="ledger-values">
+              <div><dt>M</dt><dd class="mono">{{ entry.magnitudeBasisPoints }} bp</dd></div>
+              <div><dt>L</dt><dd class="mono">{{ entry.likelihoodBasisPoints }} bp</dd></div>
+              <div><dt>문서 주장 Anchor</dt><dd class="mono">{{ entry.documentClaimAnchorId }}</dd></div>
+              <div><dt>정책 요구 Anchor</dt><dd class="mono">{{ entry.policyRequirementAnchorId }}</dd></div>
+            </dl>
+          </li>
+        </ol>
       </section>
 
       <section v-if="result.personaSummaries?.length" class="grounding">
@@ -410,7 +438,7 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 
       <section v-if="result.provenance" class="grounding">
         <div class="fh"><h2 class="d-h3">Provenance</h2></div>
-        <p class="mono t-xs soft"><template v-if="result.provenance.providerType !== 'MOCK'">{{ result.provenance.providerType }} · {{ result.provenance.modelVersion }} · </template>prompt {{ result.provenance.promptVersion }} · schema {{ result.provenance.outputSchemaVersion }} · score {{ result.provenance.scorePolicyVersion }} · taxonomy {{ result.provenance.taxonomyVersion }}</p>
+        <p class="mono t-xs soft"><template v-if="result.provenance.providerType !== 'MOCK'">{{ result.provenance.providerType }} · {{ result.provenance.modelVersion }} · </template>prompt {{ result.provenance.promptVersion }} · schema {{ result.provenance.outputSchemaVersion }} · taxonomy {{ result.provenance.taxonomyVersion }}</p>
       </section>
     </template>
 
@@ -458,6 +486,8 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .b-high .sn { color: var(--risk-high); } .b-med .sn { color: var(--risk-med); } .b-low .sn { color: var(--ink); } .b-ok .sn { color: var(--ok); }
 .su { font-size: var(--text-lg); color: var(--ink-faint); }
 .score-mid { display: flex; flex-direction: column; gap: var(--s-12); min-width: 0; }
+.score-state { display: flex; align-items: center; gap: var(--s-10); flex-wrap: wrap; }
+.score-message { grid-column: span 2; }
 .band { align-self: flex-start; color: var(--fg); background: var(--bg); font-size: var(--text-xs); font-weight: var(--fw-semibold); padding: 4px 9px; border-radius: var(--r-xs); }
 .score-src { display: flex; gap: var(--s-20); flex-wrap: wrap; }
 .score-src span { display: inline-flex; align-items: center; gap: 6px; }
@@ -488,6 +518,12 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .rr-comment { color: var(--ink); line-height: 1.6; }
 .grounding { margin-top: var(--s-32); }
 .grounding > .fh { margin-top: 0; }
+.score-ledger { list-style: none; }
+.ledger-entry { padding: var(--s-16) var(--s-8); border-bottom: 1px solid var(--line); }
+.ledger-contribution { margin-left: auto; }
+.ledger-values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-12); margin-top: var(--s-12); }
+.ledger-values dt { color: var(--ink-mute); font-size: var(--text-xs); }
+.ledger-values dd { margin-top: 4px; font-size: var(--text-xs); overflow-wrap: anywhere; }
 .glist { list-style: none; margin-top: var(--s-12); }
 .grow { display: flex; align-items: center; gap: var(--s-12); padding: var(--s-12) var(--s-8); border-bottom: 1px solid var(--line); }
 .gt { font-size: 10.5px; letter-spacing: 0.08em; color: var(--ink-mute); border: 1px solid var(--line-strong); border-radius: var(--r-xs); padding: 2px 6px; flex: none; }
@@ -510,5 +546,5 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .ev { line-height: 1.55; } .evt { color: var(--ink-mute); margin-right: 5px; font-size: 11px; }
 .reco { margin-top: var(--s-20); display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); font-size: var(--text-sm); line-height: 1.6; }
-@media (max-width: 760px) { .score { grid-template-columns: 1fr; gap: var(--s-20); } .score-act { align-items: flex-start; min-width: 0; } .act-note { white-space: normal; text-align: left; } .fmeta, .trace-meta { grid-template-columns: 1fr; } .trace-context-head { align-items: flex-start; flex-wrap: wrap; } .trace-context-head .gscore { margin-left: 0; } }
+@media (max-width: 760px) { .score { grid-template-columns: 1fr; gap: var(--s-20); } .score-message { grid-column: auto; } .score-act { align-items: flex-start; min-width: 0; } .act-note { white-space: normal; text-align: left; } .fmeta, .trace-meta, .ledger-values { grid-template-columns: 1fr; } .trace-context-head { align-items: flex-start; flex-wrap: wrap; } .trace-context-head .gscore { margin-left: 0; } }
 </style>

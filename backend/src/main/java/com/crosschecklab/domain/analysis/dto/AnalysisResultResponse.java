@@ -5,6 +5,9 @@ import com.crosschecklab.domain.analysis.AnalysisGroundTruthFactSnapshot;
 import com.crosschecklab.domain.analysis.AnalysisRagRetrievalSnapshot;
 import com.crosschecklab.domain.analysis.AnalysisRagRun;
 import com.crosschecklab.domain.analysis.Finding;
+import com.crosschecklab.domain.analysis.RiskScoreLedgerEntry;
+import com.crosschecklab.domain.analysis.RiskScoreRun;
+import com.crosschecklab.domain.analysis.RiskScoreState;
 import com.crosschecklab.domain.document.ProductDocument;
 import com.crosschecklab.domain.evidence.EvidenceDocument;
 import com.crosschecklab.global.common.enums.AnalysisStatus;
@@ -20,7 +23,7 @@ import java.util.Objects;
 public record AnalysisResultResponse(
         Long analysisId,
         AnalysisStatus status,
-        Integer riskScore,
+        ScoreView score,
         Long currentExecutionId,
         boolean scoreEligible,
         boolean historical,
@@ -60,6 +63,57 @@ public record AnalysisResultResponse(
     public record GroundTruthFactView(Long factId, String label, String value) {
     }
 
+    public record ScoreView(
+            RiskScoreState state,
+            String policyVersion,
+            Integer value,
+            String notScoredReason,
+            List<ScoreLedgerEntryView> ledgerEntries
+    ) {
+        public ScoreView {
+            ledgerEntries = List.copyOf(ledgerEntries);
+        }
+
+        public static ScoreView from(RiskScoreRun run) {
+            return new ScoreView(
+                    run.getState(),
+                    run.getPolicyVersion(),
+                    run.getScoreValue(),
+                    run.getNotScoredReason(),
+                    run.getLedgerEntries().stream().map(ScoreLedgerEntryView::from).toList());
+        }
+
+        public static ScoreView unavailable(boolean historical) {
+            return new ScoreView(
+                    RiskScoreState.NOT_SCORED,
+                    null,
+                    null,
+                    historical ? "LEGACY_RESULT" : "SCORE_RUN_NOT_FOUND",
+                    List.of());
+        }
+    }
+
+    public record ScoreLedgerEntryView(
+            Long findingId,
+            String policyRuleCode,
+            int magnitudeBasisPoints,
+            int likelihoodBasisPoints,
+            int contributionBasisPoints,
+            Long documentClaimAnchorId,
+            Long policyRequirementAnchorId
+    ) {
+        public static ScoreLedgerEntryView from(RiskScoreLedgerEntry entry) {
+            return new ScoreLedgerEntryView(
+                    entry.getFindingRevision().getId(),
+                    entry.getPolicyRuleId(),
+                    entry.getMagnitudeBasisPoints(),
+                    entry.getLikelihoodBasisPoints(),
+                    entry.getContributionBasisPoints(),
+                    entry.getDocumentClaimAnchor().getId(),
+                    entry.getPolicyRequirementAnchor().getId());
+        }
+    }
+
     public record FindingView(
             Long findingId,
             String statement,
@@ -79,11 +133,12 @@ public record AnalysisResultResponse(
                                             Map<Long, PersonaCode> personaCodes,
                                             Map<Long, EvidenceDocument> evidenceDocuments,
                                             AnalysisRagRun ragRun,
+                                            RiskScoreRun scoreRun,
                                             boolean historical) {
         return new AnalysisResultResponse(
                 analysis.getId(),
                 analysis.getStatus(),
-                historical ? null : analysis.getRiskScore(),
+                scoreRun == null ? ScoreView.unavailable(historical) : ScoreView.from(scoreRun),
                 analysis.getCurrentSuccessfulExecutionId(),
                 !historical,
                 historical,
