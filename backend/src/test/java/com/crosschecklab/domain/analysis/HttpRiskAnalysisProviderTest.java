@@ -42,16 +42,19 @@ class HttpRiskAnalysisProviderTest {
 
     private HttpServer server;
     private final AtomicReference<String> capturedRequest = new AtomicReference<>();
+    private final AtomicReference<String> capturedAccept = new AtomicReference<>();
     private int status = 200;
     private String responseBody = SUCCESS_BODY;
+    private String responseContentType = "application/json";
 
     @BeforeEach
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/internal/v1/risk-analyses", exchange -> {
             capturedRequest.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            capturedAccept.set(exchange.getRequestHeaders().getFirst("Accept"));
             byte[] body = responseBody.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.getResponseHeaders().add("Content-Type", responseContentType);
             exchange.sendResponseHeaders(status, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
@@ -94,8 +97,8 @@ class HttpRiskAnalysisProviderTest {
     }
 
     @Test
-    @DisplayName("정상 응답을 AnalysisResult 로 읽고, 요청은 ai-service 계약 필드로 직렬화된다")
-    void success() {
+    @DisplayName("application/json 정상 응답을 AnalysisResult 로 읽고, 요청은 ai-service 계약 필드로 직렬화된다")
+    void applicationJsonResponseIsParsed() {
         AnalysisResult result = provider().analyze(request());
 
         assertThat(result.riskScore()).isEqualTo(82);
@@ -118,6 +121,24 @@ class HttpRiskAnalysisProviderTest {
                         "\"sourceType\"", "\"chunkText\":\"원금손실 가능성은 인접 표시\"");
         assertThat(capturedRequest.get()).contains("\"knownFacts\"", "\"factId\":7");
         assertThat(capturedRequest.get()).doesNotContain("\"evidenceDocuments\"", "\"content\"");
+        assertThat(capturedAccept.get()).isEqualTo("application/json");
+    }
+
+    @Test
+    @DisplayName("application/octet-stream 원시 응답 본문의 JSON도 AnalysisResult 로 읽는다")
+    void rawOctetStreamJsonResponseIsParsed() {
+        responseContentType = "application/octet-stream";
+
+        AnalysisResult result = provider().analyze(request());
+
+        assertThat(result.riskScore()).isEqualTo(82);
+        assertThat(result.modelVersion()).isEqualTo("mock-risk-v1");
+        assertThat(result.findings()).singleElement().satisfies(finding -> {
+            assertThat(finding.retrievedContextChunkIds()).containsExactly(11L);
+            assertThat(finding.evidenceSpans()).singleElement().satisfies(span ->
+                    assertThat(span.excerpt()).isEqualTo("원금손실 가능성"));
+        });
+        assertThat(capturedAccept.get()).isEqualTo("application/json");
     }
 
     @Test
@@ -345,8 +366,9 @@ class HttpRiskAnalysisProviderTest {
     }
 
     @Test
-    @DisplayName("응답을 계약대로 읽지 못하면 계약 위반으로 끊는다")
-    void undeserializableResponseIsRejected() {
+    @DisplayName("application/octet-stream 응답의 본문이 JSON이 아니면 계약 위반으로 끊는다")
+    void invalidOctetStreamResponseIsRejected() {
+        responseContentType = "application/octet-stream";
         responseBody = "{\"riskScore\": ";
 
         assertThatThrownBy(() -> provider().analyze(request()))

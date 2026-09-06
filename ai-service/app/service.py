@@ -11,7 +11,10 @@ from app.errors import AiServiceError
 from app.fixture_loader import FixtureLoader
 from app.schemas import (
     AnalysisProvider,
+    EvidenceSpan,
+    FindingPayload,
     HealthResponse,
+    OllamaRiskAnalysisResponse,
     RiskAnalysisRequest,
     RiskAnalysisResponse,
 )
@@ -48,7 +51,7 @@ class ProviderResponseInvalidError(AiServiceError):
 
 
 class RiskAnalysisService:
-    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v10"
+    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v11"
     MAX_REPAIR_EXCERPTS_PER_CHUNK = 3
     MAX_REPAIR_EXCERPT_CHARS = 400
     MAX_REPAIR_EXCERPT_BYTES = 12_000
@@ -149,7 +152,9 @@ class RiskAnalysisService:
     def _analyze_with_ollama(
         self, request: RiskAnalysisRequest
     ) -> RiskAnalysisResponse:
-        response_schema = RiskAnalysisResponse.model_json_schema(by_alias=True)
+        response_schema = OllamaRiskAnalysisResponse.model_json_schema(
+            by_alias=True
+        )
         system_prompt = (
             "You are a financial-product sales risk analyst. Return only JSON "
             "that conforms exactly to the supplied JSON schema. Analyze only "
@@ -159,17 +164,14 @@ class RiskAnalysisService:
             "retrievedContextChunkIds entry must be a chunkId selected exactly "
             "from retrievedContexts. Use only chunkId values present in "
             "retrievedContexts; never invent, alter, or substitute an ID. "
-            "For every cited chunkId, include at least one evidenceSpans entry "
-            "whose chunkId is that cited ID and whose excerpt is a nonblank, "
-            "exact contiguous substring copied verbatim from that chunk's "
-            "chunkText. Preserve its whitespace, punctuation, and casing. "
-            "Every evidence span must refer to a cited chunk, and duplicate "
-            "spans are forbidden. "
-            "Return exactly one fully grounded finding. Its evidenceSpans "
-            "excerpts must each exactly match one of the "
-            "allowedEvidenceExcerptOptions supplied in the user message for "
-            "the same chunkId. Do not combine, shorten, rewrite, or extend an "
-            "allowed option. "
+            "Return exactly one fully grounded finding. For every cited "
+            "chunkId, select at least one evidenceSpanOptionIds value whose "
+            "option has that chunkId. Select only exact optionId values from "
+            "allowedEvidenceSpanOptions supplied in the user message. Never "
+            "invent, alter, or duplicate an option ID, and never select an "
+            "option for an uncited chunk. Do not return evidenceSpans or any "
+            "free-text evidence excerpt; the server maps selected opaque "
+            "option IDs to exact source excerpts. "
             "Never quote confirmedText or any other product text as evidence. "
             "Do not cite unknown or unretrieved contexts. knownFactIds "
             "may contain only exact factId values supplied in knownFacts; "
@@ -182,7 +184,7 @@ class RiskAnalysisService:
         )
         user_payload = request.model_dump(mode="json", by_alias=True)
         excerpt_options = self._repair_excerpt_options(request)
-        user_payload["allowedEvidenceExcerptOptions"] = excerpt_options
+        user_payload["allowedEvidenceSpanOptions"] = excerpt_options
         serialized_options = json.dumps(
             excerpt_options,
             ensure_ascii=False,
@@ -208,11 +210,12 @@ class RiskAnalysisService:
 
         generated_json = self._call_ollama(payload)
         try:
-            response = RiskAnalysisResponse.model_validate_json(generated_json)
-            if len(response.findings) != 1:
-                raise ValueError(
-                    "An Ollama response must contain exactly one finding."
-                )
+            ollama_response = OllamaRiskAnalysisResponse.model_validate_json(
+                generated_json
+            )
+            response = self._map_ollama_response(
+                ollama_response, excerpt_options
+            )
             self._validate_grounding(request, response)
         except (ValidationError, TypeError, ValueError):
             payload["messages"].extend(
@@ -226,12 +229,13 @@ class RiskAnalysisService:
                             "response matching the same supplied schema. "
                             "Return exactly one finding, retaining the best "
                             "fully grounded finding from the prior response "
-                            "and removing all others. Its evidenceSpans "
-                            "excerpts must be copied exactly from the allowed "
-                            "source-only options below for their chunkId. "
-                            "Do not combine, shorten, rewrite, or extend an "
-                            "option. Do not invent, alter, or copy evidence "
-                            "from confirmedText or other product text. The "
+                            "and removing all others. Select only exact "
+                            "evidenceSpanOptionIds from the allowed "
+                            "source-only options below, with at least one "
+                            "selected option for every cited chunk and no "
+                            "option for an uncited chunk. Do not return "
+                            "evidenceSpans or any free-text evidence excerpt. "
+                            "Do not invent, alter, or duplicate option IDs. The "
                             "allowed options are "
                             f"{serialized_options}. "
                             "Apply all other original constraints. Return "
@@ -242,13 +246,14 @@ class RiskAnalysisService:
             )
             repaired_json = self._call_ollama(payload)
             try:
-                response = RiskAnalysisResponse.model_validate_json(
-                    repaired_json
-                )
-                if len(response.findings) != 1:
-                    raise ValueError(
-                        "A repaired response must contain exactly one finding."
+                ollama_response = (
+                    OllamaRiskAnalysisResponse.model_validate_json(
+                        repaired_json
                     )
+                )
+                response = self._map_ollama_response(
+                    ollama_response, excerpt_options
+                )
                 self._validate_grounding(request, response)
             except (ValidationError, TypeError, ValueError):
                 raise ProviderResponseInvalidError() from None
@@ -321,10 +326,74 @@ class RiskAnalysisService:
                 if context_budget == 0:
                     break
             if excerpts:
-                options.append(
-                    {"chunkId": context.chunk_id, "excerpts": excerpts}
-                )
+                for excerpt in excerpts:
+                    options.append(
+                        {
+                            "optionId": f"evidence-option-{len(options) + 1}",
+                            "chunkId": context.chunk_id,
+                            "excerpt": excerpt,
+                        }
+                    )
         return options
+
+    @staticmethod
+    def _map_ollama_response(
+        response: OllamaRiskAnalysisResponse,
+        excerpt_options: list[dict[str, Any]],
+    ) -> RiskAnalysisResponse:
+        if len(response.findings) != 1:
+            raise ValueError(
+                "An Ollama response must contain exactly one finding."
+            )
+        options_by_id = {
+            option["optionId"]: option for option in excerpt_options
+        }
+        finding = response.findings[0]
+        selected_option_ids = finding.evidence_span_option_ids
+        if len(selected_option_ids) != len(set(selected_option_ids)):
+            raise ValueError("Finding contains duplicate evidence option ids.")
+
+        cited_chunk_ids = set(finding.retrieved_context_chunk_ids)
+        selected_options: list[dict[str, Any]] = []
+        for option_id in selected_option_ids:
+            option = options_by_id.get(option_id)
+            if option is None:
+                raise ValueError(
+                    "Finding contains an unknown evidence option id."
+                )
+            if option["chunkId"] not in cited_chunk_ids:
+                raise ValueError(
+                    "Evidence option refers to an uncited context."
+                )
+            selected_options.append(option)
+
+        selected_chunk_ids = {
+            option["chunkId"] for option in selected_options
+        }
+        if selected_chunk_ids != cited_chunk_ids:
+            raise ValueError("A cited context is missing an evidence option.")
+
+        mapped_finding = FindingPayload(
+            statement=finding.statement,
+            severity=finding.severity,
+            affected_persona_codes=finding.affected_persona_codes,
+            retrieved_context_chunk_ids=finding.retrieved_context_chunk_ids,
+            evidence_spans=[
+                EvidenceSpan(
+                    chunk_id=option["chunkId"],
+                    excerpt=option["excerpt"],
+                )
+                for option in selected_options
+            ],
+            known_fact_ids=finding.known_fact_ids,
+            recommendation=finding.recommendation,
+        )
+        return RiskAnalysisResponse(
+            risk_score=response.risk_score,
+            model_version=response.model_version,
+            prompt_version=response.prompt_version,
+            findings=[mapped_finding],
+        )
 
     @classmethod
     def _is_repair_metadata_line(cls, line: str) -> bool:

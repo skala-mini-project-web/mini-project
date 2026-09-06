@@ -40,6 +40,7 @@ public class ProductDocumentService {
 
     private final ProductRepository productRepository;
     private final ProductDocumentRepository productDocumentRepository;
+    private final DocumentSourceRevisionRepository documentSourceRevisionRepository;
     private final AnalysisRepository analysisRepository;
     private final GroundTruthFactService groundTruthFactService;
     private final UserRepository userRepository;
@@ -62,12 +63,12 @@ public class ProductDocumentService {
         DocumentMediaType mediaType = validate(file, fileName);
         String scenarioCode = scenarioResolver.resolveCode(requestedScenario, fileName);
 
-        // 바이너리는 여기서 소비되고 버려진다. 남는 것은 체크섬과 mock:// 포인터뿐이다.
         StoredFile stored = fileStorage.store(file, scenarioCode);
 
         ProductDocument document = productDocumentRepository.save(ProductDocument.upload(
                 product, fileName, mediaType.contentType(),
                 stored.size(), stored.checksum(), stored.storageKey()));
+        documentSourceRevisionRepository.save(DocumentSourceRevision.initial(document));
 
         eventPublisher.publishEvent(new DocumentExtractionRequestedEvent(document.getId()));
 

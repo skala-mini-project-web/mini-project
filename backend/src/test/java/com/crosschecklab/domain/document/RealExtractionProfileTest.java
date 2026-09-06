@@ -6,17 +6,24 @@ import com.crosschecklab.domain.document.extraction.PdfBoxTextExtractor;
 import com.crosschecklab.domain.document.extraction.PptxTextExtractor;
 import com.crosschecklab.domain.document.extraction.RealDocumentTextExtractor;
 import com.crosschecklab.domain.document.extraction.TextExtractionService;
-import com.crosschecklab.domain.document.storage.BufferedFileStorage;
+import com.crosschecklab.domain.document.storage.DurableLocalFileStorage;
 import com.crosschecklab.domain.document.storage.FileStorage;
+import com.crosschecklab.domain.document.storage.StoredFile;
 import com.crosschecklab.support.IntegrationTestSupport;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 
 // real-extraction 프로파일은 평소 켜지지 않으므로 배선이 깨져도 다른 테스트가 잡아주지 못한다.
-// 구현이 Mock 과 정확히 교체되는지(중복 빈이 생기지 않는지)만 확인한다.
+// 구현이 Mock 과 정확히 교체되는지와 원본 바이트가 재시도 후에도 보존되는지 확인한다.
 @ActiveProfiles("real-extraction")
 @DisplayName("real-extraction 프로파일 배선")
 class RealExtractionProfileTest extends IntegrationTestSupport {
@@ -30,15 +37,41 @@ class RealExtractionProfileTest extends IntegrationTestSupport {
     @Autowired
     private TextExtractionService textExtractionService;
 
+    @TempDir
+    private Path temporaryStorageRoot;
+
     @Test
     @DisplayName("Mock 구현 대신 실제 추출 구현이 유일한 빈으로 등록된다")
     void swapsMockImplementations() {
-        assertThat(fileStorage).isInstanceOf(BufferedFileStorage.class);
+        assertThat(fileStorage).isInstanceOf(DurableLocalFileStorage.class);
         assertThat(textExtractionService).isInstanceOf(RealDocumentTextExtractor.class);
 
         assertThat(applicationContext.getBeansOfType(FileStorage.class)).hasSize(1);
         assertThat(applicationContext.getBeansOfType(TextExtractionService.class)).hasSize(1);
         assertThat(applicationContext.getBeansOfType(PdfBoxTextExtractor.class)).hasSize(1);
         assertThat(applicationContext.getBeansOfType(PptxTextExtractor.class)).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("원본을 내용 기반 안전한 키로 저장하고 같은 바이트를 반복해서 읽는다")
+    void preservesOriginalBytesAcrossReads() throws Exception {
+        byte[] original = "synthetic durable evidence".getBytes(StandardCharsets.UTF_8);
+        String checksum = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(original));
+        DurableLocalFileStorage storage = new DurableLocalFileStorage(temporaryStorageRoot.toString());
+        MockMultipartFile upload = new MockMultipartFile(
+                "file", "../../사용자-파일.pdf", "application/pdf", original);
+
+        StoredFile stored = storage.store(upload, "../../fixture-key");
+
+        assertThat(stored.storageKey())
+                .isEqualTo(DurableLocalFileStorage.STORAGE_KEY_PREFIX + checksum)
+                .doesNotContain("fixture-key", "사용자-파일.pdf", "..");
+        assertThat(stored.checksum()).isEqualTo(checksum);
+        assertThat(stored.size()).isEqualTo(original.length);
+        assertThat(storage.read(stored.storageKey()))
+                .hasValueSatisfying(content -> assertThat(content).containsExactly(original));
+        assertThat(storage.read(stored.storageKey()))
+                .hasValueSatisfying(content -> assertThat(content).containsExactly(original));
     }
 }

@@ -289,12 +289,7 @@ def test_rejects_provider_output_citing_unknown_known_fact(
                 "severity": "HIGH",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": [11],
-                "evidenceSpans": [
-                    {
-                        "chunkId": 11,
-                        "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
-                    }
-                ],
+                "evidenceSpanOptionIds": ["evidence-option-1"],
                 "knownFactIds": [999],
                 "recommendation": "원금 손실 가능성을 함께 고지하세요.",
             }
@@ -335,12 +330,7 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
                 "severity": "HIGH",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": [11],
-                "evidenceSpans": [
-                    {
-                        "chunkId": 11,
-                        "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
-                    }
-                ],
+                "evidenceSpanOptionIds": ["evidence-option-1"],
                 "knownFactIds": [],
                 "recommendation": "원금 손실 가능성을 함께 고지하세요.",
             }
@@ -349,9 +339,12 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
 
     def provider_response(provider_request: httpx.Request) -> httpx.Response:
         ollama_payload = json.loads(provider_request.content)
-        finding_schema = ollama_payload["format"]["$defs"]["FindingPayload"]
+        finding_schema = ollama_payload["format"]["$defs"][
+            "OllamaFindingPayload"
+        ]
         assert "retrievedContextChunkIds" in finding_schema["required"]
-        assert "evidenceSpans" in finding_schema["required"]
+        assert "evidenceSpanOptionIds" in finding_schema["required"]
+        assert "evidenceSpans" not in finding_schema["properties"]
         assert (
             finding_schema["properties"]["retrievedContextChunkIds"][
                 "minItems"
@@ -363,12 +356,13 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
         expected_analysis_request = RiskAnalysisRequest.model_validate(
             request
         ).model_dump(mode="json", by_alias=True)
-        expected_analysis_request["allowedEvidenceExcerptOptions"] = [
+        expected_analysis_request["allowedEvidenceSpanOptions"] = [
             {
+                "optionId": "evidence-option-1",
                 "chunkId": 11,
-                "excerpts": [
+                "excerpt": (
                     "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다."
-                ],
+                ),
             }
         ]
         assert user_payload == expected_analysis_request
@@ -397,10 +391,10 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
         assert "evidenceReference" not in system_prompt
         assert "Return exactly one fully grounded finding." in system_prompt
         assert (
-            "allowedEvidenceExcerptOptions supplied in the user message"
+            "allowedEvidenceSpanOptions supplied in the user message"
             in system_prompt
         )
-        assert "Do not combine, shorten, rewrite, or extend" in system_prompt
+        assert "Do not return evidenceSpans" in system_prompt
         assert (
             "Never quote confirmedText or any other product text as evidence."
             in system_prompt
@@ -420,6 +414,81 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
     response = call_api("POST", "/internal/v1/risk-analyses", json=request)
 
     assert response.status_code == 200
+    assert response.json()["findings"][0]["evidenceSpans"] == [
+        {
+            "chunkId": 11,
+            "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("cited_chunk_ids", "option_ids"),
+    [
+        ([11], ["unknown-option"]),
+        ([11], ["evidence-option-1", "evidence-option-1"]),
+        ([11], ["evidence-option-2"]),
+        ([11, 12], ["evidence-option-1"]),
+    ],
+    ids=[
+        "unknown-option-id",
+        "duplicate-option-id",
+        "option-for-uncited-chunk",
+        "citation-without-option",
+    ],
+)
+def test_rejects_invalid_ollama_evidence_option_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+    cited_chunk_ids: list[int],
+    option_ids: list[str],
+) -> None:
+    request = guarantee_request()
+    request["retrievedContexts"].append(
+        {
+            **request["retrievedContexts"][0],
+            "chunkId": 12,
+            "chunkText": "위험 고지는 홍보 표현과 함께 명확히 표시해야 합니다.",
+            "rank": 2,
+        }
+    )
+    provider_output = {
+        "riskScore": 82,
+        "modelVersion": "ignored-provider-version",
+        "promptVersion": "ignored-prompt-version",
+        "findings": [
+            {
+                "statement": "안정성 표현이 원금 손실 가능성을 가릴 수 있습니다.",
+                "severity": "HIGH",
+                "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+                "retrievedContextChunkIds": cited_chunk_ids,
+                "evidenceSpanOptionIds": option_ids,
+                "knownFactIds": [],
+                "recommendation": "원금 손실 가능성을 함께 고지하세요.",
+            }
+        ],
+    }
+    call_count = 0
+
+    def provider_response(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(
+            200,
+            json={"message": {"content": json.dumps(provider_output)}},
+        )
+
+    monkeypatch.setattr(analysis_service, "provider", AnalysisProvider.OLLAMA)
+    monkeypatch.setattr(
+        analysis_service,
+        "http_client",
+        httpx.Client(transport=httpx.MockTransport(provider_response)),
+    )
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert call_count == 2
+    assert response.status_code == 500
+    assert response.json()["errorCode"] == "AI_PROVIDER_RESPONSE_INVALID"
 
 
 def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
@@ -430,24 +499,14 @@ def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
         "severity": "HIGH",
         "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
         "retrievedContextChunkIds": [11],
-        "evidenceSpans": [
-            {
-                "chunkId": 11,
-                "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
-            }
-        ],
+        "evidenceSpanOptionIds": ["evidence-option-1"],
         "knownFactIds": [],
         "recommendation": "원금 손실 가능성을 함께 고지하세요.",
     }
     unsupported_finding = {
         **valid_finding,
         "statement": "상품 문구를 근거로 삼은 지원되지 않는 지적입니다.",
-        "evidenceSpans": [
-            {
-                "chunkId": 11,
-                "excerpt": "최근 안정적인 수익률을 기록한 투자상품입니다.",
-            }
-        ],
+        "evidenceSpanOptionIds": ["unknown-option"],
     }
     first_output = {
         "riskScore": 82,
@@ -485,8 +544,21 @@ def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
     assert response.status_code == 200
     assert response.json()["findings"] == [
         {
-            **valid_finding,
+            "statement": valid_finding["statement"],
+            "severity": "HIGH",
             "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+            "retrievedContextChunkIds": [11],
+            "evidenceSpans": [
+                {
+                    "chunkId": 11,
+                    "excerpt": (
+                        "원금손실 가능성은 안정성 표현과 인접하여 "
+                        "표시해야 합니다."
+                    ),
+                }
+            ],
+            "knownFactIds": [],
+            "recommendation": "원금 손실 가능성을 함께 고지하세요.",
         }
     ]
     assert len(provider_requests) == 2
@@ -498,14 +570,11 @@ def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
     repair_prompt = repair_messages[-1]["content"]
     assert "Return exactly one finding" in repair_prompt
     assert (
-        '"chunkId":11,"excerpts":'
-        '["원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다."]'
+        '"optionId":"evidence-option-1","chunkId":11,'
+        '"excerpt":"원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다."'
     ) in repair_prompt
-    assert (
-        "Do not combine, shorten, rewrite, or extend an option."
-        in repair_prompt
-    )
-    assert "Do not invent, alter, or copy evidence" in repair_prompt
+    assert "Do not return evidenceSpans" in repair_prompt
+    assert "Do not invent, alter, or duplicate option IDs." in repair_prompt
 
 
 def test_rejects_ollama_output_that_remains_invalid_after_one_repair(
@@ -521,24 +590,14 @@ def test_rejects_ollama_output_that_remains_invalid_after_one_repair(
                 "severity": "HIGH",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": [11],
-                "evidenceSpans": [
-                    {
-                        "chunkId": 11,
-                        "excerpt": "최근 안정적인 수익률을 기록한 투자상품입니다.",
-                    }
-                ],
+                "evidenceSpanOptionIds": ["unknown-option"],
                 "knownFactIds": [],
                 "recommendation": "원금 손실 가능성을 함께 고지하세요.",
             }
         ],
     }
     grounded_finding = deepcopy(invalid_output["findings"][0])
-    grounded_finding["evidenceSpans"] = [
-        {
-            "chunkId": 11,
-            "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
-        }
-    ]
+    grounded_finding["evidenceSpanOptionIds"] = ["evidence-option-1"]
     invalid_repair_output = {
         **invalid_output,
         "findings": [grounded_finding, deepcopy(grounded_finding)],
@@ -602,23 +661,15 @@ def test_ollama_repair_excerpt_options_are_bounded_and_exact(
                 "severity": "HIGH",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": [11],
-                "evidenceSpans": [
-                    {"chunkId": 11, "excerpt": "상품 원문의 잘못된 근거"}
-                ],
+                "evidenceSpanOptionIds": ["unknown-option"],
                 "knownFactIds": [],
                 "recommendation": "근거를 수정하세요.",
             }
         ],
     }
     repaired_output = deepcopy(invalid_output)
-    repaired_output["findings"][0]["evidenceSpans"] = [
-        {
-            "chunkId": 11,
-            "excerpt": (
-                "“안정”, “보장” 표현이 있으면 원금손실 가능성을 "
-                "같은 화면에 표시한다."
-            ),
-        }
+    repaired_output["findings"][0]["evidenceSpanOptionIds"] = [
+        "evidence-option-1"
     ]
     provider_requests: list[dict[str, Any]] = []
 
@@ -645,19 +696,26 @@ def test_ollama_repair_excerpt_options_are_bounded_and_exact(
     initial_user_payload = json.loads(
         provider_requests[0]["messages"][1]["content"]
     )
-    initial_options = initial_user_payload["allowedEvidenceExcerptOptions"]
+    initial_options = initial_user_payload["allowedEvidenceSpanOptions"]
     assert initial_options == [
         {
+            "optionId": "evidence-option-1",
             "chunkId": 11,
-            "excerpts": [
-                (
-                    "“안정”, “보장” 표현이 있으면 원금손실 가능성을 "
-                    "같은 화면에 표시한다."
-                ),
-                "각 고지는 홍보 문구보다 늦게 나타나면 안 된다.",
-                "안정 또는 확정을 연상시키는 표현의 한계를 명확히 정정한다.",
-            ],
-        }
+            "excerpt": (
+                "“안정”, “보장” 표현이 있으면 원금손실 가능성을 "
+                "같은 화면에 표시한다."
+            ),
+        },
+        {
+            "optionId": "evidence-option-2",
+            "chunkId": 11,
+            "excerpt": "각 고지는 홍보 문구보다 늦게 나타나면 안 된다.",
+        },
+        {
+            "optionId": "evidence-option-3",
+            "chunkId": 11,
+            "excerpt": "안정 또는 확정을 연상시키는 표현의 한계를 명확히 정정한다.",
+        },
     ]
     assert request["confirmedText"] not in json.dumps(
         initial_options,
@@ -665,10 +723,9 @@ def test_ollama_repair_excerpt_options_are_bounded_and_exact(
     )
     repair_prompt = provider_requests[1]["messages"][-1]["content"]
     assert (
-        '"chunkId":11,"excerpts":'
-        '["“안정”, “보장” 표현이 있으면 원금손실 가능성을 같은 화면에 '
-        '표시한다.","각 고지는 홍보 문구보다 늦게 나타나면 안 된다.",'
-        '"안정 또는 확정을 연상시키는 표현의 한계를 명확히 정정한다."]'
+        '"optionId":"evidence-option-1","chunkId":11,'
+        '"excerpt":"“안정”, “보장” 표현이 있으면 원금손실 가능성을 같은 화면에 '
+        '표시한다."'
     ) in repair_prompt
     assert "ARGUS | SYNTHETIC DEMO CORPUS" not in repair_prompt
     assert "문서번호 SYN-DISC-2026-1" not in repair_prompt
@@ -694,6 +751,7 @@ def test_rejects_ollama_output_omitting_retrieved_chunk_ids(
                 "statement": "안정성 표현이 투자 위험을 축소할 수 있습니다.",
                 "severity": "LOW",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+                "evidenceSpanOptionIds": ["evidence-option-1"],
                 "knownFactIds": [],
                 "recommendation": "원금 손실 가능성을 함께 고지하세요.",
             }
@@ -743,6 +801,7 @@ def test_rejects_invalid_ollama_retrieved_chunk_ids(
                 "severity": "LOW",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
                 "retrievedContextChunkIds": chunk_ids,
+                "evidenceSpanOptionIds": ["evidence-option-1"],
                 "knownFactIds": [],
                 "recommendation": "원금 손실 가능성을 함께 고지하세요.",
             }
