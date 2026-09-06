@@ -25,7 +25,9 @@ public class MockDocumentTextExtractor implements TextExtractionService {
         // 재추출 데모용. 1차 시도만 실패시키고 이후 시도는 정상 텍스트를 돌려준다.
         if (scenario.failFirstAttempt() && attempt == 1) {
             log.info("문서 {} 시나리오 {} 1차 시도를 의도적으로 실패시킵니다.", target.documentId(), scenario.code());
-            throw new TextExtractionException("추출 시간이 초과되었습니다 (시나리오: " + scenario.code() + ")");
+            throw new TextExtractionException(
+                    "추출 시간이 초과되었습니다 (시나리오: " + scenario.code() + ")",
+                    true);
         }
 
         return scenario.extractedText();

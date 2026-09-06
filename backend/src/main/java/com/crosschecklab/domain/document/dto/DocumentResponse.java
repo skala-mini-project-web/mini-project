@@ -15,6 +15,7 @@ public record DocumentResponse(
         String checksum,
         ExtractStatus extractStatus,
         String extractedText,
+        ExtractionError error,
         boolean confirmed,
         Long confirmedBy,
         OffsetDateTime confirmedAt,
@@ -32,10 +33,23 @@ public record DocumentResponse(
                 document.getChecksum(),
                 document.getExtractStatus(),
                 document.getExtractedText(),
+                document.getExtractStatus() == ExtractStatus.FAILED
+                        ? new ExtractionError(
+                                document.getExtractionErrorCode(),
+                                document.getExtractionErrorMessage(),
+                                document.isExtractionErrorRetryable())
+                        : null,
                 document.isConfirmed(),
                 document.getConfirmedById(),
                 document.getConfirmedAt(),
                 document.getCreatedAt(),
                 document.getUpdatedAt());
+    }
+
+    public record ExtractionError(
+            String errorCode,
+            String message,
+            boolean retryable
+    ) {
     }
 }

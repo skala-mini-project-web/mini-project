@@ -34,8 +34,8 @@ public class DocumentExtractionTransitions {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void failExtraction(Long documentId) {
+    public void failExtraction(Long documentId, String errorCode, String publicMessage, boolean retryable) {
         productDocumentRepository.findById(documentId)
-                .ifPresent(ProductDocument::markFailed);
+                .ifPresent(document -> document.markFailed(errorCode, publicMessage, retryable));
     }
 }

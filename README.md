@@ -216,8 +216,10 @@ node frontend/scripts/real-rag-full-flow-e2e.mjs
 
 - 실제 PDF upload → PDFBox extraction → official fact verification → pgvector retrieval → Ollama analysis 검증
 - PM 검토 요청 → reviewer 승인 → Risk Pattern → GuardFit 전체 흐름 검증
+- PM 확정 텍스트 수정·원문 불변성, 분석 후 수정 `409` 차단, reviewer read-only, malformed PDF 실패 화면·오류 metadata 검증
 - API interception과 `mockServer`를 사용하지 않음
 - page error, request failure, 예상 밖 4xx/5xx 응답은 실패 처리
+- 상세 coverage와 미지원 범위: [`docs/reports/real-browser-e2e-coverage.md`](docs/reports/real-browser-e2e-coverage.md)
 
 ## 제출 산출물
 
