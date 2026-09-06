@@ -35,7 +35,8 @@ public class ProductDocumentController {
     @PostMapping(value = "/api/products/{productId}/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "DOC-001 설명서 업로드",
             description = "PDF/PPTX 만 허용하며 최대 10MB. 저장 즉시 202 를 반환하고 추출은 백그라운드에서 진행된다. "
-                    + "파일 바이너리는 보관하지 않고 SHA-256 체크섬만 남긴다.")
+                    + "real-extraction 프로필은 원본을 content-addressed durable storage에 보관하고 "
+                    + "불변 source revision·SHA-256 체크섬을 함께 기록한다.")
     public ResponseEntity<DocumentAcceptedResponse> upload(
             @PathVariable Long productId,
             @RequestPart("file") MultipartFile file,
