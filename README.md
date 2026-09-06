@@ -70,10 +70,10 @@ Frontend
 
 ### 로컬 모델 선택 근거
 
-- **분석 — [Qwen2.5 7B Instruct](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct)**: 한국어를 포함한 다국어와 JSON 형태의 구조화 응답을 지원해, ARGUS의 Finding·근거 ID 응답 계약에 맞습니다. 7B는 local Ollama에서 개발·데모 흐름을 유지하기에 적절한 크기여서 현재 기준선으로 선택했습니다.
-- **검색 — [BGE-M3](https://huggingface.co/BAAI/bge-m3)**: 한국어·영문 혼합 문서 검색과 현재 pgvector `vector(1024)` schema에 맞는 1024차원 embedding 모델입니다.
-- **DeepSeek를 쓰지 않은 이유**: 보안 때문이 아닙니다. 같은 local 환경에서는 모델 제조사보다 배포 경계가 데이터 외부 전송을 결정합니다. DeepSeek-R1 8B는 reasoning 출력과 권장 prompt 방식이 현재의 짧은 JSON 응답 계약과 달라, 별도 품질·응답시간 비교 없이 교체하지 않았습니다.
-- Qwen 14B·DeepSeek 8B는 한국어 Finding 정확도, 근거 인용, 응답시간을 같은 synthetic test set에서 비교한 뒤 필요할 때 교체합니다.
+- **분석 — [Qwen2.5 7B Instruct](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct)**: 한국어·구조화 JSON 응답 지원. ARGUS의 Finding·근거 ID 응답 계약과 local Ollama 개발·데모 크기에 맞춰 기준선으로 선택.
+- **검색 — [BGE-M3](https://huggingface.co/BAAI/bge-m3)**: 한국어·영문 혼합 문서 검색과 현재 pgvector `vector(1024)` schema에 맞는 1024차원 embedding 모델.
+- **DeepSeek를 쓰지 않은 이유**: 보안 이슈가 아닌 계약 차이. DeepSeek-R1 8B의 reasoning 출력·권장 prompt 방식은 현재의 짧은 JSON 응답 계약과 달라, 품질·응답시간 비교 전에는 교체하지 않음.
+- Qwen 14B·DeepSeek 8B는 동일 synthetic test set에서 한국어 Finding 정확도·근거 인용·응답시간을 비교한 뒤 필요할 때 교체.
 
 ### 설계 이미지
 
