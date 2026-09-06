@@ -11,6 +11,7 @@ import com.crosschecklab.global.error.ErrorCode;
 import com.crosschecklab.support.IntegrationTestSupport;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,7 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
-// REV-001~003 통합 검증. 분석 실행은 이 테스트 범위가 아니라 COMPLETED 분석을 직접 넣고 시작한다.
+// REV-001~003 통합 검증. 현재 성공 실행에 결박된 COMPLETED 분석을 직접 넣고 시작한다.
 class ReviewApiTest extends IntegrationTestSupport {
 
     // V2 시드: 1 = pm_park(PRODUCT_MANAGER, 아래 상품의 소유자), 2 = reviewer_kim(COMPLIANCE_REVIEWER)
@@ -64,11 +65,10 @@ class ReviewApiTest extends IntegrationTestSupport {
         jdbc.update("DELETE FROM users WHERE id IN (?, ?)", FOREIGN_PM_ID, OTHER_REVIEWER_ID);
     }
 
-    // 변경 가능한 fixture 만 참조 순서대로 지운다 (risk_patterns → reviews → findings → analyses → documents → products).
+    // 변경 가능한 fixture 만 참조 순서대로 지운다.
     private void clearFixtures() {
-        jdbc.update("DELETE FROM risk_patterns");
-        jdbc.update("DELETE FROM reviews");
-        jdbc.update("DELETE FROM findings");
+        // 실행 경계에 묶인 Finding/Review 결정은 append-only이므로 행 DELETE 대신 FK 전체를 함께 초기화한다.
+        jdbc.execute("TRUNCATE TABLE analysis_executions CASCADE");
         jdbc.update("DELETE FROM analyses");
         jdbc.update("DELETE FROM product_documents");
         jdbc.update("DELETE FROM products");
@@ -93,19 +93,40 @@ class ReviewApiTest extends IntegrationTestSupport {
                 VALUES (?, '상품설명서.pdf', 'application/pdf', 'mock://documents/guarantee',
                         'READY', '최근 안정적인 수익률을 기록한 투자상품입니다.', TRUE, NOW(), NOW())
                 RETURNING id""", Long.class, productId);
-        return jdbc.queryForObject("""
+        Long analysisId = jdbc.queryForObject("""
                 INSERT INTO analyses
                     (product_document_id, red_team_pack_id, status, progress, risk_score,
                      requires_human_approval, retryable, input_hash, completed_at, created_at, updated_at)
                 VALUES (?, 1, 'COMPLETED', 100, 82, TRUE, FALSE, ?, NOW(), NOW(), NOW())
                 RETURNING id""", Long.class, documentId, inputHash);
+        Long executionId = jdbc.queryForObject("""
+                INSERT INTO analysis_executions
+                    (analysis_id, attempt_no, execution_token, status, retryable, retrieval_version,
+                     provider_risk_score, model_version, prompt_version, started_at, finished_at, created_at)
+                VALUES (?, 1, ?, 'SUCCEEDED', FALSE, 'review-api-test',
+                        82, 'review-api-test', 'review-api-test', NOW(), NOW(), NOW())
+                RETURNING id""", Long.class, analysisId, UUID.randomUUID().toString());
+        jdbc.update(
+                "UPDATE analyses SET current_successful_execution_id = ? WHERE id = ?",
+                executionId,
+                analysisId);
+        return analysisId;
     }
 
     private Long insertFinding(Long analysisId, String statement, String severity) {
         return jdbc.queryForObject("""
-                INSERT INTO findings (analysis_id, statement, severity, recommendation, created_at, updated_at)
-                VALUES (?, ?, ?, '표현을 보완하세요.', NOW(), NOW())
-                RETURNING id""", Long.class, analysisId, statement, severity);
+                INSERT INTO findings
+                    (analysis_id, analysis_execution_id, lineage_id, revision_number,
+                     statement, severity, recommendation, created_at, updated_at)
+                VALUES (?, (SELECT current_successful_execution_id FROM analyses WHERE id = ?),
+                        ?, 1, ?, ?, '표현을 보완하세요.', NOW(), NOW())
+                RETURNING id""",
+                Long.class,
+                analysisId,
+                analysisId,
+                UUID.randomUUID().toString(),
+                statement,
+                severity);
     }
 
     private Long createReview(Long analysisId) throws Exception {

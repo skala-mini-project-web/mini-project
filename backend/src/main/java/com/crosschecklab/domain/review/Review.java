@@ -23,8 +23,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 // 분석 1건에 대한 사람 검토 (REV-001~003). analysis_id 는 UNIQUE 라 분석당 검토는 하나뿐이다.
-// 승인/반려는 별도 decision 컬럼 없이 status 하나로 관리한다(API 명세 §10 확정 사항).
-// 승인 시 선택한 Finding 은 review_selected_findings 에 남겨 RiskPattern 을 역추적할 수 있게 한다.
+// 집계 상태와 기존 선택 목록은 API 호환을 위해 유지하고, Finding 별 결정은 별도 불변 이력으로 남긴다.
 @Entity
 @Getter
 @Table(name = "reviews")
@@ -37,6 +36,9 @@ public class Review extends BaseTimeEntity {
 
     @Column(name = "analysis_id", nullable = false, updatable = false, unique = true)
     private Long analysisId;
+
+    @Column(name = "analysis_execution_id", nullable = false, updatable = false)
+    private Long analysisExecutionId;
 
     @Column(name = "submission_comment", length = 500, updatable = false)
     private String submissionComment;
@@ -61,9 +63,13 @@ public class Review extends BaseTimeEntity {
     @Column(name = "finding_id", nullable = false)
     private Set<Long> selectedFindingIds = new LinkedHashSet<>();
 
-    public static Review create(Long analysisId, String submissionComment) {
+    public static Review create(Long analysisId, Long analysisExecutionId, String submissionComment) {
+        if (analysisExecutionId == null) {
+            throw new IllegalArgumentException("analysisExecutionId must not be null");
+        }
         Review review = new Review();
         review.analysisId = analysisId;
+        review.analysisExecutionId = analysisExecutionId;
         review.submissionComment = submissionComment;
         review.status = ReviewStatus.PENDING;
         return review;

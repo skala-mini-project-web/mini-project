@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.crosschecklab.support.IntegrationTestSupport;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -31,7 +32,8 @@ class DashboardApiTest extends IntegrationTestSupport {
     @BeforeEach
     @AfterEach
     void clearFixtures() {
-        jdbc.update("DELETE FROM reviews");
+        // 실행 경계에 묶인 Review는 append-only이므로 FK 전체를 함께 초기화한다.
+        jdbc.execute("TRUNCATE TABLE analysis_executions CASCADE");
         jdbc.update("DELETE FROM analyses");
         jdbc.update("DELETE FROM product_documents");
         jdbc.update("DELETE FROM products");
@@ -72,9 +74,21 @@ class DashboardApiTest extends IntegrationTestSupport {
     }
 
     private void insertReview(long analysisId, String status) {
+        long executionId = jdbc.queryForObject("""
+                INSERT INTO analysis_executions
+                    (analysis_id, attempt_no, execution_token, status, retryable, retrieval_version,
+                     provider_risk_score, model_version, prompt_version, started_at, finished_at, created_at)
+                VALUES (?, 1, ?, 'SUCCEEDED', FALSE, 'dashboard-test',
+                        0, 'dashboard-test', 'dashboard-test', NOW(), NOW(), NOW())
+                RETURNING id""", Long.class, analysisId, UUID.randomUUID().toString());
+        jdbc.update(
+                "UPDATE analyses SET current_successful_execution_id = ? WHERE id = ?",
+                executionId,
+                analysisId);
         jdbc.update("""
-                INSERT INTO reviews (analysis_id, status, created_at, updated_at)
-                VALUES (?, ?, NOW(), NOW())""", analysisId, status);
+                INSERT INTO reviews
+                    (analysis_id, analysis_execution_id, status, created_at, updated_at)
+                VALUES (?, ?, ?, NOW(), NOW())""", analysisId, executionId, status);
     }
 
     // 상품 하나에 문서·분석·검토를 한 줄로 붙인다.

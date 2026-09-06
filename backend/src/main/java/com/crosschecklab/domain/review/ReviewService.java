@@ -48,6 +48,7 @@ import org.springframework.util.StringUtils;
 public class ReviewService {
 
     private final ReviewRepository reviewRepository;
+    private final FindingReviewDecisionRepository findingReviewDecisionRepository;
     private final RiskPatternService riskPatternService;
     private final AnalysisRepository analysisRepository;
     private final FindingRepository findingRepository;
@@ -71,9 +72,13 @@ public class ReviewService {
         if (reviewRepository.existsByAnalysisId(analysis.getId())) {
             throw new BusinessException(ErrorCode.REVIEW_ALREADY_EXISTS);
         }
+        Long analysisExecutionId = requireCurrentExecutionId(analysis);
         analysis.markInReview();
 
-        Review review = Review.create(analysis.getId(), normalizeSubmissionComment(request.submissionComment()));
+        Review review = Review.create(
+                analysis.getId(),
+                analysisExecutionId,
+                normalizeSubmissionComment(request.submissionComment()));
         try {
             // 같은 분석에 동시에 두 요청이 들어오면 analysis_id UNIQUE 가 잡아낸다.
             reviewRepository.saveAndFlush(review);
@@ -111,7 +116,9 @@ public class ReviewService {
 
         ownershipChecker.requireOwnerOrReviewer(product.getOwnerId(), currentUser);
 
-        Severity maxSeverity = findingRepository.findByAnalysisIdOrderByIdAsc(analysis.getId()).stream()
+        List<Finding> reviewedFindings = reviewFindings(review);
+        requireReviewSelection(review.getSelectedFindingIds(), reviewedFindings);
+        Severity maxSeverity = reviewedFindings.stream()
                 .map(Finding::getSeverity)
                 .max(Comparator.comparingInt(this::severityRank))
                 .orElse(null);
@@ -149,14 +156,38 @@ public class ReviewService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
         requireReadyConfirmedSource(findSourceDocument(analysis));
 
-        Set<Long> selectedFindingIds = validateSelection(review, decision, request);
-        review.decide(decision, currentUser.id(), normalizeDecisionComment(request.comment()),
-                selectedFindingIds, OffsetDateTime.now(clock));
+        List<Finding> currentFindings = reviewFindings(review);
+        Set<Long> selectedFindingIds = validateSelection(decision, request, currentFindings);
+        String comment = normalizeDecisionComment(request.comment());
+        OffsetDateTime decidedAt = OffsetDateTime.now(clock);
+        review.decide(decision, currentUser.id(), comment, selectedFindingIds, decidedAt);
+
+        List<FindingReviewDecision> findingDecisions = currentFindings.stream()
+                .map(finding -> FindingReviewDecision.create(
+                        review,
+                        finding,
+                        currentUser.id(),
+                        selectedFindingIds.contains(finding.getId())
+                                ? ReviewStatus.APPROVED
+                                : ReviewStatus.REJECTED,
+                        comment,
+                        decidedAt))
+                .toList();
+        findingReviewDecisionRepository.saveAllAndFlush(findingDecisions);
 
         // 승격 규칙(DRAFT 생성 → 검증 → ACTIVE)은 Risk 도메인이 소유한다.
-        // 승격 이력은 finding_id · review_id 로 원본까지 역추적할 수 있다.
+        // 승인 결정 이력에 존재하는 review execution Finding 만 승격할 수 있다.
+        Set<Long> approvedFindingIds = findingReviewDecisionRepository
+                .findAllByReviewIdAndDecisionOrderByFindingRevisionIdAsc(
+                        review.getId(), ReviewStatus.APPROVED)
+                .stream()
+                .map(FindingReviewDecision::getFindingRevisionId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
         List<Long> riskPatternIds = decision == ReviewStatus.APPROVED
-                ? riskPatternService.promote(review.getId(), findingRepository.findAllById(selectedFindingIds))
+                ? riskPatternService.promote(
+                        review.getId(),
+                        findingRepository.findAllByAnalysisExecutionIdAndIdInOrderByIdAsc(
+                                review.getAnalysisExecutionId(), approvedFindingIds))
                 : List.of();
         riskPatternIds.forEach(riskPatternId -> auditService.append(
                 currentUser,
@@ -176,7 +207,8 @@ public class ReviewService {
     }
 
     // 결정 조합 검증. 승인은 Finding 선택이, 반려는 사유가 필수다.
-    private Set<Long> validateSelection(Review review, ReviewStatus decision, ReviewDecisionRequest request) {
+    private Set<Long> validateSelection(
+            ReviewStatus decision, ReviewDecisionRequest request, List<Finding> currentFindings) {
         if (decision == ReviewStatus.REJECTED) {
             if (!StringUtils.hasText(request.comment())) {
                 throw new BusinessException(ErrorCode.COMMENT_REQUIRED);
@@ -188,14 +220,40 @@ public class ReviewService {
         if (selected.isEmpty()) {
             throw new BusinessException(ErrorCode.INVALID_FINDING_SELECTION);
         }
-        // 다른 분석의 Finding 을 끼워 넣어 승격시키지 못하게 한다.
-        Set<Long> ownFindingIds = findingRepository.findByAnalysisIdOrderByIdAsc(review.getAnalysisId()).stream()
+        // 다른 분석뿐 아니라 같은 분석의 이전 execution Finding 도 승격시키지 못하게 한다.
+        Set<Long> ownFindingIds = currentFindings.stream()
                 .map(Finding::getId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         if (!ownFindingIds.containsAll(selected)) {
             throw new BusinessException(ErrorCode.INVALID_FINDING_SELECTION);
         }
         return selected;
+    }
+
+    private List<Finding> reviewFindings(Review review) {
+        return findingRepository.findAllByAnalysisExecutionIdOrderByIdAsc(
+                review.getAnalysisExecutionId());
+    }
+
+    private Long requireCurrentExecutionId(Analysis analysis) {
+        Long executionId = analysis.getCurrentSuccessfulExecutionId();
+        if (executionId == null) {
+            // 실행 경계가 없는 레거시 결과는 표시만 허용하며 검토·점수 반영 대상이 아니다.
+            throw new BusinessException(ErrorCode.ANALYSIS_NOT_COMPLETED);
+        }
+        return executionId;
+    }
+
+    private void requireReviewSelection(Set<Long> selectedFindingIds, List<Finding> reviewedFindings) {
+        if (selectedFindingIds.isEmpty()) {
+            return;
+        }
+        Set<Long> reviewedFindingIds = reviewedFindings.stream()
+                .map(Finding::getId)
+                .collect(Collectors.toSet());
+        if (!reviewedFindingIds.containsAll(selectedFindingIds)) {
+            throw new BusinessException(ErrorCode.INVALID_FINDING_SELECTION);
+        }
     }
 
     private ReviewStatus requireDecisionStatus(ReviewStatus status) {

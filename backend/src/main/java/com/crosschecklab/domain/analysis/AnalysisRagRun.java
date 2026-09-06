@@ -9,8 +9,8 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
-import jakarta.persistence.OneToOne;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
@@ -25,8 +25,9 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.Immutable;
 
 /**
- * Immutable configuration and result trace for the single retrieval performed
- * for an analysis.
+ * Immutable configuration and result trace for one execution's retrieval.
+ * Rows without an execution are legacy records and retain only their historical
+ * analysis association.
  */
 @Entity
 @Immutable
@@ -41,9 +42,13 @@ public class AnalysisRagRun {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @OneToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "analysis_id", nullable = false, updatable = false, unique = true)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "analysis_id", updatable = false)
     private Analysis analysis;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "analysis_execution_id", updatable = false)
+    private AnalysisExecution analysisExecution;
 
     @Column(name = "query_hash", nullable = false, updatable = false, columnDefinition = "char(64)")
     private String queryHash;
@@ -65,26 +70,35 @@ public class AnalysisRagRun {
     private List<AnalysisRagRetrievalSnapshot> snapshots = new ArrayList<>();
 
     public static AnalysisRagRun create(
-            Analysis analysis,
+            AnalysisExecution analysisExecution,
             String queryHash,
             String embeddingModel,
             String retrievalVersion,
             int requestedResultCount,
             OffsetDateTime retrievedAt
     ) {
-        requireNonNull(analysis, "analysis");
+        requireNonNull(analysisExecution, "analysisExecution");
+        if (analysisExecution.getStatus() != AnalysisExecution.Status.RUNNING) {
+            throw new IllegalArgumentException("analysisExecution must be running");
+        }
         if (queryHash == null || !SHA_256.matcher(queryHash).matches()) {
             throw new IllegalArgumentException("queryHash must be a lowercase SHA-256 hash");
         }
-        requireNonBlank(embeddingModel, "embeddingModel");
-        requireNonBlank(retrievalVersion, "retrievalVersion");
+        requireNonBlank(embeddingModel, "embeddingModel", 255);
+        requireNonBlank(retrievalVersion, "retrievalVersion", 100);
+        if (!retrievalVersion.equals(analysisExecution.getRetrievalVersion())) {
+            throw new IllegalArgumentException("retrievalVersion must match analysisExecution");
+        }
         if (requestedResultCount <= 0) {
             throw new IllegalArgumentException("requestedResultCount must be positive");
         }
         requireNonNull(retrievedAt, "retrievedAt");
+        if (retrievedAt.isBefore(analysisExecution.getStartedAt())) {
+            throw new IllegalArgumentException("retrievedAt must not be before execution startedAt");
+        }
 
         AnalysisRagRun run = new AnalysisRagRun();
-        run.analysis = analysis;
+        run.analysisExecution = analysisExecution;
         run.queryHash = queryHash;
         run.embeddingModel = embeddingModel;
         run.retrievalVersion = retrievalVersion;
@@ -113,9 +127,12 @@ public class AnalysisRagRun {
                 .toList();
     }
 
-    private static void requireNonBlank(String value, String fieldName) {
+    private static void requireNonBlank(String value, String fieldName, int maximumLength) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(fieldName + " must not be blank");
+        }
+        if (value.length() > maximumLength) {
+            throw new IllegalArgumentException(fieldName + " must not exceed " + maximumLength + " characters");
         }
     }
 

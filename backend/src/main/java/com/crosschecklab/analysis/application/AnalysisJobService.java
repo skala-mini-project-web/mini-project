@@ -9,16 +9,23 @@ import com.crosschecklab.analysis.rag.EvidenceChunkIndexer;
 import com.crosschecklab.analysis.rag.PgVectorEvidenceRetriever;
 import com.crosschecklab.analysis.rag.RagRetrievedChunk;
 import com.crosschecklab.domain.analysis.Analysis;
+import com.crosschecklab.domain.analysis.AnalysisExecution;
+import com.crosschecklab.domain.analysis.AnalysisExecutionRepository;
 import com.crosschecklab.domain.analysis.AnalysisRagRun;
 import com.crosschecklab.domain.analysis.AnalysisRagRunRepository;
 import com.crosschecklab.domain.analysis.AnalysisRepository;
 import com.crosschecklab.domain.analysis.Finding;
+import com.crosschecklab.domain.analysis.FindingEvidenceAnchor;
+import com.crosschecklab.domain.analysis.FindingEvidenceAnchorRepository;
 import com.crosschecklab.domain.analysis.FindingRepository;
 import com.crosschecklab.domain.audit.AuditAction;
 import com.crosschecklab.domain.audit.AuditEvent;
 import com.crosschecklab.domain.audit.AuditEventRepository;
+import com.crosschecklab.domain.document.DocumentSourceRevision;
+import com.crosschecklab.domain.document.DocumentSourceRevisionRepository;
 import com.crosschecklab.domain.document.ProductDocument;
 import com.crosschecklab.domain.document.ProductDocumentRepository;
+import com.crosschecklab.domain.evidence.EvidenceDocument;
 import com.crosschecklab.domain.evidence.EvidenceDocumentChunk;
 import com.crosschecklab.domain.evidence.EvidenceDocumentChunkRepository;
 import com.crosschecklab.domain.persona.PersonaTemplate;
@@ -30,9 +37,14 @@ import com.crosschecklab.global.config.AsyncConfig;
 import com.crosschecklab.global.error.BusinessException;
 import com.crosschecklab.global.error.ErrorCode;
 import jakarta.persistence.EntityManager;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -60,13 +72,18 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class AnalysisJobService {
 
     private static final String RETRIEVAL_VERSION = "pgvector-cosine-v1";
+    private static final String FINDING_LINEAGE_NAMESPACE = "com.crosschecklab.finding-lineage:v1";
+    private static final int TEXT_LAYER_PAGE = 1;
     private static final Duration STALE_RUNNING_AFTER = Duration.ofMinutes(5);
     private static final int RECOVERY_BATCH_SIZE = 25;
 
     private final AnalysisRepository analysisRepository;
+    private final AnalysisExecutionRepository analysisExecutionRepository;
     private final EntityManager entityManager;
     private final FindingRepository findingRepository;
+    private final FindingEvidenceAnchorRepository findingEvidenceAnchorRepository;
     private final ProductDocumentRepository productDocumentRepository;
+    private final DocumentSourceRevisionRepository documentSourceRevisionRepository;
     private final AnalysisRagRunRepository ragRunRepository;
     private final EvidenceDocumentChunkRepository evidenceChunkRepository;
     private final PersonaTemplateRepository personaTemplateRepository;
@@ -78,9 +95,13 @@ public class AnalysisJobService {
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
-    public AnalysisJobService(AnalysisRepository analysisRepository, EntityManager entityManager,
+    public AnalysisJobService(AnalysisRepository analysisRepository,
+                              AnalysisExecutionRepository analysisExecutionRepository,
+                              EntityManager entityManager,
                               FindingRepository findingRepository,
+                              FindingEvidenceAnchorRepository findingEvidenceAnchorRepository,
                               ProductDocumentRepository productDocumentRepository,
+                              DocumentSourceRevisionRepository documentSourceRevisionRepository,
                               AnalysisRagRunRepository ragRunRepository,
                               EvidenceDocumentChunkRepository evidenceChunkRepository,
                               PersonaTemplateRepository personaTemplateRepository, AnalysisInputLoader inputLoader,
@@ -89,9 +110,12 @@ public class AnalysisJobService {
                               RiskAnalysisProvider provider, AuditEventRepository auditEventRepository,
                               PlatformTransactionManager transactionManager, Clock clock) {
         this.analysisRepository = analysisRepository;
+        this.analysisExecutionRepository = analysisExecutionRepository;
         this.entityManager = entityManager;
         this.findingRepository = findingRepository;
+        this.findingEvidenceAnchorRepository = findingEvidenceAnchorRepository;
         this.productDocumentRepository = productDocumentRepository;
+        this.documentSourceRevisionRepository = documentSourceRevisionRepository;
         this.ragRunRepository = ragRunRepository;
         this.evidenceChunkRepository = evidenceChunkRepository;
         this.personaTemplateRepository = personaTemplateRepository;
@@ -132,6 +156,7 @@ public class AnalysisJobService {
                 }
                 failAndAudit(
                         analysis,
+                        findRunningExecution(analysis.getId(), staleExecution.getExecutionToken()),
                         ErrorCode.AI_SERVICE_TEMPORARY_FAILURE,
                         true,
                         "analysis-recovery-" + UUID.randomUUID());
@@ -144,6 +169,9 @@ public class AnalysisJobService {
 
     private void run(Long analysisId, String scenarioCode, String traceId) {
         String fence = transactionTemplate.execute(status -> beginExecution(analysisId));
+        if (fence == null) {
+            return;
+        }
         Job job;
         try {
             job = transactionTemplate.execute(status -> prepareJob(analysisId, scenarioCode, fence));
@@ -168,6 +196,7 @@ public class AnalysisJobService {
         try {
             AnalysisResult result = provider.analyze(job.request());
             validateProviderReferences(job.request(), result);
+            validateAnchorPlan(result, job);
             transactionTemplate.execute(
                     status -> saveResult(analysisId, result, job, traceId));
         } catch (BusinessException e) {
@@ -195,15 +224,184 @@ public class AnalysisJobService {
             List<RagRetrievedChunk> retrievedChunks,
             String embeddingModel,
             String chunkingVersion,
-            OffsetDateTime retrievedAt
+            OffsetDateTime retrievedAt,
+            DocumentSnapshot documentSnapshot,
+            Map<Long, EvidenceSourceSnapshot> evidenceSources
     ) {
+    }
+
+    private record DocumentSnapshot(long documentId, String sourceHash, String text) {
+    }
+
+    private record EvidenceSourceSnapshot(long evidenceDocumentId, String sourceHash, String text) {
+    }
+
+    private record ResultPersistencePlan(
+            List<Finding> findings,
+            List<AnchorPersistencePlan> anchors
+    ) {
+    }
+
+    private record AnchorPersistencePlan(
+            Finding finding,
+            FindingEvidenceAnchor.SourceRole sourceRole,
+            Long sourceDocumentId,
+            Long sourceRevisionId,
+            Long evidenceDocumentId,
+            Long retrievedChunkId,
+            String sourceHash,
+            int pageNumber,
+            long utf8StartOffset,
+            long utf8EndOffset,
+            String excerptHash,
+            String exactExcerpt
+    ) {
+        private AnchorPersistencePlan {
+            Objects.requireNonNull(finding, "finding");
+            Objects.requireNonNull(sourceRole, "sourceRole");
+            if (sourceRole == FindingEvidenceAnchor.SourceRole.DOCUMENT_CLAIM) {
+                requirePositive(sourceDocumentId, "sourceDocumentId");
+                requirePositive(sourceRevisionId, "sourceRevisionId");
+                if (evidenceDocumentId != null || retrievedChunkId != null) {
+                    throw new IllegalArgumentException("document claim must not identify policy evidence");
+                }
+            } else {
+                requirePositive(evidenceDocumentId, "evidenceDocumentId");
+                requirePositive(retrievedChunkId, "retrievedChunkId");
+                if (sourceDocumentId != null || sourceRevisionId != null) {
+                    throw new IllegalArgumentException("policy requirement must not identify a source document");
+                }
+            }
+            requireSha256(sourceHash, "sourceHash");
+            requireSha256(excerptHash, "excerptHash");
+            if (pageNumber <= 0) {
+                throw new IllegalArgumentException("pageNumber must be positive");
+            }
+            if (exactExcerpt == null || exactExcerpt.isEmpty()) {
+                throw new IllegalArgumentException("exactExcerpt must not be empty");
+            }
+            if (utf8StartOffset < 0 || utf8EndOffset <= utf8StartOffset
+                    || utf8EndOffset - utf8StartOffset
+                    != exactExcerpt.getBytes(StandardCharsets.UTF_8).length) {
+                throw new IllegalArgumentException("invalid exact evidence UTF-8 range");
+            }
+            if (!sha256(exactExcerpt).equals(excerptHash)) {
+                throw new IllegalArgumentException("excerptHash must match exactExcerpt");
+            }
+        }
+
+        private static AnchorPersistencePlan documentClaim(
+                Finding finding,
+                long sourceDocumentId,
+                long sourceRevisionId,
+                String sourceHash,
+                int pageNumber,
+                Utf8Range range,
+                String exactExcerpt
+        ) {
+            return new AnchorPersistencePlan(
+                    finding,
+                    FindingEvidenceAnchor.SourceRole.DOCUMENT_CLAIM,
+                    sourceDocumentId,
+                    sourceRevisionId,
+                    null,
+                    null,
+                    sourceHash,
+                    pageNumber,
+                    range.start(),
+                    range.end(),
+                    sha256(exactExcerpt),
+                    exactExcerpt);
+        }
+
+        private static AnchorPersistencePlan policyRequirement(
+                Finding finding,
+                long evidenceDocumentId,
+                long retrievedChunkId,
+                String sourceHash,
+                int pageNumber,
+                Utf8Range range,
+                String exactExcerpt
+        ) {
+            return new AnchorPersistencePlan(
+                    finding,
+                    FindingEvidenceAnchor.SourceRole.POLICY_REQUIREMENT,
+                    null,
+                    null,
+                    evidenceDocumentId,
+                    retrievedChunkId,
+                    sourceHash,
+                    pageNumber,
+                    range.start(),
+                    range.end(),
+                    sha256(exactExcerpt),
+                    exactExcerpt);
+        }
+
+        private FindingEvidenceAnchor toEntity() {
+            if (sourceRole == FindingEvidenceAnchor.SourceRole.DOCUMENT_CLAIM) {
+                return FindingEvidenceAnchor.documentClaim(
+                        finding,
+                        sourceDocumentId,
+                        sourceRevisionId,
+                        sourceHash,
+                        pageNumber,
+                        utf8StartOffset,
+                        utf8EndOffset,
+                        excerptHash,
+                        exactExcerpt);
+            }
+            return FindingEvidenceAnchor.policyRequirement(
+                    finding,
+                    evidenceDocumentId,
+                    retrievedChunkId,
+                    sourceHash,
+                    pageNumber,
+                    utf8StartOffset,
+                    utf8EndOffset,
+                    excerptHash,
+                    exactExcerpt);
+        }
+
+        private static void requirePositive(Long value, String fieldName) {
+            if (value == null || value <= 0) {
+                throw new IllegalArgumentException(fieldName + " must be positive");
+            }
+        }
+
+        private static void requireSha256(String value, String fieldName) {
+            if (value == null || !value.matches("[0-9a-f]{64}")) {
+                throw new IllegalArgumentException(fieldName + " must be lowercase SHA-256 hex");
+            }
+        }
     }
 
     private String beginExecution(Long analysisId) {
         Analysis analysis = findWithLock(analysisId);
-        analysis.markRunning();
-        analysisRepository.flush();
-        return analysis.getExecutionToken();
+        if (analysis.getStatus() == AnalysisStatus.CREATED) {
+            analysis.markRunning();
+        } else if (analysis.getStatus() != AnalysisStatus.RUNNING) {
+            return null;
+        }
+        String fence = analysis.getExecutionToken();
+        if (analysisExecutionRepository.findByExecutionToken(fence).isPresent()) {
+            return null;
+        }
+        AnalysisExecution previousExecution = analysisExecutionRepository
+                .findTopByAnalysisIdOrderByAttemptNoDesc(analysisId)
+                .orElse(null);
+        if (previousExecution != null && previousExecution.isRunning()) {
+            previousExecution.discard("EXECUTION_SUPERSEDED", OffsetDateTime.now(clock));
+        }
+        int attemptNo = previousExecution == null ? 1 : previousExecution.getAttemptNo() + 1;
+        analysisExecutionRepository.save(AnalysisExecution.start(
+                analysis,
+                attemptNo,
+                fence,
+                RETRIEVAL_VERSION,
+                OffsetDateTime.now(clock)));
+        entityManager.flush();
+        return fence;
     }
 
     private Job prepareJob(Long analysisId, String scenarioCode, String fence) {
@@ -230,13 +428,24 @@ public class AnalysisJobService {
                 List.copyOf(retrievedChunks),
                 first.embeddingModel(),
                 first.chunkingVersion(),
-                OffsetDateTime.now(clock));
+                OffsetDateTime.now(clock),
+                new DocumentSnapshot(
+                        input.document().getId(),
+                        input.document().getChecksum(),
+                        input.document().getExtractedText()),
+                input.evidenceDocuments().stream().collect(Collectors.toUnmodifiableMap(
+                        EvidenceDocument::getId,
+                        evidence -> {
+                            String text = normalizeEvidenceContent(evidence.getContent());
+                            return new EvidenceSourceSnapshot(evidence.getId(), sha256(text), text);
+                        })));
         Analysis currentAnalysis = findWithLock(analysisId);
         entityManager.refresh(currentAnalysis);
         if (!isCurrent(currentAnalysis, fence)) {
             return null;
         }
-        saveRagRun(currentAnalysis, job);
+        AnalysisExecution execution = findRunningExecution(analysisId, fence);
+        saveRagRun(execution, job);
         return job;
     }
 
@@ -294,6 +503,31 @@ public class AnalysisJobService {
                     throw invalidProviderResponse("요청에 없는 사실 인용: " + factId);
                 }
             }
+            validateEvidenceSpanReferences(finding, citedChunkIds);
+        }
+    }
+
+    private void validateEvidenceSpanReferences(FindingPayload finding, Set<Long> citedChunkIds) {
+        if (finding.evidenceSpans() == null || finding.evidenceSpans().isEmpty()) {
+            throw invalidProviderResponse("finding 에 evidenceSpans 가 없음");
+        }
+        Set<Long> spannedChunkIds = new LinkedHashSet<>();
+        Set<String> uniqueSpans = new LinkedHashSet<>();
+        for (FindingPayload.EvidenceSpanPayload span : finding.evidenceSpans()) {
+            if (span == null || span.chunkId() == null || span.excerpt() == null
+                    || span.excerpt().isBlank()) {
+                throw invalidProviderResponse("근거 범위에 chunkId 또는 excerpt 가 없음");
+            }
+            if (!citedChunkIds.contains(span.chunkId())) {
+                throw invalidProviderResponse("인용하지 않은 근거 청크의 범위: " + span.chunkId());
+            }
+            if (!uniqueSpans.add(span.chunkId() + "\0" + span.excerpt())) {
+                throw invalidProviderResponse("중복된 근거 범위: " + span.chunkId());
+            }
+            spannedChunkIds.add(span.chunkId());
+        }
+        if (!spannedChunkIds.equals(citedChunkIds)) {
+            throw invalidProviderResponse("인용한 모든 근거 청크에 exact evidence span 이 필요함");
         }
     }
 
@@ -301,12 +535,48 @@ public class AnalysisJobService {
         return new ProviderException(ErrorCode.PROVIDER_RESPONSE_INVALID, false, detail);
     }
 
+    private void validateAnchorPlan(AnalysisResult result, Job job) {
+        Map<Long, String> factsById = job.request().knownFacts().stream()
+                .collect(Collectors.toMap(
+                        AnalysisRequest.KnownFactPayload::factId,
+                        AnalysisRequest.KnownFactPayload::text));
+        Map<Long, RagRetrievedChunk> contextsByChunkId = job.retrievedChunks().stream()
+                .collect(Collectors.toMap(RagRetrievedChunk::chunkId, context -> context));
+
+        for (FindingPayload finding : result.findings()) {
+            for (Long factId : finding.knownFactIds()) {
+                uniqueUtf8Range(
+                        job.documentSnapshot().text(),
+                        factsById.get(factId),
+                        "known fact " + factId);
+            }
+            for (FindingPayload.EvidenceSpanPayload span : finding.evidenceSpans()) {
+                RagRetrievedChunk context = contextsByChunkId.get(span.chunkId());
+                if (context == null || !finding.retrievedContextChunkIds().contains(span.chunkId())) {
+                    throw invalidProviderResponse("인용하지 않은 근거 청크의 범위: " + span.chunkId());
+                }
+                uniqueUtf8Range(
+                        context.chunkText(),
+                        span.excerpt(),
+                        "retrieved chunk " + span.chunkId());
+                EvidenceSourceSnapshot source = job.evidenceSources().get(context.evidenceDocumentId());
+                if (source == null || source.evidenceDocumentId() != context.evidenceDocumentId()
+                        || !Objects.equals(source.sourceHash(), context.sourceHash())) {
+                    throw invalidProviderResponse("검색 근거의 source/hash snapshot 이 일치하지 않음: "
+                            + span.chunkId());
+                }
+                uniqueUtf8Range(
+                        source.text(),
+                        span.excerpt(),
+                        "evidence source " + source.evidenceDocumentId());
+            }
+        }
+    }
+
     // 잠근 행을 기준으로 이 회차가 아직 유효한가. 그 사이 재시도나 복구 전이가 있었으면 false.
     private boolean isCurrent(Analysis analysis, String fence) {
-        if (fence == null) {
-            return true;
-        }
-        boolean current = analysis.getStatus() == AnalysisStatus.RUNNING
+        boolean current = fence != null
+                && analysis.getStatus() == AnalysisStatus.RUNNING
                 && fence.equals(analysis.getExecutionToken());
         if (!current) {
             log.warn("분석 {} 이전 회차 결과를 버린다 (상태 전이 또는 재시도가 이미 발생함)", analysis.getId());
@@ -319,10 +589,8 @@ public class AnalysisJobService {
         if (!isCurrent(analysis, job.fence())) {
             return false;
         }
-        requireReadyConfirmedSource(analysis);
-        // 재시도면 이전 회차 Finding 을 먼저 비운다 (연관 행은 FK CASCADE).
-        findingRepository.deleteByAnalysisId(analysisId);
-        findingRepository.flush();
+        AnalysisExecution execution = findRunningExecution(analysisId, job.fence());
+        DocumentSourceRevision sourceRevision = requirePinnedConfirmedSource(analysis, job.documentSnapshot());
 
         Map<PersonaCode, Long> personaIdsByCode = personaTemplateRepository.findAll().stream()
                 .collect(Collectors.toMap(PersonaTemplate::getCode, PersonaTemplate::getId));
@@ -332,33 +600,176 @@ public class AnalysisJobService {
                                 RagRetrievedChunk::chunkId,
                                 context -> context));
 
-        for (FindingPayload payload : result.findings()) {
-            Finding finding = Finding.create(analysisId, payload.statement(), payload.severity(),
-                    payload.recommendation(), personaIds(payload.affectedPersonaCodes(), personaIdsByCode));
-            payload.retrievedContextChunkIds().stream()
-                    .map(contextsByChunkId::get)
-                    .forEach(context -> finding.addEvidenceReference(
-                            context.evidenceDocumentId(), context.chunkText()));
-            findingRepository.save(finding);
-        }
-        analysis.complete(result.riskScore(), result.modelVersion(), result.promptVersion(), OffsetDateTime.now(clock));
+        ResultPersistencePlan persistencePlan = planResultPersistence(
+                result, job, execution, sourceRevision, personaIdsByCode, contextsByChunkId);
+        findingRepository.saveAll(persistencePlan.findings());
+        entityManager.flush();
+        findingEvidenceAnchorRepository.saveAll(persistencePlan.anchors().stream()
+                .map(AnchorPersistencePlan::toEntity)
+                .toList());
+        entityManager.flush();
+        OffsetDateTime finishedAt = OffsetDateTime.now(clock);
+        execution.succeed(
+                result.riskScore(), result.modelVersion(), result.promptVersion(), finishedAt);
+        entityManager.flush();
+        analysis.complete(result.riskScore(), result.modelVersion(), result.promptVersion(), finishedAt);
+        analysis.markCurrentSuccessfulExecution(execution);
         appendTerminalAudit(traceId, AuditAction.ANALYSIS_COMPLETED, analysisId);
         analysisRepository.flush();
         return true;
     }
 
-    private void requireReadyConfirmedSource(Analysis analysis) {
+    private ResultPersistencePlan planResultPersistence(
+            AnalysisResult result,
+            Job job,
+            AnalysisExecution execution,
+            DocumentSourceRevision sourceRevision,
+            Map<PersonaCode, Long> personaIdsByCode,
+            Map<Long, RagRetrievedChunk> contextsByChunkId
+    ) {
+        List<Finding> findings = new ArrayList<>();
+        List<AnchorPersistencePlan> anchors = new ArrayList<>();
+        for (int ordinal = 0; ordinal < result.findings().size(); ordinal++) {
+            FindingPayload payload = result.findings().get(ordinal);
+            Finding finding = Finding.create(
+                    execution,
+                    lineageId(job.fence(), ordinal),
+                    1,
+                    null,
+                    payload.statement(),
+                    payload.severity(),
+                    payload.recommendation(),
+                    personaIds(payload.affectedPersonaCodes(), personaIdsByCode));
+            payload.retrievedContextChunkIds().stream()
+                    .map(contextsByChunkId::get)
+                    .forEach(context -> finding.addEvidenceReference(
+                            context.evidenceDocumentId(), context.chunkText()));
+            List<AnchorPersistencePlan> findingAnchors = planAnchors(
+                    finding, payload, job, sourceRevision, contextsByChunkId);
+            findings.add(finding);
+            anchors.addAll(findingAnchors);
+        }
+        return new ResultPersistencePlan(List.copyOf(findings), List.copyOf(anchors));
+    }
+
+    private DocumentSourceRevision requirePinnedConfirmedSource(
+            Analysis analysis, DocumentSnapshot snapshot) {
         ProductDocument document = productDocumentRepository.findById(analysis.getProductDocumentId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND));
         if (document.getExtractStatus() != ExtractStatus.READY || !document.isConfirmed()) {
             throw new BusinessException(ErrorCode.DOCUMENT_NOT_CONFIRMED);
         }
+        if (!Objects.equals(document.getId(), snapshot.documentId())
+                || !Objects.equals(document.getChecksum(), snapshot.sourceHash())
+                || !Objects.equals(document.getExtractedText(), snapshot.text())) {
+            throw invalidProviderResponse("Provider 요청 이후 확정 원본 snapshot 이 변경됨");
+        }
+        return documentSourceRevisionRepository
+                .findByProductDocument_IdAndSourceHash(snapshot.documentId(), snapshot.sourceHash())
+                .filter(revision -> Objects.equals(revision.getProductDocumentId(), snapshot.documentId()))
+                .orElseThrow(() -> invalidProviderResponse("확정 원본의 immutable source revision 이 없음"));
     }
 
-    private void saveRagRun(Analysis analysis, Job job) {
-        ragRunRepository.deleteByAnalysisId(analysis.getId());
+    private List<AnchorPersistencePlan> planAnchors(
+            Finding finding,
+            FindingPayload payload,
+            Job job,
+            DocumentSourceRevision sourceRevision,
+            Map<Long, RagRetrievedChunk> contextsByChunkId
+    ) {
+        List<AnchorPersistencePlan> anchors = new ArrayList<>();
+        Map<Long, String> factsById = job.request().knownFacts().stream()
+                .collect(Collectors.toMap(
+                        AnalysisRequest.KnownFactPayload::factId,
+                        AnalysisRequest.KnownFactPayload::text));
+        for (Long factId : payload.knownFactIds()) {
+            String excerpt = factsById.get(factId);
+            Utf8Range range = uniqueUtf8Range(job.documentSnapshot().text(), excerpt, "known fact " + factId);
+            anchors.add(AnchorPersistencePlan.documentClaim(
+                    finding,
+                    job.documentSnapshot().documentId(),
+                    sourceRevision.getId(),
+                    sourceRevision.getSourceHash(),
+                    TEXT_LAYER_PAGE,
+                    range,
+                    excerpt));
+        }
+        for (FindingPayload.EvidenceSpanPayload span : payload.evidenceSpans()) {
+            RagRetrievedChunk context = contextsByChunkId.get(span.chunkId());
+            if (context == null || !payload.retrievedContextChunkIds().contains(span.chunkId())) {
+                throw invalidProviderResponse("인용하지 않은 근거 청크의 범위: " + span.chunkId());
+            }
+            uniqueUtf8Range(context.chunkText(), span.excerpt(), "retrieved chunk " + span.chunkId());
+            EvidenceSourceSnapshot source = job.evidenceSources().get(context.evidenceDocumentId());
+            if (source == null || source.evidenceDocumentId() != context.evidenceDocumentId()
+                    || !Objects.equals(source.sourceHash(), context.sourceHash())) {
+                throw invalidProviderResponse("검색 근거의 source/hash snapshot 이 일치하지 않음: "
+                        + span.chunkId());
+            }
+            Utf8Range range = uniqueUtf8Range(
+                    source.text(), span.excerpt(), "evidence source " + source.evidenceDocumentId());
+            anchors.add(AnchorPersistencePlan.policyRequirement(
+                    finding,
+                    context.evidenceDocumentId(),
+                    context.chunkId(),
+                    context.sourceHash(),
+                    TEXT_LAYER_PAGE,
+                    range,
+                    span.excerpt()));
+        }
+        return anchors;
+    }
+
+    private record Utf8Range(long start, long end) {
+    }
+
+    private Utf8Range uniqueUtf8Range(String source, String excerpt, String sourceName) {
+        if (source == null || excerpt == null || excerpt.isEmpty()) {
+            throw invalidProviderResponse(sourceName + " 의 exact excerpt 가 비어 있음");
+        }
+        int startIndex = source.indexOf(excerpt);
+        if (startIndex < 0 || source.indexOf(excerpt, startIndex + 1) >= 0) {
+            throw invalidProviderResponse(sourceName + " 에 exact excerpt 범위가 없거나 둘 이상임");
+        }
+        long start = source.substring(0, startIndex).getBytes(StandardCharsets.UTF_8).length;
+        return new Utf8Range(start, start + excerpt.getBytes(StandardCharsets.UTF_8).length);
+    }
+
+    private String lineageId(String executionToken, int providerOrdinal) {
+        byte[] digest = sha256Bytes(
+                FINDING_LINEAGE_NAMESPACE + "\0" + executionToken + "\0" + providerOrdinal);
+        digest[6] = (byte) ((digest[6] & 0x0f) | 0x80);
+        digest[8] = (byte) ((digest[8] & 0x3f) | 0x80);
+        long mostSignificantBits = 0;
+        long leastSignificantBits = 0;
+        for (int index = 0; index < 8; index++) {
+            mostSignificantBits = (mostSignificantBits << 8) | (digest[index] & 0xffL);
+            leastSignificantBits = (leastSignificantBits << 8) | (digest[index + 8] & 0xffL);
+        }
+        return new UUID(mostSignificantBits, leastSignificantBits).toString();
+    }
+
+    private static String normalizeEvidenceContent(String content) {
+        return Objects.requireNonNull(content, "Evidence document content must not be null")
+                .replace("\r\n", "\n").replace('\r', '\n').strip();
+    }
+
+    private static String sha256(String value) {
+        return HexFormat.of().formatHex(sha256Bytes(value));
+    }
+
+    private static byte[] sha256Bytes(String value) {
+        try {
+            return MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private void saveRagRun(AnalysisExecution execution, Job job) {
         AnalysisRagRun ragRun = AnalysisRagRun.create(
-                analysis,
+                execution,
                 job.queryHash(),
                 job.embeddingModel(),
                 RETRIEVAL_VERSION,
@@ -393,15 +804,39 @@ public class AnalysisJobService {
             if (!isCurrent(analysis, fence)) {
                 return false;
             }
-            failAndAudit(analysis, errorCode, retryable, traceId);
+            failAndAudit(
+                    analysis,
+                    findRunningExecution(analysisId, fence),
+                    errorCode,
+                    retryable,
+                    traceId);
             analysisRepository.flush();
             return true;
         });
     }
 
-    private void failAndAudit(Analysis analysis, ErrorCode errorCode, boolean retryable, String traceId) {
+    private void failAndAudit(
+            Analysis analysis,
+            AnalysisExecution execution,
+            ErrorCode errorCode,
+            boolean retryable,
+            String traceId
+    ) {
+        execution.fail(errorCode.name(), retryable, OffsetDateTime.now(clock));
         analysis.fail(errorCode, retryable);
         appendTerminalAudit(traceId, AuditAction.ANALYSIS_FAILED, analysis.getId());
+    }
+
+    private AnalysisExecution findRunningExecution(Long analysisId, String fence) {
+        AnalysisExecution execution = analysisExecutionRepository
+                .findByAnalysisIdAndExecutionToken(analysisId, fence)
+                .orElseThrow(() -> new IllegalStateException(
+                        "분석 %d 실행 %s 가 존재하지 않습니다.".formatted(analysisId, fence)));
+        if (!execution.isRunning()) {
+            throw new IllegalStateException(
+                    "분석 %d 실행 %s 이 RUNNING 상태가 아닙니다.".formatted(analysisId, fence));
+        }
+        return execution;
     }
 
     private void appendTerminalAudit(String traceId, AuditAction action, Long analysisId) {

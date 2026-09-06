@@ -76,6 +76,9 @@ public class Analysis extends BaseTimeEntity {
 
     private OffsetDateTime completedAt;
 
+    @Column(name = "current_successful_execution_id")
+    private Long currentSuccessfulExecutionId;
+
     // 비동기 실행 회차 식별자. 상태/진행률이 같은 재시도도 새 값으로 바뀌어 이전 worker 결과를 차단한다.
     @Column(name = "execution_token", nullable = false, length = 36)
     private String executionToken;
@@ -162,5 +165,24 @@ public class Analysis extends BaseTimeEntity {
         if (status != AnalysisStatus.COMPLETED && status != AnalysisStatus.IN_REVIEW) {
             throw new BusinessException(ErrorCode.ANALYSIS_NOT_COMPLETED);
         }
+    }
+
+    public void markCurrentSuccessfulExecution(AnalysisExecution execution) {
+        if (execution == null) {
+            throw new IllegalArgumentException("execution must not be null");
+        }
+        if (!execution.belongsTo(this)) {
+            throw new IllegalArgumentException("execution must belong to this analysis");
+        }
+        if (!execution.isSucceeded()) {
+            throw new IllegalStateException("current execution must be successful");
+        }
+        if (execution.getId() == null) {
+            throw new IllegalStateException("current execution must be persisted");
+        }
+        if (status != AnalysisStatus.COMPLETED) {
+            throw new IllegalStateException("analysis must be completed before pointing to an execution");
+        }
+        this.currentSuccessfulExecutionId = execution.getId();
     }
 }
