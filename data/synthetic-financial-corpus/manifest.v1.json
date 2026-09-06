@@ -1,0 +1,528 @@
+{
+  "schemaVersion": "1.0",
+  "corpusId": "argus.synthetic-financial-documents.v1",
+  "corpusVersion": "1.0.0",
+  "synthetic": true,
+  "demoOnly": true,
+  "authorityDisclaimer": "모든 문서·회사·상품·수치·규칙은 합성입니다. 실제 금융사·상품·계약·법령·소비자·규제기관을 나타내지 않으며 금융·법률 자문으로 사용할 수 없습니다.",
+  "documentCount": 30,
+  "pageCount": 102,
+  "documents": [
+    {
+      "logicalId": "synthetic.financial.horizon-income-note.product-overview",
+      "productCode": "HORIZON-INCOME-NOTE",
+      "documentType": "product-overview",
+      "title": "호라이즌 인컴 노트 상품설명서",
+      "path": "documents/horizon-income-note/product-overview.pdf",
+      "pages": 4,
+      "sha256": "5b42431f1ed06d8a6ff768d062153c293c2a4b24c21f0e835e361ac6616f5e5c",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "호라이즌 인컴 노트",
+        "문서 목적",
+        "상품 구조 요약",
+        "기준지수",
+        "분배금"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.horizon-income-note.key-information",
+      "productCode": "HORIZON-INCOME-NOTE",
+      "documentType": "key-information",
+      "title": "호라이즌 인컴 노트 핵심정보 확인서",
+      "path": "documents/horizon-income-note/key-information.pdf",
+      "pages": 3,
+      "sha256": "6d0939ff68950d65a573a38c1f7786913354cb38b6f2bcf078e2173413631420",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "호라이즌 인컴 노트",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.horizon-income-note.risk-disclosure",
+      "productCode": "HORIZON-INCOME-NOTE",
+      "documentType": "risk-disclosure",
+      "title": "호라이즌 인컴 노트 위험·제한 고지서",
+      "path": "documents/horizon-income-note/risk-disclosure.pdf",
+      "pages": 3,
+      "sha256": "0bba7ffec79a15a4fc6848ddac1133fa29597585ef24886331794ba374251c0b",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "호라이즌 인컴 노트",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.horizon-income-note.fee-termination",
+      "productCode": "HORIZON-INCOME-NOTE",
+      "documentType": "fee-termination",
+      "title": "호라이즌 인컴 노트 비용·중도해지 안내서",
+      "path": "documents/horizon-income-note/fee-termination.pdf",
+      "pages": 3,
+      "sha256": "f491524f58a077801466d57a4b5490a8242888ba5e00481db74d28379c7b384c",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "호라이즌 인컴 노트",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.horizon-income-note.precontract-checklist",
+      "productCode": "HORIZON-INCOME-NOTE",
+      "documentType": "precontract-checklist",
+      "title": "호라이즌 인컴 노트 가입 전 확인서",
+      "path": "documents/horizon-income-note/precontract-checklist.pdf",
+      "pages": 4,
+      "sha256": "bb12b31726095aa3c6be129b149d769a2b2b6ff12daca0c8e53a17e7885342b9",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "호라이즌 인컴 노트",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.river-flex-savings.product-overview",
+      "productCode": "RIVER-FLEX-SAVINGS",
+      "documentType": "product-overview",
+      "title": "리버 플렉스 적립 플랜 상품설명서",
+      "path": "documents/river-flex-savings/product-overview.pdf",
+      "pages": 4,
+      "sha256": "ec7c42a5c51054264a5870a3f2d44aeef9f2992b3e362d7e83205526c92b04bd",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "리버 플렉스 적립 플랜",
+        "문서 목적",
+        "상품 구조 요약",
+        "기본 적용률",
+        "우대 조건"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.river-flex-savings.key-information",
+      "productCode": "RIVER-FLEX-SAVINGS",
+      "documentType": "key-information",
+      "title": "리버 플렉스 적립 플랜 핵심정보 확인서",
+      "path": "documents/river-flex-savings/key-information.pdf",
+      "pages": 3,
+      "sha256": "aad016dc324c9c10d1c842add38da8b83902efa4f982c46b9d384ed2b9f9de4c",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "리버 플렉스 적립 플랜",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.river-flex-savings.risk-disclosure",
+      "productCode": "RIVER-FLEX-SAVINGS",
+      "documentType": "risk-disclosure",
+      "title": "리버 플렉스 적립 플랜 위험·제한 고지서",
+      "path": "documents/river-flex-savings/risk-disclosure.pdf",
+      "pages": 3,
+      "sha256": "101242fae5b3dcfef50dac0dfdd81a6d07cc9447a7eac45bb6a771f727537fa3",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "리버 플렉스 적립 플랜",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.river-flex-savings.fee-termination",
+      "productCode": "RIVER-FLEX-SAVINGS",
+      "documentType": "fee-termination",
+      "title": "리버 플렉스 적립 플랜 비용·중도해지 안내서",
+      "path": "documents/river-flex-savings/fee-termination.pdf",
+      "pages": 3,
+      "sha256": "862b44e0ef053fb562145e5e91d1b0af858f0cf8018b6fdbb02a7ae3bbe1f9b9",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "리버 플렉스 적립 플랜",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.river-flex-savings.precontract-checklist",
+      "productCode": "RIVER-FLEX-SAVINGS",
+      "documentType": "precontract-checklist",
+      "title": "리버 플렉스 적립 플랜 가입 전 확인서",
+      "path": "documents/river-flex-savings/precontract-checklist.pdf",
+      "pages": 4,
+      "sha256": "dc7ad14d098c7995d145dadc27160e48aecdd6354824427c4c0e311fa75edd4b",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "리버 플렉스 적립 플랜",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.blue-line-credit.product-overview",
+      "productCode": "BLUE-LINE-CREDIT",
+      "documentType": "product-overview",
+      "title": "블루라인 상환 플랜 상품설명서",
+      "path": "documents/blue-line-credit/product-overview.pdf",
+      "pages": 4,
+      "sha256": "b5260471638768d6d0742daab6952276872b864266b64185d5e0cb4575992b35",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "블루라인 상환 플랜",
+        "문서 목적",
+        "상품 구조 요약",
+        "기준금리",
+        "월 상환액"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.blue-line-credit.key-information",
+      "productCode": "BLUE-LINE-CREDIT",
+      "documentType": "key-information",
+      "title": "블루라인 상환 플랜 핵심정보 확인서",
+      "path": "documents/blue-line-credit/key-information.pdf",
+      "pages": 3,
+      "sha256": "815d33f443287bee7246b33bb068ab771057634c7fccd5e00b8576e2c894245c",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "블루라인 상환 플랜",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.blue-line-credit.risk-disclosure",
+      "productCode": "BLUE-LINE-CREDIT",
+      "documentType": "risk-disclosure",
+      "title": "블루라인 상환 플랜 위험·제한 고지서",
+      "path": "documents/blue-line-credit/risk-disclosure.pdf",
+      "pages": 3,
+      "sha256": "883d408eaeb9252cb83cc26d0b463e967dbb1b8dd4d8779594a870480c60dd5d",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "블루라인 상환 플랜",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.blue-line-credit.fee-termination",
+      "productCode": "BLUE-LINE-CREDIT",
+      "documentType": "fee-termination",
+      "title": "블루라인 상환 플랜 비용·중도해지 안내서",
+      "path": "documents/blue-line-credit/fee-termination.pdf",
+      "pages": 3,
+      "sha256": "4ad4703985268bf531eb425f8ce092dcc4a75a73e044f7c31a6f14e6b8ab33ec",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "블루라인 상환 플랜",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.blue-line-credit.precontract-checklist",
+      "productCode": "BLUE-LINE-CREDIT",
+      "documentType": "precontract-checklist",
+      "title": "블루라인 상환 플랜 가입 전 확인서",
+      "path": "documents/blue-line-credit/precontract-checklist.pdf",
+      "pages": 4,
+      "sha256": "75315ab7e3513015a928e57e68b5849228dea40e2367fab72c66b79437870f71",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "블루라인 상환 플랜",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.safe-harbor-cover.product-overview",
+      "productCode": "SAFE-HARBOR-COVER",
+      "documentType": "product-overview",
+      "title": "세이프 하버 보장 플랜 상품설명서",
+      "path": "documents/safe-harbor-cover/product-overview.pdf",
+      "pages": 4,
+      "sha256": "1c234e1cda07f6a0c85afad3505775103960ac29738839b444cf2f5e0bb0593d",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "세이프 하버 보장 플랜",
+        "문서 목적",
+        "상품 구조 요약",
+        "보장 항목",
+        "면책"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.safe-harbor-cover.key-information",
+      "productCode": "SAFE-HARBOR-COVER",
+      "documentType": "key-information",
+      "title": "세이프 하버 보장 플랜 핵심정보 확인서",
+      "path": "documents/safe-harbor-cover/key-information.pdf",
+      "pages": 3,
+      "sha256": "e07b922d8fbfd1d72e64c755dfa849cacb2837cb9e87fa9b04d639900514c931",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "세이프 하버 보장 플랜",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.safe-harbor-cover.risk-disclosure",
+      "productCode": "SAFE-HARBOR-COVER",
+      "documentType": "risk-disclosure",
+      "title": "세이프 하버 보장 플랜 위험·제한 고지서",
+      "path": "documents/safe-harbor-cover/risk-disclosure.pdf",
+      "pages": 3,
+      "sha256": "1b09d41193e23d1c401de1952797ac0e0d30adc3ca17b68662daad22cd21d910",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "세이프 하버 보장 플랜",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.safe-harbor-cover.fee-termination",
+      "productCode": "SAFE-HARBOR-COVER",
+      "documentType": "fee-termination",
+      "title": "세이프 하버 보장 플랜 비용·중도해지 안내서",
+      "path": "documents/safe-harbor-cover/fee-termination.pdf",
+      "pages": 3,
+      "sha256": "37ecbafe0a0e964a30ad4a40c54a583208431099d0a9159900855cea3b3eb72c",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "세이프 하버 보장 플랜",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.safe-harbor-cover.precontract-checklist",
+      "productCode": "SAFE-HARBOR-COVER",
+      "documentType": "precontract-checklist",
+      "title": "세이프 하버 보장 플랜 가입 전 확인서",
+      "path": "documents/safe-harbor-cover/precontract-checklist.pdf",
+      "pages": 4,
+      "sha256": "2432a287cb9e5670b443629438ef383896ea6d40acc87a379e4a32d4548fa239",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "세이프 하버 보장 플랜",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.green-step-goal.product-overview",
+      "productCode": "GREEN-STEP-GOAL",
+      "documentType": "product-overview",
+      "title": "그린스텝 목표 적립 플랜 상품설명서",
+      "path": "documents/green-step-goal/product-overview.pdf",
+      "pages": 4,
+      "sha256": "b9dcc2d01a839c93f75512156bbe1d6126b434e51b03e265c9d187b8e4162ea8",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "그린스텝 목표 적립 플랜",
+        "문서 목적",
+        "상품 구조 요약",
+        "목표 금액",
+        "추가 적립"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.green-step-goal.key-information",
+      "productCode": "GREEN-STEP-GOAL",
+      "documentType": "key-information",
+      "title": "그린스텝 목표 적립 플랜 핵심정보 확인서",
+      "path": "documents/green-step-goal/key-information.pdf",
+      "pages": 3,
+      "sha256": "6575553ee869d8b7e11d73e909fb80228ecdc1de0e801d9fd0cabc4a4a87553f",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "그린스텝 목표 적립 플랜",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.green-step-goal.risk-disclosure",
+      "productCode": "GREEN-STEP-GOAL",
+      "documentType": "risk-disclosure",
+      "title": "그린스텝 목표 적립 플랜 위험·제한 고지서",
+      "path": "documents/green-step-goal/risk-disclosure.pdf",
+      "pages": 3,
+      "sha256": "d4f34874467570ff90740980296ef858f50091b9bebf23798aaff133c73c482e",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "그린스텝 목표 적립 플랜",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.green-step-goal.fee-termination",
+      "productCode": "GREEN-STEP-GOAL",
+      "documentType": "fee-termination",
+      "title": "그린스텝 목표 적립 플랜 비용·중도해지 안내서",
+      "path": "documents/green-step-goal/fee-termination.pdf",
+      "pages": 3,
+      "sha256": "e37046eb4d2304084755c57543f1c1cae9dcc4d5585346a41bc905d1c5f68b1a",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "그린스텝 목표 적립 플랜",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.green-step-goal.precontract-checklist",
+      "productCode": "GREEN-STEP-GOAL",
+      "documentType": "precontract-checklist",
+      "title": "그린스텝 목표 적립 플랜 가입 전 확인서",
+      "path": "documents/green-step-goal/precontract-checklist.pdf",
+      "pages": 4,
+      "sha256": "e44d7f02437ccccaa87dce3370f149ef713b605214fbb898c5f742a6f4ae0b8e",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "그린스텝 목표 적립 플랜",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.nova-cash-reserve.product-overview",
+      "productCode": "NOVA-CASH-RESERVE",
+      "documentType": "product-overview",
+      "title": "노바 캐시 리저브 상품설명서",
+      "path": "documents/nova-cash-reserve/product-overview.pdf",
+      "pages": 4,
+      "sha256": "4221d674f5f853c7950f43d76108a5fdb691057866c250a050cfe5710b15022d",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "노바 캐시 리저브",
+        "문서 목적",
+        "상품 구조 요약",
+        "일별 반영",
+        "평가액"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.nova-cash-reserve.key-information",
+      "productCode": "NOVA-CASH-RESERVE",
+      "documentType": "key-information",
+      "title": "노바 캐시 리저브 핵심정보 확인서",
+      "path": "documents/nova-cash-reserve/key-information.pdf",
+      "pages": 3,
+      "sha256": "57931c96da53df8e2444f30dfc8ee1aecac694b947d5dfe7cd04fdc7b91a0eaf",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "노바 캐시 리저브",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.nova-cash-reserve.risk-disclosure",
+      "productCode": "NOVA-CASH-RESERVE",
+      "documentType": "risk-disclosure",
+      "title": "노바 캐시 리저브 위험·제한 고지서",
+      "path": "documents/nova-cash-reserve/risk-disclosure.pdf",
+      "pages": 3,
+      "sha256": "35cee5beba0650aa4e1d03cb8c92a1390abaf18c251ca26646a60c48fd140219",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "노바 캐시 리저브",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.nova-cash-reserve.fee-termination",
+      "productCode": "NOVA-CASH-RESERVE",
+      "documentType": "fee-termination",
+      "title": "노바 캐시 리저브 비용·중도해지 안내서",
+      "path": "documents/nova-cash-reserve/fee-termination.pdf",
+      "pages": 3,
+      "sha256": "c883dedbe8ebbe78fa78a281c34b405eb1a5192de39412be40072520a86d7f18",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "노바 캐시 리저브",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시"
+      ]
+    },
+    {
+      "logicalId": "synthetic.financial.nova-cash-reserve.precontract-checklist",
+      "productCode": "NOVA-CASH-RESERVE",
+      "documentType": "precontract-checklist",
+      "title": "노바 캐시 리저브 가입 전 확인서",
+      "path": "documents/nova-cash-reserve/precontract-checklist.pdf",
+      "pages": 4,
+      "sha256": "f937ba8211636e488bbc7daa8943f1f2b723818bae45bc91f4aab4d718b0e656",
+      "synthetic": true,
+      "demoOnly": true,
+      "expectedTerms": [
+        "노바 캐시 리저브",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성"
+      ]
+    }
+  ]
+}

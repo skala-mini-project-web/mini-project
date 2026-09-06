@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0",
+  "corpusId": "argus.synthetic-financial-documents.v1",
+  "synthetic": true,
+  "demoOnly": true,
+  "verification": {
+    "outcome": "PASS",
+    "mode": "actual-backend-pdfbox",
+    "documents": 30,
+    "productGroups": 6,
+    "pages": 102,
+    "totalExtractedCharacters": 48078,
+    "checks": [
+      "PDF SHA-256 equals manifest",
+      "asynchronous extraction reaches READY",
+      "expected Korean text terms are present",
+      "one immutable source revision is created for every uploaded document"
+    ]
+  },
+  "limitations": [
+    "This receipt covers born-digital PDFBox extraction only.",
+    "Durable batch queue and scanned-PDF OCR verification are follow-up features.",
+    "The corpus does not represent real financial products, contracts, laws, institutions, or consumers."
+  ]
+}

@@ -234,6 +234,10 @@ node frontend/scripts/real-rag-full-flow-e2e.mjs
 - 근거 PDF: `data/demo-corpus/documents/evidence/`
 - corpus hash·logical ID: `data/demo-corpus/manifest.v1.json`
 - expected RAG case: `data/demo-corpus/expected/`
+- 다페이지 합성 금융 문서 corpus: [`data/synthetic-financial-corpus/`](data/synthetic-financial-corpus/)
+  - 6개 합성 상품군 × 5개 문서 유형, 30개 PDF·102페이지
+  - PDFBox 실제 추출·SHA-256·source revision 로컬 검증 완료
+  - 향후 batch·PDF OCR의 실제 workload regression으로 사용
 
 ## 운영 명령
 

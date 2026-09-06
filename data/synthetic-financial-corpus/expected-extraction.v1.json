@@ -1,0 +1,405 @@
+{
+  "schemaVersion": "1.0",
+  "corpusId": "argus.synthetic-financial-documents.v1",
+  "synthetic": true,
+  "demoOnly": true,
+  "extractionCases": [
+    {
+      "logicalId": "synthetic.financial.horizon-income-note.product-overview",
+      "requiredTerms": [
+        "호라이즌 인컴 노트",
+        "문서 목적",
+        "상품 구조 요약",
+        "기준지수",
+        "분배금",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.horizon-income-note.key-information",
+      "requiredTerms": [
+        "호라이즌 인컴 노트",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.horizon-income-note.risk-disclosure",
+      "requiredTerms": [
+        "호라이즌 인컴 노트",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.horizon-income-note.fee-termination",
+      "requiredTerms": [
+        "호라이즌 인컴 노트",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.horizon-income-note.precontract-checklist",
+      "requiredTerms": [
+        "호라이즌 인컴 노트",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.river-flex-savings.product-overview",
+      "requiredTerms": [
+        "리버 플렉스 적립 플랜",
+        "문서 목적",
+        "상품 구조 요약",
+        "기본 적용률",
+        "우대 조건",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.river-flex-savings.key-information",
+      "requiredTerms": [
+        "리버 플렉스 적립 플랜",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.river-flex-savings.risk-disclosure",
+      "requiredTerms": [
+        "리버 플렉스 적립 플랜",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.river-flex-savings.fee-termination",
+      "requiredTerms": [
+        "리버 플렉스 적립 플랜",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.river-flex-savings.precontract-checklist",
+      "requiredTerms": [
+        "리버 플렉스 적립 플랜",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.blue-line-credit.product-overview",
+      "requiredTerms": [
+        "블루라인 상환 플랜",
+        "문서 목적",
+        "상품 구조 요약",
+        "기준금리",
+        "월 상환액",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.blue-line-credit.key-information",
+      "requiredTerms": [
+        "블루라인 상환 플랜",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.blue-line-credit.risk-disclosure",
+      "requiredTerms": [
+        "블루라인 상환 플랜",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.blue-line-credit.fee-termination",
+      "requiredTerms": [
+        "블루라인 상환 플랜",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.blue-line-credit.precontract-checklist",
+      "requiredTerms": [
+        "블루라인 상환 플랜",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.safe-harbor-cover.product-overview",
+      "requiredTerms": [
+        "세이프 하버 보장 플랜",
+        "문서 목적",
+        "상품 구조 요약",
+        "보장 항목",
+        "면책",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.safe-harbor-cover.key-information",
+      "requiredTerms": [
+        "세이프 하버 보장 플랜",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.safe-harbor-cover.risk-disclosure",
+      "requiredTerms": [
+        "세이프 하버 보장 플랜",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.safe-harbor-cover.fee-termination",
+      "requiredTerms": [
+        "세이프 하버 보장 플랜",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.safe-harbor-cover.precontract-checklist",
+      "requiredTerms": [
+        "세이프 하버 보장 플랜",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.green-step-goal.product-overview",
+      "requiredTerms": [
+        "그린스텝 목표 적립 플랜",
+        "문서 목적",
+        "상품 구조 요약",
+        "목표 금액",
+        "추가 적립",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.green-step-goal.key-information",
+      "requiredTerms": [
+        "그린스텝 목표 적립 플랜",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.green-step-goal.risk-disclosure",
+      "requiredTerms": [
+        "그린스텝 목표 적립 플랜",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.green-step-goal.fee-termination",
+      "requiredTerms": [
+        "그린스텝 목표 적립 플랜",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.green-step-goal.precontract-checklist",
+      "requiredTerms": [
+        "그린스텝 목표 적립 플랜",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.nova-cash-reserve.product-overview",
+      "requiredTerms": [
+        "노바 캐시 리저브",
+        "문서 목적",
+        "상품 구조 요약",
+        "일별 반영",
+        "평가액",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.nova-cash-reserve.key-information",
+      "requiredTerms": [
+        "노바 캐시 리저브",
+        "가입·이용 전 확인",
+        "중요 불이익·제한",
+        "정보 표시 기준",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.nova-cash-reserve.risk-disclosure",
+      "requiredTerms": [
+        "노바 캐시 리저브",
+        "핵심 위험",
+        "강조 표현 정정",
+        "적합성 판단의 한계",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.nova-cash-reserve.fee-termination",
+      "requiredTerms": [
+        "노바 캐시 리저브",
+        "비용과 정산 기준",
+        "중도해지·환매 유의사항",
+        "합성 산식 예시",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 3,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    },
+    {
+      "logicalId": "synthetic.financial.nova-cash-reserve.precontract-checklist",
+      "requiredTerms": [
+        "노바 캐시 리저브",
+        "확인 목적",
+        "중요 문서 교차 확인",
+        "설명 접근성",
+        "완전 합성 데모 문서"
+      ],
+      "minimumPages": 4,
+      "expectedExtractionMethod": "TEXT_LAYER"
+    }
+  ],
+  "ragScenarios": [
+    {
+      "scenarioId": "unqualified-guarantee-with-risk-disclosure",
+      "queryTerms": [
+        "보장",
+        "원금손실",
+        "중도해지",
+        "비용"
+      ],
+      "requiredDocumentTypes": [
+        "risk-disclosure",
+        "fee-termination",
+        "precontract-checklist"
+      ],
+      "mustRetainSyntheticDisclaimer": true
+    },
+    {
+      "scenarioId": "liquidity-and-repayment-conditions",
+      "queryTerms": [
+        "환매",
+        "상환",
+        "처리 시점",
+        "시장가치"
+      ],
+      "requiredDocumentTypes": [
+        "key-information",
+        "fee-termination"
+      ],
+      "mustNotClaimGuaranteedOutcome": true
+    }
+  ]
+}
