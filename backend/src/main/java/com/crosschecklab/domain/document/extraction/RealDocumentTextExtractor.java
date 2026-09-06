@@ -9,8 +9,8 @@ import java.util.Map;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
-// real-extraction 프로파일의 추출기. BufferedFileStorage 가 들고 있는 업로드 바이트를 형식별 추출기에 넘긴다.
-// 바이트는 한 번 읽고 버려지므로 이 프로파일에서는 재추출이 불가능하다 (재업로드가 필요하다).
+// real-extraction 프로파일의 추출기. 영구 저장된 원본 바이트를 형식별 추출기에 넘긴다.
+// 읽기는 원본을 소비하지 않으므로 같은 storage_key 로 안전하게 재추출할 수 있다.
 @Component
 @Profile("real-extraction")
 public class RealDocumentTextExtractor implements TextExtractionService {
@@ -37,7 +37,7 @@ public class RealDocumentTextExtractor implements TextExtractionService {
 
         byte[] content = fileStorage.read(target.storageKey())
                 .orElseThrow(() -> new TextExtractionException(
-                        "업로드 바이트가 남아 있지 않습니다: " + target.storageKey()));
+                        "저장된 업로드 원본을 찾을 수 없습니다: " + target.storageKey()));
 
         return extractor.extract(new ByteArrayInputStream(content));
     }

@@ -47,7 +47,16 @@ services:
     networks:
       - data
 
+  storage-init:
+    image: argus-backend:local
+    restart: "no"
+    user: root
+    entrypoint: ["chown", "argus:argus", "/var/lib/argus/documents"]
+    volumes:
+      - document-data:/var/lib/argus/documents
+
   backend:
+    image: argus-backend:local
     build:
       context: ./backend
     restart: unless-stopped
@@ -61,6 +70,7 @@ services:
       AI_SERVICE_URL: http://ai-service:8000
       AI_SERVICE_ALLOW_INSECURE_HTTP: "true"
       AI_SERVICE_INTERNAL_TOKEN: ${AI_SERVICE_INTERNAL_TOKEN:-crosschecklab-local-internal-token}
+      AI_SERVICE_READ_TIMEOUT: ${AI_SERVICE_READ_TIMEOUT:-180s}
       SPRING_PROFILES_ACTIVE: real-extraction
       RAG_OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       RAG_OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-bge-m3:latest}
@@ -68,7 +78,11 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - document-data:/var/lib/argus/documents
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       ai-service:
@@ -99,6 +113,7 @@ services:
 
 volumes:
   postgres-data:
+  document-data:
 
 networks:
   app:

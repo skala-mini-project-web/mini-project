@@ -278,6 +278,61 @@ class RiskAnalysisResponse(ApiModel):
     findings: list[FindingPayload] = Field(min_length=1)
 
 
+class OllamaFindingPayload(ApiModel):
+    statement: str = Field(min_length=1, max_length=1000)
+    severity: Severity
+    affected_persona_codes: list[PersonaCode] = Field(min_length=1)
+    retrieved_context_chunk_ids: list[int] = Field(min_length=1)
+    evidence_span_option_ids: list[str] = Field(min_length=1)
+    known_fact_ids: list[int] = Field(default_factory=list)
+    recommendation: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("affected_persona_codes")
+    @classmethod
+    def affected_personas_must_be_unique(
+        cls, value: list[PersonaCode]
+    ) -> list[PersonaCode]:
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate affected persona codes are not allowed")
+        return value
+
+    @field_validator("retrieved_context_chunk_ids")
+    @classmethod
+    def retrieved_context_chunk_ids_must_be_valid(
+        cls, value: list[int]
+    ) -> list[int]:
+        if any(identifier <= 0 for identifier in value):
+            raise ValueError("retrieved context chunk ids must be positive")
+        if len(value) != len(set(value)):
+            raise ValueError(
+                "duplicate retrieved context chunk ids are not allowed"
+            )
+        return value
+
+    @field_validator("evidence_span_option_ids")
+    @classmethod
+    def evidence_span_option_ids_must_be_nonblank(
+        cls, value: list[str]
+    ) -> list[str]:
+        if any(not identifier.strip() for identifier in value):
+            raise ValueError("evidence span option ids must not be blank")
+        return value
+
+    @field_validator("known_fact_ids")
+    @classmethod
+    def known_fact_ids_must_be_unique(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate known fact ids are not allowed")
+        return value
+
+
+class OllamaRiskAnalysisResponse(ApiModel):
+    risk_score: int = Field(ge=0, le=100)
+    model_version: str = Field(min_length=1, max_length=100)
+    prompt_version: str = Field(min_length=1, max_length=100)
+    findings: list[OllamaFindingPayload] = Field(min_length=1)
+
+
 class HealthResponse(ApiModel):
     status: str
     provider: AnalysisProvider

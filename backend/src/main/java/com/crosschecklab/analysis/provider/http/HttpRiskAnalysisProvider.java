@@ -69,16 +69,18 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
     @Override
     public AnalysisResult analyze(AnalysisRequest request) {
         try {
-            AnalysisResult result = restClient.post()
+            byte[] responseBody = restClient.post()
                     .uri(ANALYZE_PATH)
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
                     .body(request)
-                    .retrieve()
-                    .onStatus(HttpStatusCode::isError, (req, response) -> {
-                        throw toProviderException(response);
-                    })
-                    .body(AnalysisResult.class);
+                    .exchange((req, response) -> {
+                        if (response.getStatusCode().isError()) {
+                            throw toProviderException(response);
+                        }
+                        return response.getBody().readAllBytes();
+                    });
+            AnalysisResult result = parseResponse(responseBody);
             return validate(request, result);
         } catch (ResourceAccessException e) {
             // 연결 실패 / 읽기 타임아웃 — 같은 요청을 그대로 재시도할 수 있다.
@@ -88,6 +90,17 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
             // 응답 본문을 계약대로 읽지 못한 경우(역직렬화 실패 등). 재시도해도 같은 결과다.
             throw new ProviderException(ErrorCode.PROVIDER_RESPONSE_INVALID, false,
                     "ai-service 응답 해석 실패: " + e.getMessage());
+        }
+    }
+
+    private AnalysisResult parseResponse(byte[] responseBody) {
+        if (responseBody == null || responseBody.length == 0) {
+            throw invalid("응답 본문이 비어 있음");
+        }
+        try {
+            return objectMapper.readValue(responseBody, AnalysisResult.class);
+        } catch (IOException e) {
+            throw invalid("ai-service 응답 JSON 해석 실패: " + e.getMessage());
         }
     }
 

@@ -10,7 +10,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 public record AiServiceProperties(
         @DefaultValue("http://localhost:8000") String baseUrl,
         @DefaultValue("2s") Duration connectTimeout,
-        @DefaultValue("20s") Duration readTimeout,
+        @DefaultValue("180s") Duration readTimeout,
         @DefaultValue("GUARANTEE_MISUNDERSTANDING_HIGH") String defaultScenarioCode,
         @DefaultValue("false") boolean allowInsecureHttp,
         @DefaultValue("crosschecklab-local-internal-token") String internalToken

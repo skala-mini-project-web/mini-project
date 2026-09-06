@@ -4,6 +4,9 @@ import static com.crosschecklab.global.security.DemoAuthenticationFilter.ROLE_HE
 import static com.crosschecklab.global.security.DemoAuthenticationFilter.USER_ID_HEADER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -16,6 +19,7 @@ import com.crosschecklab.global.common.enums.ExtractStatus;
 import com.crosschecklab.support.IntegrationTestSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
 
@@ -46,6 +51,9 @@ class DocumentApiTest extends IntegrationTestSupport {
 
     @Autowired
     private ProductDocumentRepository productDocumentRepository;
+
+    @MockitoSpyBean
+    private DocumentSourceRevisionRepository documentSourceRevisionRepository;
 
     // 컨테이너는 JVM 당 하나라 여기서 만든 데이터가 다른 테스트로 새어 나간다.
     // 문서를 먼저 지워야 상품 삭제가 FK 에 걸리지 않는다.
@@ -224,6 +232,51 @@ class DocumentApiTest extends IntegrationTestSupport {
             String secondChecksum = fetchDocument(second).get("checksum").asText();
 
             assertThat(firstChecksum).hasSize(64).isEqualTo(secondChecksum);
+        }
+
+        @Test
+        @DisplayName("업로드는 영속 원본 식별자를 가진 source revision 1을 정확히 하나 만든다")
+        void createsInitialSourceRevision() throws Exception {
+            long productId = createProduct();
+            byte[] sourceBytes = "불변 원본 본문".getBytes(StandardCharsets.UTF_8);
+            long documentId = upload(productId, new MockMultipartFile(
+                    "file", "원본.pdf", PDF_CONTENT_TYPE, sourceBytes), null);
+
+            ProductDocument document = productDocumentRepository.findById(documentId).orElseThrow();
+            List<DocumentSourceRevision> revisions =
+                    documentSourceRevisionRepository.findAllByProductDocument_IdOrderByRevisionNumberAsc(documentId);
+
+            assertThat(revisions).singleElement().satisfies(revision -> {
+                assertThat(revision.getProductDocumentId()).isEqualTo(documentId);
+                assertThat(revision.getRevisionNumber()).isEqualTo(1);
+                assertThat(revision.getFileName()).isEqualTo(document.getFileName());
+                assertThat(revision.getMediaType()).isEqualTo(document.getMediaType());
+                assertThat(revision.getFileSize()).isEqualTo(document.getFileSize());
+                assertThat(revision.getChecksum()).isEqualTo(document.getChecksum());
+                assertThat(revision.getStorageKey()).isEqualTo(document.getStorageKey());
+                assertThat(revision.getSourceHash()).isEqualTo(document.getChecksum());
+                assertThat(revision.getCreatedAt()).isNotNull();
+            });
+        }
+
+        @Test
+        @DisplayName("source revision 저장이 실패하면 문서도 함께 롤백된다")
+        void rollsBackDocumentWhenSourceRevisionFails() throws Exception {
+            long productId = createProduct();
+            long documentCountBefore = productDocumentRepository.count();
+            long revisionCountBefore = documentSourceRevisionRepository.count();
+            doThrow(new IllegalStateException("source revision persistence failure"))
+                    .when(documentSourceRevisionRepository).save(any(DocumentSourceRevision.class));
+
+            try {
+                mockMvc.perform(asPm(uploadTo(productId).file(pdf("롤백.pdf", "본문"))))
+                        .andExpect(status().isInternalServerError());
+            } finally {
+                reset(documentSourceRevisionRepository);
+            }
+
+            assertThat(productDocumentRepository.count()).isEqualTo(documentCountBefore);
+            assertThat(documentSourceRevisionRepository.count()).isEqualTo(revisionCountBefore);
         }
 
         @Test
