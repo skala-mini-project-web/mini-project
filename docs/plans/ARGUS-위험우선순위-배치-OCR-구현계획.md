@@ -212,11 +212,19 @@ Backend durable OCR job
 - 산출물: policy ontology, M/L matrix, hard-stop catalog, taxonomy version, fixture manifest, calibration plan
 - 완료 기준: 정책 owner와 reviewer가 versioned spec을 승인
 
-### Feature 1. 불변 source revision·근거 anchor
+### Feature 1a. 불변 source revision
 
 - branch: `feature/immutable-document-evidence`
 - Issue: [#84 불변 문서 revision과 score 근거 anchor 도입](https://github.com/skala-mini-project-web/mini-project/issues/84)
-- 완료 기준: source·evidence offset/hash, append-only retry/review history, migration upgrade·clean DB 검증
+- 상태: 완료
+- 완료 근거: durable source storage, source revision V15, actual Docker source hash·RAG E2E
+
+### Feature 1b. 불변 evidence anchor·Finding revision
+
+- branch: `feature/immutable-evidence-anchors`
+- Issue: [#95 불변 score evidence anchor와 Finding revision 도입](https://github.com/skala-mini-project-web/mini-project/issues/95)
+- 완료 기준: source·evidence offset/hash, append-only execution·retry·review history, migration upgrade·clean DB 검증
+- 데이터 원칙: 기존 excerpt-only 분석 이력에는 정확한 page·offset·hash를 추정해 넣지 않는다. 새 execution부터 anchored result만 score-eligible로 취급한다.
 
 ### Feature 2. Persona taxonomy와 결정론 score engine
 
