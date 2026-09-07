@@ -25,4 +25,4 @@
 
 - Delete is not tested because the backend exposes no `DELETE` endpoint or deletion UI.
 - A real retry-success path is not claimed: no deterministic real transient extractor fault exists yet.
-- Deterministic score engine, durable batch queue, and Korean scanned-PDF OCR are not implemented and therefore cannot be E2E-complete.
+- Deterministic score ledger, durable batch queue, and Korean scanned-PDF OCR are covered by their own receipts, not by this run: `batch-boundary-e2e.md`, `batch-cancel-e2e.md`, `korean-ocr-e2e.md`, `cross-role-authz-e2e.md`, `critical-visual-e2e.md`, and the `SCORED` assertion in `frontend/scripts/real-rag-full-flow-e2e.mjs`.

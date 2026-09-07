@@ -165,6 +165,7 @@ docker compose ps
 
 - Compose container는 기본적으로 `http://host.docker.internal:11434`의 host Ollama에 연결
 - `.env.example`의 `AI_SERVICE_INTERNAL_TOKEN`은 로컬 합성 기본값이며 운영 secret이 아님
+- 메모리 상한: backend 2g(heap 60%)·ai-service 512m·ocr-worker 768m. 모델 context는 `OLLAMA_NUM_CTX`(기본 32768, KV cache 약 1.9GB), 모델 상주 시간은 `OLLAMA_KEEP_ALIVE`로 조정. 다른 작업과 같이 돌릴 때는 `OLLAMA_NUM_CTX=8192`, `OLLAMA_KEEP_ALIVE=1m`
 
 ### 3. 접속과 상태 확인
 
@@ -226,6 +227,18 @@ node frontend/scripts/real-rag-full-flow-e2e.mjs
 - API interception과 `mockServer`를 사용하지 않음
 - page error, request failure, 예상 밖 4xx/5xx 응답은 실패 처리
 - 상세 coverage와 미지원 범위: [`docs/reports/real-browser-e2e-coverage.md`](docs/reports/real-browser-e2e-coverage.md)
+
+### 합성 corpus·fixture 도구
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
+.venv/bin/python tools/validate_synthetic_financial_corpus.py
+.venv/bin/python tools/validate_synthetic_ocr_fixtures.py
+.venv/bin/python tools/generate_erd_dbml.py --check
+```
+
+- 합성 금융 문서 corpus 30종·OCR fixture 6종의 SHA-256·page 수·text layer 기대값 검증
+- ERD DBML이 실행 schema DDL과 같은지 확인
 
 ## 제출 산출물
 

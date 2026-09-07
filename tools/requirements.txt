@@ -1,0 +1,4 @@
+# tools/*.py 실행용. python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
+pypdf>=5.0
+reportlab>=4.0
+Pillow>=10.0
