@@ -11,7 +11,7 @@ ARGUS 프롬프트는 위험을 자유롭게 추측하게 하는 질문이 아�
 - AI service: FastAPI internal boundary
 - chat model: Ollama `qwen2.5:7b-instruct`
 - embedding selector: `bge-m3:latest`
-- prompt version: `ollama-rag-grounded-v6`
+- prompt version: `ollama-rag-grounded-v13`
 - generation: `temperature: 0`, `seed: 42`
 - response format: Pydantic JSON Schema
 

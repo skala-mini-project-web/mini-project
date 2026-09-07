@@ -60,7 +60,7 @@ Ollama는 exact excerpt를 자유 생성하지 않는다. 다음처럼 `evidence
 {
   "riskScore": 72,
   "modelVersion": "qwen2.5:7b-instruct",
-  "promptVersion": "ollama-rag-grounded-v6",
+  "promptVersion": "ollama-rag-grounded-v13",
   "findings": [
     {
       "statement": "안정·보장 표현이 변동 수익과 손실 가능성을 가릴 수 있습니다.",
@@ -84,7 +84,7 @@ FastAPI는 option ID가 현재 request의 retrieved context 안에 있는지 확
 {
   "riskScore": 72,
   "modelVersion": "qwen2.5:7b-instruct",
-  "promptVersion": "ollama-rag-grounded-v6",
+  "promptVersion": "ollama-rag-grounded-v13",
   "findings": [
     {
       "statement": "...",

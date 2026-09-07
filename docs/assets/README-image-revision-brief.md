@@ -9,6 +9,7 @@
 - `latest` tag를 artifact-pinned model이라고 표현하지 않는다.
 - OCR confidence를 정확성 또는 PM 확정으로 표현하지 않는다.
 - `PM`과 `Compliance Reviewer` 권한을 명확히 분리한다.
+- prompt version 문자열은 `ai-service/app/service.py`의 `OLLAMA_PROMPT_VERSION` 현재 값(`ollama-rag-grounded-v13`)을 그대로 쓴다. 현재 `ai-prompt-design.png`는 `v6`로 표기되어 있어 다음 재생성 대상이다.
 
 ## `system-architecture.png`
 
