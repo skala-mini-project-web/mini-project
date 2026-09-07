@@ -4,17 +4,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.crosschecklab.domain.document.batch.DocumentBatchClaimRepository;
 import com.crosschecklab.domain.document.batch.DocumentBatchRepository;
+import com.crosschecklab.domain.document.batch.DocumentBatchService;
 import com.crosschecklab.domain.document.batch.DocumentBatchStatus;
 import com.crosschecklab.domain.document.extraction.DocumentExtractionResult;
 import com.crosschecklab.domain.document.extraction.PageExtractionResult;
+import com.crosschecklab.global.common.enums.UserRole;
+import com.crosschecklab.global.security.DemoUser;
 import com.crosschecklab.support.IntegrationTestSupport;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -27,6 +32,8 @@ class DocumentBatchAggregateIntegrationTest extends IntegrationTestSupport {
     private static final String CHECKSUM = "a".repeat(64);
     private static final String WORKER = "aggregate-regression-worker";
 
+    private final List<Long> createdProductIds = new ArrayList<>();
+
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
@@ -37,7 +44,50 @@ class DocumentBatchAggregateIntegrationTest extends IntegrationTestSupport {
     private DocumentBatchRepository batches;
 
     @Autowired
+    private DocumentBatchService batchService;
+
+    @Autowired
     private DocumentExtractionTransitions transitions;
+
+    @AfterEach
+    void cleanUpCreatedRows() {
+        for (Long productId : createdProductIds) {
+            jdbcTemplate.update("""
+                    DELETE FROM document_batch_item_attempts
+                    WHERE item_id IN (
+                        SELECT id FROM document_batch_items WHERE product_id = ?
+                    )
+                    """, productId);
+            jdbcTemplate.update(
+                    "DELETE FROM document_batch_items WHERE product_id = ?", productId);
+            jdbcTemplate.update(
+                    "DELETE FROM document_batches WHERE product_id = ?", productId);
+            jdbcTemplate.update("""
+                    UPDATE product_documents
+                    SET current_extraction_run_id = NULL
+                    WHERE product_id = ?
+                    """, productId);
+            jdbcTemplate.update("""
+                    DELETE FROM document_extraction_pages
+                    WHERE extraction_run_id IN (
+                        SELECT r.id
+                        FROM document_extraction_runs r
+                        JOIN product_documents d ON d.id = r.product_document_id
+                        WHERE d.product_id = ?
+                    )
+                    """, productId);
+            jdbcTemplate.update("""
+                    DELETE FROM document_extraction_runs
+                    WHERE product_document_id IN (
+                        SELECT id FROM product_documents WHERE product_id = ?
+                    )
+                    """, productId);
+            jdbcTemplate.update(
+                    "DELETE FROM product_documents WHERE product_id = ?", productId);
+            jdbcTemplate.update("DELETE FROM products WHERE id = ?", productId);
+        }
+        createdProductIds.clear();
+    }
 
     @Test
     @Transactional
@@ -75,6 +125,60 @@ class DocumentBatchAggregateIntegrationTest extends IntegrationTestSupport {
                 FROM document_batches
                 WHERE id = ?
                 """, Boolean.class, NOW.plusMinutes(2), batchId)).isTrue();
+    }
+
+    @Test
+    @Transactional
+    void oneSucceededItemMakesItsBatchDurablyTerminal() {
+        Long productId = insertProduct("single item aggregation");
+        Long documentId = insertDocument(productId, "single.pdf");
+        Long batchId = insertBatch(productId, 1, "single-item-");
+        Long itemId = insertLeasedItem(batchId, productId, documentId, 1);
+
+        assertThat(claims.completeClaim(
+                itemId, WORKER, 1L, NOW.plusMinutes(1), "single item text")).isEqualTo(1);
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT b.status = 'SUCCEEDED'
+                       AND b.terminal_at = ?
+                       AND b.cancelled_at IS NULL
+                       AND b.quarantined_at IS NULL
+                       AND i.status = 'SUCCEEDED'
+                       AND i.terminal_at = b.terminal_at
+                       AND a.outcome = 'SUCCEEDED'
+                       AND a.ended_at = b.terminal_at
+                FROM document_batches b
+                JOIN document_batch_items i ON i.batch_id = b.id
+                JOIN document_batch_item_attempts a ON a.item_id = i.id
+                WHERE b.id = ?
+                """, Boolean.class, NOW.plusMinutes(1), batchId)).isTrue();
+    }
+
+    @Test
+    @Transactional
+    void explicitlyQuarantinedItemCannotBeClaimedAgain() {
+        Long productId = insertProduct("quarantine claim guard");
+        Long documentId = insertDocument(productId, "quarantine.pdf");
+        Long batchId = insertBatch(productId, 1, "quarantine-guard-");
+        Long itemId = insertPendingItem(batchId, productId, documentId, 1, 3);
+
+        batchService.quarantineItem(
+                batchId,
+                itemId,
+                "Explicitly quarantined.",
+                new DemoUser(1L, "pm_park", "Product manager", UserRole.PRODUCT_MANAGER));
+
+        assertThat(claims.claimDue(
+                "future-worker", NOW.plusDays(1), NOW.plusDays(1).plusMinutes(5), 10)).isEmpty();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT status = 'QUARANTINED'
+                       AND lease_owner IS NULL
+                       AND lease_until IS NULL
+                       AND attempt_count = 0
+                       AND lease_fence = 0
+                FROM document_batch_items
+                WHERE id = ?
+                """, Boolean.class, itemId)).isTrue();
     }
 
     @Test
@@ -197,12 +301,14 @@ class DocumentBatchAggregateIntegrationTest extends IntegrationTestSupport {
     }
 
     private Long insertProduct(String name) {
-        return jdbcTemplate.queryForObject("""
+        Long productId = jdbcTemplate.queryForObject("""
                 INSERT INTO products (
                     owner_id, name, product_type, created_at, updated_at
                 ) VALUES (1, ?, 'INVESTMENT', ?, ?)
                 RETURNING id
                 """, Long.class, name, NOW, NOW);
+        createdProductIds.add(productId);
+        return productId;
     }
 
     private Long insertBatch(Long productId, int requestedItemCount, String keyPrefix) {
@@ -263,6 +369,39 @@ class DocumentBatchAggregateIntegrationTest extends IntegrationTestSupport {
                 ) VALUES (?, 1, 1, ?, ?)
                 """, itemId, WORKER, NOW);
         return itemId;
+    }
+
+    private Long insertPendingItem(
+            Long batchId,
+            Long productId,
+            Long documentId,
+            int ordinal,
+            int maxAttempts
+    ) {
+        return jdbcTemplate.queryForObject("""
+                INSERT INTO document_batch_items (
+                    batch_id, product_id, owner_id, product_document_id, ordinal,
+                    source_file_name, source_media_type, source_file_size,
+                    source_checksum, source_storage_key, due_at, max_attempts,
+                    created_at, updated_at
+                ) VALUES (
+                    ?, ?, 1, ?, ?, ?, 'application/pdf', 1,
+                    ?, ?, ?, ?, ?, ?
+                )
+                RETURNING id
+                """,
+                Long.class,
+                batchId,
+                productId,
+                documentId,
+                ordinal,
+                "item-" + ordinal + ".pdf",
+                CHECKSUM,
+                "mock://item-" + ordinal,
+                NOW,
+                maxAttempts,
+                NOW,
+                NOW);
     }
 
     private static DocumentExtractionResult structuredResult(String text) {

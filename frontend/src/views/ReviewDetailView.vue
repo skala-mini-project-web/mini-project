@@ -264,4 +264,8 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .decided .dm { margin-left: auto; }
 .decided .dc { flex-basis: 100%; margin-top: 4px; }
 @media (max-width: 760px) { .trace-meta { grid-template-columns: 1fr; } .trace-context-head { align-items: flex-start; flex-wrap: wrap; } .trace-score { margin-left: 0; } }
+@media (max-width: 480px) {
+  .top { flex-wrap: wrap; }
+  .top-r { width: 100%; flex-wrap: wrap; gap: var(--s-8); }
+}
 </style>

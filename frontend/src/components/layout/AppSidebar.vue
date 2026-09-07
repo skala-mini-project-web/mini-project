@@ -76,7 +76,7 @@ function leave() {
     </div>
 
     <nav class="nav">
-      <RouterLink v-for="item in nav" :key="item.to" :to="item.to" class="nav-item" :class="{ on: isActive(item.to) }">
+      <RouterLink v-for="item in nav" :key="item.to" :to="item.to" class="nav-item" :class="{ on: isActive(item.to) }" :aria-label="item.label">
         <component :is="item.icon" :size="18" :weight="isActive(item.to) ? 'fill' : 'regular'" />
         <span>{{ item.label }}</span>
         <span v-if="item.to === '/products' && jobs.unread" class="nav-badge mono">{{ jobs.unread }}</span>
@@ -102,6 +102,7 @@ function leave() {
   position: fixed;
   inset: 0 auto 0 0;
   width: var(--rail-w);
+  box-sizing: border-box;
   background: var(--surface);
   border-right: 1px solid var(--line);
   display: flex;
@@ -154,12 +155,24 @@ function leave() {
     position: sticky; inset: auto; width: 100%; flex-direction: row;
     align-items: center; padding: var(--s-12) var(--s-16);
     border-right: 0; border-bottom: 1px solid var(--line); gap: var(--s-16);
+    overflow: hidden;
   }
   .rail-top { padding: 0; }
   .rail-tag { display: none; }
-  .nav { flex-direction: row; margin-top: 0; overflow-x: auto; flex: 1; }
+  .nav { flex-direction: row; margin-top: 0; overflow-x: auto; flex: 1; min-width: 0; }
   .nav-item.on::before { left: 4px; right: 4px; top: auto; bottom: -2px; width: auto; height: 2px; }
   .rail-foot { margin-top: 0; padding-top: 0; border-top: 0; flex: none; }
   .who { display: none; }
+}
+
+@media (max-width: 480px) {
+  .rail { gap: var(--s-8); padding: var(--s-10) var(--s-12); }
+  .logo-img { height: 24px; }
+  .nav { gap: var(--s-4); }
+  .nav-item { flex: none; padding: var(--s-8); }
+  .nav-item > span:not(.nav-badge) { display: none; }
+  .nav-badge { position: absolute; top: 2px; right: 2px; }
+  .rail-foot { gap: var(--s-4); }
+  .who-actions { padding-left: 0; }
 }
 </style>

@@ -17,11 +17,14 @@ import com.crosschecklab.domain.document.batch.DocumentBatchItem;
 import com.crosschecklab.domain.document.batch.DocumentBatchWorker;
 import com.crosschecklab.domain.document.extraction.DocumentExtractionResult;
 import com.crosschecklab.domain.document.extraction.ExtractionTarget;
+import com.crosschecklab.domain.document.extraction.OcrClient;
 import com.crosschecklab.domain.document.extraction.PageExtractionResult;
 import com.crosschecklab.domain.document.extraction.PdfBoxTextExtractor;
 import com.crosschecklab.domain.document.extraction.TextExtractionException;
 import com.crosschecklab.domain.document.extraction.TextExtractionService;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -36,6 +39,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -160,6 +165,79 @@ class DocumentExtractionRunnerTest {
                 eq(TextExtractionException.class.getName()));
         verify(transitions, never()).completeBatchExtraction(
                 eq(20L), anyString(), eq(6L), any(), eq(result));
+    }
+
+    @Test
+    void emptyOcrOutputIsRejectedBeforeStructuredProvenanceCanPublish() throws Exception {
+        OcrClient ocrClient = mock(OcrClient.class);
+        when(ocrClient.recognize(any())).thenThrow(new OcrClient.OcrException(
+                OcrClient.FailureKind.NO_TEXT, "synthetic blank page has no OCR text"));
+
+        PdfBoxTextExtractor extractor = new PdfBoxTextExtractor(ocrClient);
+
+        assertThatThrownBy(() -> extractor.extractResult(blankSyntheticPdf()))
+                .isInstanceOfSatisfying(TextExtractionException.class, failure -> {
+                    assertThat(failure.isRetryable()).isFalse();
+                    assertThat(failure).hasMessageContaining("synthetic blank page has no OCR text");
+                });
+        verify(ocrClient).recognize(any());
+    }
+
+    @Test
+    void transientOcrWorkerFailureIsRetryableAndPublishesNoPartialResult() throws Exception {
+        OcrClient ocrClient = mock(OcrClient.class);
+        when(ocrClient.recognize(any())).thenThrow(new OcrClient.OcrException(
+                OcrClient.FailureKind.TEMPORARY, "synthetic worker timeout"));
+
+        PdfBoxTextExtractor extractor = new PdfBoxTextExtractor(ocrClient);
+
+        assertThatThrownBy(() -> extractor.extractResult(blankSyntheticPdf()))
+                .isInstanceOfSatisfying(TextExtractionException.class, failure -> {
+                    assertThat(failure.isRetryable()).isTrue();
+                    assertThat(failure).hasMessageContaining("synthetic worker timeout");
+                });
+        verify(ocrClient).recognize(any());
+    }
+
+    @Test
+    void renderOrOcrFailureCannotPublishPartialPageProvenance() {
+        DocumentBatchClaimRepository claims = mock(DocumentBatchClaimRepository.class);
+        DocumentExtractionTransitions transitions = mock(DocumentExtractionTransitions.class);
+        TextExtractionService extractionService = mock(TextExtractionService.class);
+        DocumentBatchItem item = mock(DocumentBatchItem.class, RETURNS_DEEP_STUBS);
+        ExtractionTarget target =
+                new ExtractionTarget(45L, "render-failure.pdf", "application/pdf", "sha256://render");
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+
+        when(item.getId()).thenReturn(21L);
+        when(item.getLeaseFence()).thenReturn(7L);
+        when(item.getAttemptCount()).thenReturn(1);
+        when(claims.claimDue(anyString(), any(), any(), eq(1)))
+                .thenReturn(List.of(item))
+                .thenReturn(List.of());
+        when(transitions.beginBatchExtraction(eq(21L), anyString(), eq(7L), any()))
+                .thenReturn(Optional.of(target));
+        when(extractionService.extractResult(target))
+                .thenThrow(new TextExtractionException(
+                        "synthetic page render failed", new IOException("PNG encoder failure")));
+        when(transitions.failBatchExtraction(
+                eq(21L), anyString(), eq(7L), any(), any(), eq(false),
+                eq("DOCUMENT_EXTRACTION_FAILED"),
+                eq("문서에서 텍스트를 추출하지 못했습니다."),
+                anyString(), anyString()))
+                .thenReturn(true);
+
+        new DocumentBatchWorker(
+                claims, transitions, extractionService, Runnable::run, clock).wakeUp();
+
+        verify(transitions, timeout(1_000)).failBatchExtraction(
+                eq(21L), anyString(), eq(7L), any(), any(), eq(false),
+                eq("DOCUMENT_EXTRACTION_FAILED"),
+                eq("문서에서 텍스트를 추출하지 못했습니다."),
+                eq("Document extraction failed permanently or exhausted its attempts."),
+                eq(TextExtractionException.class.getName()));
+        verify(transitions, never()).completeBatchExtraction(
+                eq(21L), anyString(), eq(7L), any(), any(DocumentExtractionResult.class));
     }
 
     @Test
@@ -386,6 +464,15 @@ class DocumentExtractionRunnerTest {
         return DocumentExtractionResult.ofPages(
                 "a".repeat(64),
                 List.of(PageExtractionResult.pdfBox(1, text, textHash)));
+    }
+
+    private static byte[] blankSyntheticPdf() throws IOException {
+        try (PDDocument document = new PDDocument();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            document.addPage(new PDPage());
+            document.save(output);
+            return output.toByteArray();
+        }
     }
 
     private static String sha256(String text) {

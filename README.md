@@ -76,6 +76,8 @@ Frontend
 
 ### 설계 이미지
 
+이미지 재생성 시에는 [`docs/assets/README-image-revision-brief.md`](docs/assets/README-image-revision-brief.md)를 사실 기준으로 사용한다.
+
 ![핵심 ERD](docs/assets/erd-core.png)
 
 ![전체 ERD](docs/assets/erd-v3.png)
@@ -268,12 +270,13 @@ ollama list
   - `[예정]` held-out TEVV calibration·artifact-pinned model comparison과 score band 재보정
 - 대량 파일 자동 처리
   - `[완료]` PostgreSQL durable batch queue, `SKIP LOCKED` lease/fence, item별 retry·cancel·quarantine·attempt audit
-  - `[완료]` 1–100 파일 batch upload, CSV error report, PM management·reviewer read-only, actual browser E2E
+  - `[완료]` 1–100 파일 batch upload, cancel·retry·quarantine·CSV error report, PM management·reviewer read-only, actual browser E2E
 - PDF 한글 OCR
   - `[완료]` PDFBox-first page routing, isolated `kor+eng` OCR worker, page artifact/hash·confidence·engine provenance
-  - `[완료]` PM current run/text-hash confirmation, reviewer read-only, synthetic scan fixtures, actual Compose/browser E2E
+  - `[완료]` PM current run/text-hash confirmation, reviewer read-only, blank·corrupt·LOW confidence·stale confirmation synthetic fixture, actual Compose/browser E2E
 - 실서비스 검증·합성 corpus
   - `[완료]` 실제 browser E2E: PM 수정·확정, 분석 후 수정 409, reviewer read-only, malformed PDF 실패 화면, RAG→review→Risk Pattern→GuardFit
+  - `[완료]` 실제 browser E2E: PM/reviewer 서버 권한 거부 403, desktop·390px overflow/focus/action visibility
   - `[완료]` 6개 합성 상품군·30개 PDF·102페이지 corpus의 PDFBox extraction·SHA-256·source revision 검증
 
 ## 팀 구성

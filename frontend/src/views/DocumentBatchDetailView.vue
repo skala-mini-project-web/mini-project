@@ -225,6 +225,15 @@ td { font-size: var(--text-sm); }
   .summary div:nth-child(3) { border-right: 0; }
   .summary div:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
   .toolbar { align-items: flex-start; flex-direction: column; }
-  .actions { flex-wrap: wrap; justify-content: flex-start; }
+  .actions { flex-wrap: wrap; justify-content: flex-start; width: 100%; }
+}
+@media (max-width: 480px) {
+  .top > div { min-width: 0; }
+  .top .kicker, .note { overflow-wrap: anywhere; }
+  .actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .actions :deep(.btn) { width: 100%; min-width: 0; }
 }
 </style>

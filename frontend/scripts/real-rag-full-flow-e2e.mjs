@@ -282,7 +282,11 @@ try {
   const rawExtractionUnchangedDuringEdit = await rawText.textContent() === rawExtractedText
   assert(rawExtractionUnchangedDuringEdit, 'Editing confirmed text also changed the read-only raw extraction')
 
-  const confirm = await waitForApi(pmPage, 'PATCH', new RegExp(`^/api/documents/${String(documentId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/text$`), () => pmPage.getByRole('button', { name: '텍스트 확정' }).click())
+  const save = await waitForApi(pmPage, 'PATCH', new RegExp(`^/api/documents/${String(documentId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/text$`), () => pmPage.getByRole('button', { name: '텍스트 저장' }).click())
+  assert.equal(save.body?.confirmed, false, 'PM text save unexpectedly confirmed the document')
+  assert.equal(save.body?.extractedText, confirmedText, 'API response did not persist the PM textarea mutation')
+  await pmPage.getByText('텍스트 저장됨', { exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
+  const confirm = await waitForApi(pmPage, 'PATCH', new RegExp(`^/api/documents/${String(documentId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/text$`), () => pmPage.getByRole('button', { name: '현재 실행·텍스트 확정' }).click())
   assert.equal(confirm.body?.confirmed, true, 'Document text confirmation was not persisted')
   assert.equal(confirm.body?.extractedText, confirmedText, 'API response did not persist the PM textarea mutation')
   assert.match(confirm.body.extractedText, new RegExp(CANONICAL_TEXT), 'Confirmed text lost the canonical PDF content')
@@ -453,7 +457,7 @@ try {
   const rejectedMutationPromise = pmPage.waitForResponse((response) =>
     response.request().method() === 'PATCH' && apiPath(response.url()) === documentTextApiPath,
   { timeout: UI_TIMEOUT_MS })
-  await pmPage.getByRole('button', { name: '확정 갱신', exact: true }).click()
+  await pmPage.getByRole('button', { name: '텍스트 저장' }).click()
   const rejectedMutationResponse = await rejectedMutationPromise
   const rejectedMutationBody = await rejectedMutationResponse.json().catch(() => null)
   assert.equal(rejectedMutationResponse.status(), 409, 'Post-analysis document mutation was not rejected with HTTP 409')

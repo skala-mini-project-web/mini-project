@@ -48,14 +48,4 @@ onUnmounted(() => {
   </teleport>
 </template>
 
-<style scoped>
-.ov { position: fixed; inset: 0; background: rgba(14, 17, 22, 0.35); display: grid; place-items: center; padding: var(--s-24); z-index: 100; animation: fade var(--fast) var(--ease); }
-@keyframes fade { from { opacity: 0; } }
-.dlg { width: 100%; max-width: 500px; background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow-pop); max-height: 90dvh; display: flex; flex-direction: column; }
-.dlg:focus-visible { outline: none; }
-.dh { display: flex; align-items: center; justify-content: space-between; padding: var(--s-20) var(--s-24); border-bottom: 1px solid var(--line); }
-.x { display: grid; place-items: center; width: 34px; height: 34px; border: 0; background: transparent; color: var(--ink-mute); border-radius: var(--r-sm); cursor: pointer; }
-.x:hover { background: var(--surface-2); color: var(--ink); }
-.db { padding: var(--s-24); overflow-y: auto; }
-.df { display: flex; justify-content: flex-end; gap: var(--s-10); padding: var(--s-16) var(--s-24); border-top: 1px solid var(--line); }
-</style>
+<style scoped src="./GModal.css"></style>

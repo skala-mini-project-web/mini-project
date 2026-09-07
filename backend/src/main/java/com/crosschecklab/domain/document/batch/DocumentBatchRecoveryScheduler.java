@@ -25,7 +25,10 @@ public class DocumentBatchRecoveryScheduler {
      * This tick is only a recovery scan and worker wake-up. It never claims pending rows itself;
      * ownership is established solely by the worker's fenced PostgreSQL claim.
      */
-    @Scheduled(initialDelayString = "PT2S", fixedDelayString = "PT5S")
+    @Scheduled(
+            initialDelayString = "${document-batch.worker.initial-delay:PT2S}",
+            fixedDelayString = "${document-batch.worker.fixed-delay:PT5S}"
+    )
     public void recoverAndWakeUp() {
         try {
             int recovered = claimRepository.recoverExpiredLeases(

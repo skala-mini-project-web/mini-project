@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "data" / "synthetic-ocr-fixtures"
 GENERATOR_ID = "argus-synthetic-korean-ocr-v1"
 SEED = 870031
+OBSOLETE_FIXTURES = ("blank.pdf",)
 FONT_CANDIDATES = (
     ROOT / "tools" / "fonts" / "NotoSansKR-Regular.ttf",
     Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
@@ -110,6 +111,14 @@ def scan_png(font_path: Path, *, degraded: bool = False) -> bytes:
     return output.getvalue()
 
 
+def blank_page_png() -> bytes:
+    """A real image-only page whose pixels deterministically contain no OCR signal."""
+    image = Image.new("L", (1240, 1754), 255)
+    output = io.BytesIO()
+    image.save(output, format="PNG", compress_level=9, optimize=False)
+    return output.getvalue()
+
+
 def image_pdf(png: bytes, title: str) -> bytes:
     output = io.BytesIO()
     canvas = Canvas(output, pagesize=A4, invariant=1, pageCompression=0)
@@ -144,18 +153,10 @@ def mixed_pdf(font_name: str, png: bytes) -> bytes:
     return output.getvalue()
 
 
-def blank_pdf() -> bytes:
-    output = io.BytesIO()
-    canvas = Canvas(output, pagesize=A4, invariant=1, pageCompression=0)
-    metadata(canvas, "Synthetic blank PDF fixture")
-    canvas.showPage()
-    canvas.save()
-    return output.getvalue()
-
-
 def fixture_specs(font_name: str, font_path: Path) -> list[tuple[str, bytes, dict]]:
     clean_scan = scan_png(font_path)
     degraded_scan = scan_png(font_path, degraded=True)
+    blank_scan = blank_page_png()
     return [
         ("born-digital-ko-en.pdf", digital_pdf(font_name), {
             "scenario": "born-digital-korean-english", "page_count": 1,
@@ -175,11 +176,12 @@ def fixture_specs(font_name: str, font_path: Path) -> list[tuple[str, bytes, dic
         }),
         ("low-confidence-korean-scan.pdf", image_pdf(degraded_scan, "Synthetic degraded Korean scan"), {
             "scenario": "low-confidence-scan", "page_count": 1,
-            "expected_outcome": "READY_LOW_CONFIDENCE_OR_FAILED_LOW_SIGNAL",
-            "expected_page_routes": ["OCR_KOR_ENG"], "expected_confidence_band": "LOW",
+            "expected_outcome": "READY_UNCONFIRMED", "expected_page_routes": ["OCR_KOR_ENG"],
+            "required_ocr_language": "kor+eng", "expected_confidence_band": "LOW",
+            "expected_confidence_below": 70, "requires_reviewer_confirmation": True,
         }),
-        ("blank.pdf", blank_pdf(), {
-            "scenario": "blank", "page_count": 1, "expected_outcome": "FAILED_NO_TEXT",
+        ("blank-image-page.pdf", image_pdf(blank_scan, "Synthetic blank image page"), {
+            "scenario": "blank-image-page", "page_count": 1, "expected_outcome": "FAILED_NO_TEXT",
             "expected_page_routes": [],
         }),
         ("corrupt.pdf", b"%PDF-1.7\n% ARGUS SYNTHETIC CORRUPT FIXTURE 87\n1 0 obj\n", {
@@ -195,6 +197,10 @@ def main() -> None:
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    for obsolete_name in OBSOLETE_FIXTURES:
+        obsolete = output / obsolete_name
+        if obsolete.is_file() and not obsolete.is_symlink():
+            obsolete.unlink()
 
     font_path = find_font()
     if font_path.suffix.lower() == ".ttc":

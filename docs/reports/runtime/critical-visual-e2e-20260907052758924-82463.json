@@ -1,0 +1,148 @@
+{
+  "outcome": "PASS",
+  "runKey": "20260907052758924-82463",
+  "startedAt": "2026-09-07T05:27:58.925Z",
+  "mode": "real-services-synthetic-data-browser",
+  "receiptPath": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e-20260907052758924-82463.json",
+  "screenshotDir": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e",
+  "completedAt": "2026-09-07T05:28:27.776Z",
+  "syntheticProvenance": {
+    "generator": "argus-synthetic-korean-ocr-v1",
+    "classification": "SYNTHETIC_ONLY",
+    "fixtures": [
+      "low-confidence-korean-scan.pdf",
+      "corrupt.pdf",
+      "born-digital-ko-en.pdf"
+    ]
+  },
+  "actors": {
+    "productManager": {
+      "userId": 1,
+      "role": "PRODUCT_MANAGER"
+    },
+    "reviewer": {
+      "userId": 2,
+      "role": "COMPLIANCE_REVIEWER"
+    },
+    "isolatedBrowserContexts": true
+  },
+  "ids": {
+    "productId": 78,
+    "batchId": 29,
+    "lowConfidenceDocumentId": 165,
+    "analysisDocumentId": 167,
+    "analysisId": 41,
+    "reviewId": 25
+  },
+  "assertions": {
+    "desktopAnd390Px": true,
+    "noHorizontalOverflow": true,
+    "primaryActionsVisible": true,
+    "dialogsAndFocusNotClipped": true,
+    "koreanBatchErrorWraps": true,
+    "lowConfidenceConfirmationGateVisible": true,
+    "reviewRejectionPersistedAndWraps": true
+  },
+  "screenshots": [
+    {
+      "state": "product-create-dialog",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/product-create-dialog-desktop.png"
+    },
+    {
+      "state": "product-create-dialog",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/product-create-dialog-mobile-390.png"
+    },
+    {
+      "state": "batch-terminal-error",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/batch-terminal-error-desktop.png"
+    },
+    {
+      "state": "batch-terminal-error",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/batch-terminal-error-mobile-390.png"
+    },
+    {
+      "state": "ocr-low-confidence-confirmation",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/ocr-low-confidence-confirmation-desktop.png"
+    },
+    {
+      "state": "ocr-low-confidence-confirmation",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/ocr-low-confidence-confirmation-mobile-390.png"
+    },
+    {
+      "state": "review-request-dialog",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/review-request-dialog-desktop.png"
+    },
+    {
+      "state": "review-request-dialog",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/review-request-dialog-mobile-390.png"
+    },
+    {
+      "state": "review-rejection-decision",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/review-rejection-decision-desktop.png"
+    },
+    {
+      "state": "review-rejection-decision",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/review-rejection-decision-mobile-390.png"
+    },
+    {
+      "state": "review-rejected",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/review-rejected-desktop.png"
+    },
+    {
+      "state": "review-rejected",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//critical-visual-e2e/review-rejected-mobile-390.png"
+    }
+  ],
+  "browserSignals": {
+    "pageErrors": [],
+    "requestFailures": []
+  }
+}
