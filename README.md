@@ -46,15 +46,14 @@ comment 기록 → Pattern·GuardFit 미생성 → PM 수정 필요 상태
 - 실제 금융상품·회사·고객·규제기관·법령을 의미하지 않음
 - 실제 투자 판단, 법률 판단, 금융 판매 자료로 사용 금지
 - 개인정보, 상용 인증, 원격 배포, 운영 모델 라이선스 관리는 구현 범위 밖
-- 이미지형 스캔 PDF OCR은 실제 서버에서 지원하지 않음
-- 실제 서버의 PDF 추출은 PDFBox text layer 기준
+- PDF는 page별로 PDFBox text layer를 먼저 사용하고, text-inadequate scan/mixed page만 `kor+eng` OCR worker로 전달
 
 ## 시스템 아키텍처
 
 ![ARGUS 시스템 아키텍처](docs/assets/system-architecture.png)
 
 - Frontend: Vue 3, Vite, Vue Router, Pinia 기반 PM·reviewer 화면과 route guard
-- Backend: Java 21, Spring Boot, PDFBox 기반 업무 workflow·RAG·감사 처리
+- Backend: Java 21, Spring Boot, PDFBox/OCR 기반 업무 workflow·RAG·감사 처리
 - Database: PostgreSQL 16, pgvector, Flyway, HNSW cosine index
 - AI service: FastAPI, Pydantic, backend 전용 bearer token 검증
 - Local AI: Ollama `bge-m3:latest` embedding, `qwen2.5:7b-instruct` 분석
@@ -64,7 +63,7 @@ comment 기록 → Pattern·GuardFit 미생성 → PM 수정 필요 상태
 Frontend
   → Backend
       ├─ PostgreSQL + pgvector
-      ├─ PDFBox
+      ├─ PDFBox page router → OCR worker (kor+eng, private network)
       └─ AI service → Ollama
 ```
 
@@ -98,10 +97,10 @@ Frontend
 ![AI 로직 흐름](docs/assets/ai-logic-flow.png)
 
 - 전체 근거 문서를 prompt에 넣지 않으며 lexical·full-document fallback을 사용하지 않음
-- 모델은 `retrievedContextChunkIds`와 `evidenceSpans`를 함께 반환
-- `evidenceSpans.excerpt`는 검색된 chunk 원문에 정확히 포함돼야 함
+- 모델은 `retrievedContextChunkIds`와 허용된 `evidenceSpanOptionIds`만 반환
+- backend가 option ID를 exact retrieved chunk excerpt로 매핑·검증하며, 모델이 excerpt를 직접 만들 수 없음
 - 선택하지 않은 Persona·근거 문서·공식 사실 ID가 포함되면 저장을 거부
-- embedding tag는 Ollama digest를 포함한 immutable model identity로 저장·검색
+- retrieval snapshot에는 configured model ID와 runtime이 제공한 embedding digest를 함께 기록한다. `latest` tag만으로 artifact pinning을 주장하지 않음
 - 완료된 retrieval snapshot은 변경 불가
 - 분석 terminal state와 terminal audit event는 같은 transaction으로 저장
 - AI 내부 분석 endpoint는 shared bearer token이 없으면 401 응답
@@ -111,6 +110,15 @@ Frontend
 ![AI 입출력 JSON 스키마](docs/assets/ai-input-output-json-schema.png)
 
 ![AI 확장 지점](docs/assets/ai-extension-points.png)
+
+## PDF 한글 OCR·확정 계약
+
+- born-digital page는 `PDFBOX_TEXT`, scan/mixed page는 `OCR_KOR_ENG`으로 page별 선택 text를 저장
+- OCR page는 render artifact hash, text hash, confidence, engine·tessdata·language provenance를 run/page 단위로 보관
+- OCR confidence는 검토 신호일 뿐 정확성 또는 확정 상태가 아님
+- PM은 현재 extraction run ID와 text hash가 일치할 때만 저장·확정할 수 있다. 새 run·text edit은 이전 확정을 해제한다.
+- reviewer는 page provenance를 읽을 수 있지만 수정·재시도·확정할 수 없다.
+- OCR은 PDF 범위만 지원한다. synthetic born-digital·image-only·mixed fixture의 actual browser E2E로 검증한다.
 
 ## 주요 기능
 
