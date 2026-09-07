@@ -247,7 +247,9 @@ Backend durable OCR job
 
 - branch: `feature/korean-pdf-ocr`
 - Issue: [#87 PDF 한글 OCR worker와 검토 workflow 구현](https://github.com/skala-mini-project-web/mini-project/issues/87)
+- 상태: 완료
 - 완료 기준: actual Compose arm64·amd64, text-layer/OCR/MIXED, provenance, critical review, confirmation fence, corpus E2E
+- 완료 근거: PDFBox-first page routing, isolated `kor+eng` worker, V24 run/page provenance, PM run/text-hash confirmation, reviewer read-only, synthetic fixture actual browser E2E
 
 ## 기능별 GitHub 반영 조건
 
@@ -263,8 +265,8 @@ Backend durable OCR job
 ## README 고도화 진행 상태
 
 - 점수·Persona: 정책·불변 근거·review decision·score engine·UI 완료, held-out calibration·artifact-pinned model comparison 예정
-- batch: 설계 확정, 구현 대기
-- PDF 한글 OCR: 설계 확정, 구현 대기
+- batch: durable queue·browser E2E 완료
+- PDF 한글 OCR: worker·provenance·PM/reviewer workflow·browser E2E 완료
 
 ## 주요 근거
 

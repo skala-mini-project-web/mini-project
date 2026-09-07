@@ -4,6 +4,7 @@ import com.crosschecklab.domain.analysis.AnalysisRepository;
 import com.crosschecklab.domain.document.dto.DocumentAcceptedResponse;
 import com.crosschecklab.domain.document.dto.DocumentResponse;
 import com.crosschecklab.domain.document.dto.DocumentTextUpdateRequest;
+import com.crosschecklab.domain.document.extraction.DocumentExtractionPage;
 import com.crosschecklab.domain.document.extraction.ExtractionScenarioResolver;
 import com.crosschecklab.domain.document.storage.FileStorage;
 import com.crosschecklab.domain.document.storage.StoredFile;
@@ -17,10 +18,24 @@ import com.crosschecklab.global.error.ErrorCode;
 import com.crosschecklab.global.error.ErrorResponse;
 import com.crosschecklab.global.security.DemoUser;
 import com.crosschecklab.global.security.OwnershipChecker;
+import jakarta.persistence.EntityManager;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
+import javax.imageio.ImageIO;
 import lombok.RequiredArgsConstructor;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.rendering.ImageType;
+import org.apache.pdfbox.rendering.PDFRenderer;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,6 +63,7 @@ public class ProductDocumentService {
     private final FileStorage fileStorage;
     private final OwnershipChecker ownershipChecker;
     private final ApplicationEventPublisher eventPublisher;
+    private final EntityManager entityManager;
     private final Clock clock;
 
     // DOC-001. 저장은 즉시, 추출은 커밋 이후 비동기로 진행된다.
@@ -78,12 +94,18 @@ public class ProductDocumentService {
         ProductDocument document = productDocumentRepository.findWithProductOwnerById(documentId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND));
         ownershipChecker.requireOwnerOrReviewer(document.getOwnerId(), currentUser);
-        return DocumentResponse.from(document);
+        return response(document);
     }
 
     // DOC-003. 추출 텍스트 수정과 확인. READY 상태에서만 허용한다.
     @Transactional
-    public DocumentResponse updateText(Long documentId, DocumentTextUpdateRequest request, DemoUser currentUser) {
+    public DocumentResponse updateText(
+            Long documentId,
+            DocumentTextUpdateRequest request,
+            Long expectedRunId,
+            String expectedTextHash,
+            DemoUser currentUser
+    ) {
         ProductDocument document = getOwnedDocumentForUpdate(documentId, currentUser);
         if (analysisRepository.existsByProductDocumentId(documentId)) {
             throw new BusinessException(ErrorCode.DOCUMENT_ALREADY_ANALYZED);
@@ -92,6 +114,7 @@ public class ProductDocumentService {
             // 추출 중이거나 실패한 텍스트를 고치면 이후 추출 결과에 덮어써진다.
             throw new BusinessException(ErrorCode.DOCUMENT_NOT_READY);
         }
+        validateCurrentConfirmationTarget(document, request, expectedRunId, expectedTextHash);
 
         // confirmed_by 는 FK 라서 영속 상태의 User 가 필요하다. 해제 요청이면 조회하지 않는다.
         User editor = request.confirmed() ? loadCurrentUser(currentUser) : null;
@@ -101,7 +124,33 @@ public class ProductDocumentService {
             groundTruthFactService.refreshFromConfirmedDocument(document, editor);
         }
 
-        return DocumentResponse.from(document);
+        return response(document);
+    }
+
+    public RenderArtifact findCurrentPageRender(Long documentId, int pageNumber, DemoUser currentUser) {
+        ProductDocument document = productDocumentRepository.findWithProductOwnerById(documentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND));
+        ownershipChecker.requireOwnerOrReviewer(document.getOwnerId(), currentUser);
+        if (document.getCurrentExtractionRunId() == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND);
+        }
+        DocumentExtractionPage page = entityManager.createQuery("""
+                        select p from DocumentExtractionPage p
+                        where p.extractionRun.id = :runId and p.pageNumber = :pageNumber
+                        """, DocumentExtractionPage.class)
+                .setParameter("runId", document.getCurrentExtractionRunId())
+                .setParameter("pageNumber", pageNumber)
+                .getResultStream()
+                .findFirst()
+                .filter(value -> value.getOcrRenderArtifactKey() != null)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        byte[] source = fileStorage.read(document.getStorageKey())
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        byte[] content = renderPage(source, page.getPageNumber(), page.getOcrConfigSnapshot());
+        if (!Objects.equals(sha256(content), page.getOcrRenderArtifactHash())) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR);
+        }
+        return new RenderArtifact(content, page.getOcrRenderArtifactHash());
     }
 
     // DOC-004. 실패한 추출만 다시 돌린다.
@@ -137,6 +186,68 @@ public class ProductDocumentService {
     private User loadCurrentUser(DemoUser currentUser) {
         return userRepository.findById(currentUser.id())
                 .orElseThrow(() -> new BusinessException(ErrorCode.DEMO_USER_NOT_FOUND));
+    }
+
+    private DocumentResponse response(ProductDocument document) {
+        Long runId = document.getCurrentExtractionRunId();
+        if (runId == null) {
+            return DocumentResponse.from(document);
+        }
+        List<DocumentExtractionPage> pages = entityManager.createQuery("""
+                        select p from DocumentExtractionPage p
+                        where p.extractionRun.id = :runId
+                        order by p.pageNumber
+                        """, DocumentExtractionPage.class)
+                .setParameter("runId", runId)
+                .getResultList();
+        return DocumentResponse.from(document, pages);
+    }
+
+    private void validateCurrentConfirmationTarget(
+            ProductDocument document,
+            DocumentTextUpdateRequest request,
+            Long expectedRunId,
+            String expectedTextHash
+    ) {
+        if (!request.confirmed() || document.getCurrentExtractionRunId() == null) {
+            return;
+        }
+        boolean currentTarget = Objects.equals(expectedRunId, document.getCurrentExtractionRunId())
+                && Objects.equals(expectedTextHash, document.getExtractedTextHash())
+                && Objects.equals(request.extractedText(), document.getExtractedText());
+        if (!currentTarget) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, List.of(
+                    new ErrorResponse.FieldError(
+                            "expectedRunId",
+                            "현재 추출 실행과 저장된 텍스트를 다시 조회한 뒤 확인하세요."),
+                    new ErrorResponse.FieldError(
+                            "expectedTextHash",
+                            "수정한 텍스트를 먼저 저장한 뒤 반환된 현재 텍스트 해시로 확인하세요.")));
+        }
+    }
+
+    private byte[] renderPage(byte[] source, int pageNumber, java.util.Map<String, Object> config) {
+        Object configuredDpi = config == null ? null : config.get("renderDpi");
+        int dpi = configuredDpi instanceof Number value ? value.intValue() : 300;
+        try (PDDocument pdf = Loader.loadPDF(source);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            BufferedImage image = new PDFRenderer(pdf)
+                    .renderImageWithDPI(pageNumber - 1, dpi, ImageType.RGB);
+            if (!ImageIO.write(image, "png", output)) {
+                throw new IOException("PNG writer is unavailable");
+            }
+            return output.toByteArray();
+        } catch (IOException exception) {
+            throw new UncheckedIOException("OCR 페이지 렌더를 읽지 못했습니다.", exception);
+        }
+    }
+
+    private String sha256(byte[] value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
     }
 
     public ValidatedUpload validateUpload(
@@ -177,5 +288,8 @@ public class ProductDocumentService {
             DocumentMediaType mediaType,
             String scenarioCode
     ) {
+    }
+
+    public record RenderArtifact(byte[] content, String sha256) {
     }
 }

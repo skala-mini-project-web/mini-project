@@ -29,6 +29,8 @@ public class ProductDocumentController {
 
     // 데모 진행자가 추출 시나리오를 직접 고를 때 쓰는 헤더. 없으면 파일명/기본값으로 정해진다.
     public static final String SCENARIO_HEADER = "X-Demo-Scenario";
+    public static final String EXPECTED_RUN_HEADER = "X-Expected-Extraction-Run-Id";
+    public static final String EXPECTED_TEXT_HASH_HEADER = "X-Expected-Text-Hash";
 
     private final ProductDocumentService productDocumentService;
 
@@ -60,11 +62,36 @@ public class ProductDocumentController {
     @PatchMapping("/api/documents/{documentId}/text")
     @Operation(summary = "DOC-003 추출 텍스트 수정·확인",
             description = "READY 상태에서만 수정할 수 있다(아니면 409). confirmed=true 면 확인자와 확인 시각을 기록하고, "
-                    + "false 면 확인을 해제한다. 상품 담당자 본인만 호출할 수 있다.")
+                    + "false 면 확인을 해제한다. V24 추출 실행이 있는 문서를 확인할 때는 현재 실행 ID와 먼저 저장한 "
+                    + "텍스트 해시를 조건부 헤더로 보내야 한다. 상품 담당자 본인만 호출할 수 있다.")
     public ResponseEntity<DocumentResponse> updateText(@PathVariable Long documentId,
                                                        @Valid @RequestBody DocumentTextUpdateRequest request,
+                                                       @RequestHeader(
+                                                               value = EXPECTED_RUN_HEADER,
+                                                               required = false) Long expectedRunId,
+                                                       @RequestHeader(
+                                                               value = EXPECTED_TEXT_HASH_HEADER,
+                                                               required = false) String expectedTextHash,
                                                        @CurrentUser DemoUser currentUser) {
-        return ResponseEntity.ok(productDocumentService.updateText(documentId, request, currentUser));
+        return ResponseEntity.ok(productDocumentService.updateText(
+                documentId, request, expectedRunId, expectedTextHash, currentUser));
+    }
+
+    @GetMapping(value = "/api/documents/{documentId}/pages/{pageNumber}/render",
+            produces = MediaType.IMAGE_PNG_VALUE)
+    @Operation(summary = "현재 OCR 페이지 렌더 조회",
+            description = "현재 추출 실행에서 OCR에 사용한 페이지 이미지를 반환한다. 소유자와 검토자 모두 읽을 수 있다.")
+    public ResponseEntity<byte[]> findCurrentPageRender(
+            @PathVariable Long documentId,
+            @PathVariable int pageNumber,
+            @CurrentUser DemoUser currentUser
+    ) {
+        ProductDocumentService.RenderArtifact artifact =
+                productDocumentService.findCurrentPageRender(documentId, pageNumber, currentUser);
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_PNG)
+                .eTag("\"" + artifact.sha256() + "\"")
+                .body(artifact.content());
     }
 
     @PostMapping("/api/documents/{documentId}/retry")

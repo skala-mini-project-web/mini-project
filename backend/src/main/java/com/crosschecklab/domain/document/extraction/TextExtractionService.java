@@ -10,4 +10,12 @@ public interface TextExtractionService {
      *         호출 측은 이 분류를 보존해 문서나 배치 항목을 실패 상태로 전이시킨다.
      */
     String extract(ExtractionTarget target);
+
+    /**
+     * Structured extraction output for persistence-aware callers. Existing implementations retain
+     * the text-only contract until they can supply source and page provenance.
+     */
+    default DocumentExtractionResult extractResult(ExtractionTarget target) {
+        throw new UnsupportedOperationException("Structured extraction is not available");
+    }
 }

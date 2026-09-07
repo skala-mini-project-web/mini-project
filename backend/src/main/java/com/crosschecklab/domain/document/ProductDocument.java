@@ -1,5 +1,6 @@
 package com.crosschecklab.domain.document;
 
+import com.crosschecklab.domain.document.extraction.DocumentExtractionRun;
 import com.crosschecklab.domain.product.Product;
 import com.crosschecklab.domain.user.User;
 import com.crosschecklab.global.common.BaseTimeEntity;
@@ -15,7 +16,12 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
+import java.util.HexFormat;
+import java.util.Objects;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -60,6 +66,13 @@ public class ProductDocument extends BaseTimeEntity {
     @Column(name = "extracted_text", columnDefinition = "text")
     private String extractedText;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "current_extraction_run_id")
+    private DocumentExtractionRun currentExtractionRun;
+
+    @Column(name = "extracted_text_hash", length = 64)
+    private String extractedTextHash;
+
     @Column(name = "extraction_error_code", length = 60)
     private String extractionErrorCode;
 
@@ -79,6 +92,13 @@ public class ProductDocument extends BaseTimeEntity {
 
     @Column(name = "confirmed_at")
     private OffsetDateTime confirmedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "confirmed_extraction_run_id")
+    private DocumentExtractionRun confirmedExtractionRun;
+
+    @Column(name = "confirmed_text_hash", length = 64)
+    private String confirmedTextHash;
 
     private ProductDocument(Product product, String fileName, String mediaType,
                             Long fileSize, String checksum, String storageKey) {
@@ -106,10 +126,34 @@ public class ProductDocument extends BaseTimeEntity {
     // 재추출로 텍스트가 덮어써지면 이전에 확인한 내용이 아니므로 확인 상태를 되돌린다.
     public void markReady(String extractedText) {
         this.extractedText = extractedText;
+        this.currentExtractionRun = null;
+        this.extractedTextHash = hashText(extractedText);
         this.extractStatus = ExtractStatus.READY;
-        this.confirmed = false;
-        this.confirmedBy = null;
-        this.confirmedAt = null;
+        clearConfirmation();
+        clearExtractionError();
+    }
+
+    /**
+     * Applies a persisted successful run. A run is provenance, never confirmation,
+     * so applying it always invalidates any previous human acknowledgement.
+     */
+    public void markReady(String extractedText, DocumentExtractionRun extractionRun) {
+        if (extractionRun == null || !extractionRun.isSucceeded()) {
+            throw new IllegalArgumentException("extractionRun must be succeeded");
+        }
+        if (!extractionRun.belongsTo(this)) {
+            throw new IllegalArgumentException("extractionRun must belong to this document");
+        }
+        String textHash = hashText(extractedText);
+        if (!Objects.equals(extractionRun.getResultTextHash(), textHash)) {
+            throw new IllegalArgumentException("extractedText must match the extraction run result hash");
+        }
+
+        this.extractedText = extractedText;
+        this.currentExtractionRun = extractionRun;
+        this.extractedTextHash = textHash;
+        this.extractStatus = ExtractStatus.READY;
+        clearConfirmation();
         clearExtractionError();
     }
 
@@ -124,10 +168,16 @@ public class ProductDocument extends BaseTimeEntity {
     // 확인을 해제하면 누가 언제 확인했는지도 함께 지운다 (분석은 confirmed 문서만 받는다).
     public void updateExtractedText(String extractedText, boolean confirmed,
                                     User editor, OffsetDateTime confirmedAt) {
+        if (confirmed && (editor == null || confirmedAt == null)) {
+            throw new IllegalArgumentException("confirmed text requires an editor and confirmation time");
+        }
         this.extractedText = extractedText;
+        this.extractedTextHash = hashText(extractedText);
         this.confirmed = confirmed;
         this.confirmedBy = confirmed ? editor : null;
         this.confirmedAt = confirmed ? confirmedAt : null;
+        this.confirmedExtractionRun = confirmed ? currentExtractionRun : null;
+        this.confirmedTextHash = confirmed ? extractedTextHash : null;
     }
 
     public boolean isReady() {
@@ -156,9 +206,38 @@ public class ProductDocument extends BaseTimeEntity {
         return confirmedBy == null ? null : confirmedBy.getId();
     }
 
+    public Long getCurrentExtractionRunId() {
+        return currentExtractionRun == null ? null : currentExtractionRun.getId();
+    }
+
+    public Long getConfirmedExtractionRunId() {
+        return confirmedExtractionRun == null ? null : confirmedExtractionRun.getId();
+    }
+
+    private void clearConfirmation() {
+        this.confirmed = false;
+        this.confirmedBy = null;
+        this.confirmedAt = null;
+        this.confirmedExtractionRun = null;
+        this.confirmedTextHash = null;
+    }
+
     private void clearExtractionError() {
         this.extractionErrorCode = null;
         this.extractionErrorMessage = null;
         this.extractionErrorRetryable = false;
+    }
+
+    private static String hashText(String text) {
+        if (text == null) {
+            return null;
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
     }
 }
