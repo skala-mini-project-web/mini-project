@@ -30,6 +30,7 @@ import java.time.OffsetDateTime;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
 import lombok.RequiredArgsConstructor;
 import org.apache.pdfbox.Loader;
@@ -52,6 +53,7 @@ public class ProductDocumentService {
     public static final long MAX_FILE_SIZE_BYTES = 10L * 1024 * 1024;
 
     private static final String DEFAULT_FILE_NAME = "unknown";
+    private static final Pattern SHA_256 = Pattern.compile("^[0-9a-f]{64}$");
 
     private final ProductRepository productRepository;
     private final ProductDocumentRepository productDocumentRepository;
@@ -212,17 +214,27 @@ public class ProductDocumentService {
         if (!request.confirmed() || document.getCurrentExtractionRunId() == null) {
             return;
         }
-        boolean currentTarget = Objects.equals(expectedRunId, document.getCurrentExtractionRunId())
-                && Objects.equals(expectedTextHash, document.getExtractedTextHash())
-                && Objects.equals(request.extractedText(), document.getExtractedText());
-        if (!currentTarget) {
+        if (expectedRunId == null) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, List.of(
                     new ErrorResponse.FieldError(
                             "expectedRunId",
-                            "현재 추출 실행과 저장된 텍스트를 다시 조회한 뒤 확인하세요."),
+                            "현재 추출 실행 ID가 필요합니다.")));
+        }
+        if (expectedTextHash == null || !SHA_256.matcher(expectedTextHash).matches()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, List.of(
                     new ErrorResponse.FieldError(
                             "expectedTextHash",
-                            "수정한 텍스트를 먼저 저장한 뒤 반환된 현재 텍스트 해시로 확인하세요.")));
+                            "소문자 SHA-256 해시 형식이어야 합니다.")));
+        }
+        if (!Objects.equals(request.extractedText(), document.getExtractedText())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, List.of(
+                    new ErrorResponse.FieldError(
+                            "extractedText",
+                            "수정한 텍스트를 먼저 저장한 뒤 확인하세요.")));
+        }
+        if (!Objects.equals(expectedRunId, document.getCurrentExtractionRunId())
+                || !Objects.equals(expectedTextHash, document.getExtractedTextHash())) {
+            throw new BusinessException(ErrorCode.DOCUMENT_CONFIRMATION_STALE);
         }
     }
 

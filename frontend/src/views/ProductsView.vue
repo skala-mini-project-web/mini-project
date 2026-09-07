@@ -184,5 +184,16 @@ async function submit() {
 .go { color: var(--ink-faint); transition: transform var(--base) var(--ease), color var(--fast) var(--ease); } .row:hover .go, .row:focus-visible .go { color: var(--accent); transform: translateX(3px); }
 .sk { display: flex; flex-direction: column; gap: 8px; padding: var(--s-20) var(--s-4); border-bottom: 1px solid var(--line); }
 .pager { padding: var(--s-28) 0 var(--s-8); }
-.form { display: flex; flex-direction: column; gap: var(--s-20); }
+.form { display: flex; flex-direction: column; gap: var(--s-20); min-width: 0; }
+@media (max-width: 480px) {
+  .form { gap: var(--s-16); }
+  .seg-status {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+  .seg-status .seg-b {
+    flex: 1 1 0;
+    padding-inline: 8px;
+  }
+}
 </style>

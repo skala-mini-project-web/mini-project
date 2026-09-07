@@ -17,7 +17,7 @@ EXPECTED = {
     "image-only-korean-scan.pdf": ("image-only-korean-scan", 1, ["OCR_KOR_ENG"]),
     "mixed-three-page.pdf": ("mixed-three-page", 3, ["PDFBOX_TEXT", "OCR_KOR_ENG", "PDFBOX_TEXT"]),
     "low-confidence-korean-scan.pdf": ("low-confidence-scan", 1, ["OCR_KOR_ENG"]),
-    "blank.pdf": ("blank", 1, []),
+    "blank-image-page.pdf": ("blank-image-page", 1, []),
     "corrupt.pdf": ("corrupt", None, []),
 }
 HASH = re.compile(r"^[0-9a-f]{64}$")
@@ -80,19 +80,21 @@ def validate_entry(root: Path, entry: dict) -> None:
     require(len(PAGE.findall(payload)) == page_count, f"{name}: physical PDF page count mismatch")
     has_image = b"/Subtype /Image" in payload
     has_text_operator = b" Tj" in payload or b" TJ" in payload
-    if name in {"image-only-korean-scan.pdf", "low-confidence-korean-scan.pdf"}:
+    if name in {"image-only-korean-scan.pdf", "low-confidence-korean-scan.pdf", "blank-image-page.pdf"}:
         require(has_image and not has_text_operator, f"{name}: scan must contain an image and no PDF text operators")
     elif name == "mixed-three-page.pdf":
         require(has_image and has_text_operator, "mixed fixture must contain image and born-digital text content")
     elif name == "born-digital-ko-en.pdf":
         require(has_text_operator and not has_image, "born-digital fixture must contain selectable text and no page image")
-    elif name == "blank.pdf":
-        require(not has_image and not has_text_operator, "blank fixture gained visible image/text content")
-
     if "OCR_KOR_ENG" in routes:
-        require(expectations.get("required_ocr_language") == "kor+eng" or name == "low-confidence-korean-scan.pdf", f"{name}: OCR language expectation missing")
+        require(expectations.get("required_ocr_language") == "kor+eng", f"{name}: OCR language expectation missing")
     if name == "low-confidence-korean-scan.pdf":
         require(expectations.get("expected_confidence_band") == "LOW", "low-confidence expectation changed")
+        require(expectations.get("expected_confidence_below") == 70, "low-confidence threshold changed")
+        require(expectations.get("requires_reviewer_confirmation") is True, "low-confidence reviewer gate changed")
+        require(expectations.get("expected_outcome") == "READY_UNCONFIRMED", "low-confidence fixture must remain confirmable")
+    if name == "blank-image-page.pdf":
+        require(expectations.get("expected_outcome") == "FAILED_NO_TEXT", "blank image page must remain a no-text failure")
     if name in {"born-digital-ko-en.pdf", "image-only-korean-scan.pdf", "mixed-three-page.pdf"}:
         required_text = expectations.get("required_text")
         require(isinstance(required_text, list) and all(isinstance(item, str) and item for item in required_text), f"{name}: required OCR assertions missing")

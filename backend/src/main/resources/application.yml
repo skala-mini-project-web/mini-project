@@ -23,7 +23,9 @@ spring:
 
   servlet:
     multipart:
-      max-file-size: 10MB
+      # Spring's multipart parser applies this before the per-file domain guard.
+      # It must admit the advertised 100-file batch; ProductDocumentService still rejects each file above 10MB.
+      max-file-size: 1024MB
       max-request-size: 1024MB
 
 # 외부 ai-service(FastAPI Mock) 호출 설정. Provider 교체 시 여기만 바꾼다.
@@ -65,6 +67,12 @@ rag:
 
 server:
   port: 8080
+  tomcat:
+    # The connector's default form POST cap is below a valid 100-file multipart request.
+    # ProductDocumentService remains the 10MB-per-file authority.
+    max-http-form-post-size: 1024MB
+    max-swallow-size: 1024MB
+    max-part-count: 100
 
 logging:
   level:

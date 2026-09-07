@@ -15,11 +15,21 @@ const UI_TIMEOUT_MS = 20_000
 const EXTRACTION_TIMEOUT_MS = 240_000
 const runKey = `${new Date().toISOString().replace(/[-:.TZ]/g, '')}-${process.pid}`
 const receiptPath = process.env.KOREAN_OCR_E2E_RECEIPT || `${REPORT_DIR}/korean-ocr-e2e-${runKey}.json`
-const fixtureNames = ['born-digital-ko-en.pdf', 'image-only-korean-scan.pdf', 'mixed-three-page.pdf']
+const readyFixtureNames = [
+  'born-digital-ko-en.pdf',
+  'image-only-korean-scan.pdf',
+  'mixed-three-page.pdf',
+  'low-confidence-korean-scan.pdf',
+]
+const failedFixtureNames = ['blank-image-page.pdf', 'corrupt.pdf']
+const fixtureNames = [...readyFixtureNames, ...failedFixtureNames]
 const expectedRoutes = {
   'born-digital-ko-en.pdf': ['PDFBOX_TEXT'],
   'image-only-korean-scan.pdf': ['OCR_KOR_ENG'],
   'mixed-three-page.pdf': ['PDFBOX_TEXT', 'OCR_KOR_ENG', 'PDFBOX_TEXT'],
+  'low-confidence-korean-scan.pdf': ['OCR_KOR_ENG'],
+  'blank-image-page.pdf': [],
+  'corrupt.pdf': [],
 }
 const expectedApi = [
   /^\/api\/demo\/users$/,
@@ -66,6 +76,13 @@ async function preflight() {
     const entry = entries.get(name)
     assert(entry?.synthetic, `${name} is not declared synthetic`)
     assert.deepEqual(entry.expectations?.expected_page_routes, expectedRoutes[name], `${name} manifest route expectation changed`)
+    if (name === 'low-confidence-korean-scan.pdf') {
+      assert.equal(entry.expectations?.expected_outcome, 'READY_UNCONFIRMED')
+      assert.equal(entry.expectations?.expected_confidence_band, 'LOW')
+      assert.equal(entry.expectations?.expected_confidence_below, 70)
+      assert.equal(entry.expectations?.requires_reviewer_confirmation, true)
+    }
+    if (name === 'blank-image-page.pdf') assert.equal(entry.expectations?.expected_outcome, 'FAILED_NO_TEXT')
     const [buffer, info] = await Promise.all([readFile(`${FIXTURE_DIR}/${name}`), stat(`${FIXTURE_DIR}/${name}`)])
     assert(info.isFile() && info.size > 0, `${name} is missing or empty`)
     assert.equal(entry.bytes, buffer.length, `${name} manifest byte count mismatch`)
@@ -84,9 +101,10 @@ async function preflight() {
 
 const browserSignals = {
   pageErrors: [], consoleErrors: [], requestFailures: [], apiResponses: [],
-  unexpectedApiCalls: [], unexpectedApiResponses: [],
+  expectedApiConflicts: [], unexpectedApiCalls: [], unexpectedApiResponses: [],
 }
 const responseTasks = new Set()
+let pendingExpectedTextConflicts = 0
 
 function apiPath(url) {
   const pathname = new URL(url).pathname
@@ -97,7 +115,12 @@ function apiPath(url) {
 function monitor(context, actor) {
   context.on('page', (page) => {
     page.on('pageerror', (error) => browserSignals.pageErrors.push(`${actor}: ${error.message}`))
-    page.on('console', (message) => { if (message.type() === 'error') browserSignals.consoleErrors.push(`${actor}: ${message.text()}`) })
+    page.on('console', (message) => {
+      const text = message.text()
+      if (message.type() === 'error' && !/Failed to load resource: the server responded with a status of 409/.test(text)) {
+        browserSignals.consoleErrors.push(`${actor}: ${text}`)
+      }
+    })
     page.on('requestfailed', (request) => browserSignals.requestFailures.push(`${actor}: ${request.method()} ${request.url()} (${request.failure()?.errorText || 'failed'})`))
     page.on('response', (response) => {
       const path = apiPath(response.url())
@@ -107,7 +130,14 @@ function monitor(context, actor) {
       if (!expectedApi.some((pattern) => pattern.test(path))) browserSignals.unexpectedApiCalls.push(entry)
       if (response.status() < 200 || response.status() >= 300) {
         const task = response.json().catch(() => null).then((body) => {
-          browserSignals.unexpectedApiResponses.push({ ...entry, errorCode: body?.errorCode || null, message: body?.message || null })
+          const detail = { ...entry, errorCode: body?.errorCode || null, message: body?.message || null }
+          if (entry.method === 'PATCH' && /^\/api\/documents\/\d+\/text$/.test(path)
+              && entry.status === 409 && pendingExpectedTextConflicts > 0) {
+            pendingExpectedTextConflicts -= 1
+            browserSignals.expectedApiConflicts.push(detail)
+          } else {
+            browserSignals.unexpectedApiResponses.push(detail)
+          }
         })
         responseTasks.add(task)
         task.finally(() => responseTasks.delete(task))
@@ -176,16 +206,16 @@ async function refreshBatch(page, batchId) {
   return { batch: await detailResponse.json(), items: (await itemsResponse.json()).items || [] }
 }
 
-async function waitForSuccessfulBatch(page, batchId) {
+async function waitForTerminalBatch(page, batchId) {
   const deadline = Date.now() + EXTRACTION_TIMEOUT_MS
   let snapshot
   while (Date.now() < deadline) {
     snapshot = await refreshBatch(page, batchId)
-    if (snapshot.batch?.status === 'SUCCEEDED' && snapshot.items.every((item) => item.status === 'SUCCEEDED')) return snapshot
-    if (['QUARANTINED', 'CANCELLED'].includes(snapshot.batch?.status)) throw new Error(`OCR batch terminal failure: ${JSON.stringify(snapshot)}`)
+    if (['SUCCEEDED', 'QUARANTINED', 'CANCELLED'].includes(snapshot.batch?.status)
+        && snapshot.items.every((item) => ['SUCCEEDED', 'QUARANTINED', 'CANCELLED'].includes(item.status))) return snapshot
     await page.waitForTimeout(1_000)
   }
-  throw new Error(`OCR batch did not succeed within ${EXTRACTION_TIMEOUT_MS}ms: ${JSON.stringify(snapshot)}`)
+  throw new Error(`OCR batch did not terminate within ${EXTRACTION_TIMEOUT_MS}ms: ${JSON.stringify(snapshot)}`)
 }
 
 function assertPageContract(document, fileName) {
@@ -210,6 +240,11 @@ function assertPageContract(document, fileName) {
       assert.equal(page.renderArtifactHash, null)
     }
   }
+  if (fileName === 'low-confidence-korean-scan.pdf') {
+    const [ocrPage] = document.pages
+    assert.equal(ocrPage.ocrConfidenceBand, 'LOW', `${fileName}: deterministic confidence band changed`)
+    assert(Number(ocrPage.ocrConfidence) < 70, `${fileName}: confidence is no longer below the LOW threshold`)
+  }
 }
 
 async function openDocument(page, documentId) {
@@ -223,7 +258,28 @@ async function openDocument(page, documentId) {
   return document
 }
 
-async function assertPmAndConfirm(page, document, fileName) {
+async function expectStaleConfirmationConflict(page, pm, documentId, text, expectedRunId, expectedTextHash, label) {
+  pendingExpectedTextConflicts += 1
+  const result = await page.evaluate(async ({ documentId, text, expectedRunId, expectedTextHash, pm }) => {
+    const response = await fetch(`/api/documents/${documentId}/text`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Demo-User-Id': String(pm.userId),
+        'X-Demo-Role': pm.role,
+        'X-Expected-Extraction-Run-Id': String(expectedRunId),
+        'X-Expected-Text-Hash': expectedTextHash,
+      },
+      body: JSON.stringify({ extractedText: text, confirmed: true }),
+    })
+    return { status: response.status, body: await response.json().catch(() => null) }
+  }, { documentId, text, expectedRunId, expectedTextHash, pm })
+  assert.equal(result.status, 409, `${label}: stale confirmation must return HTTP 409`)
+  assert.match(result.body?.errorCode || '', /\S/, `${label}: conflict error code missing`)
+  return result
+}
+
+async function assertPmAndConfirm(page, pm, document, fileName) {
   assertPageContract(document, fileName)
   await page.getByText('확인되지 않음', { exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
   await page.getByText('백엔드의 현재 실행·텍스트 확인이 완료되어야 분석할 수 있습니다.', { exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
@@ -235,19 +291,53 @@ async function assertPmAndConfirm(page, document, fileName) {
     await card.getByText(`페이지 ${index + 1}`, { exact: true }).waitFor()
     await card.getByText(expectedRoutes[fileName][index] === 'OCR_KOR_ENG' ? 'OCR (kor+eng)' : 'PDFBOX', { exact: true }).waitFor()
   }
+  if (fileName === 'low-confidence-korean-scan.pdf') {
+    await page.getByText(/신뢰도/, { exact: false }).first().waitFor()
+    await page.getByText(/낮음/, { exact: false }).waitFor()
+    await page.getByText('OCR 신뢰도는 인식 품질 지표이며 담당자 확인을 의미하지 않습니다.', { exact: true }).waitFor()
+  }
   const textarea = page.locator('textarea')
   assert(!(await textarea.isDisabled()), `${fileName}: PM text editor is disabled`)
   await textarea.fill(`${await textarea.inputValue()}\nPM 확인 메모: 합성 OCR QA ${runKey}`)
   const saved = await waitForApi(page, 'PATCH', new RegExp(`^/api/documents/${document.documentId}/text$`), () => page.getByRole('button', { name: '텍스트 저장' }).click())
   assert.equal(saved.confirmed, false)
   assert.equal(saved.requiresConfirmation, true)
+  assert.notEqual(saved.currentTextHash, document.currentTextHash, `${fileName}: saving newer text did not advance its hash`)
+  const staleTextConflict = await expectStaleConfirmationConflict(
+    page, pm, document.documentId, saved.extractedText, saved.currentRunId,
+    document.currentTextHash, `${fileName} stale text hash`)
+  const staleRunConflict = await expectStaleConfirmationConflict(
+    page, pm, document.documentId, saved.extractedText, Number(saved.currentRunId) - 1,
+    saved.currentTextHash, `${fileName} stale run`)
   const confirmed = await waitForApi(page, 'PATCH', new RegExp(`^/api/documents/${document.documentId}/text$`), () => page.getByRole('button', { name: '현재 실행·텍스트 확정' }).click())
   assert.equal(confirmed.confirmed, true)
   assert.equal(confirmed.requiresConfirmation, false)
   assert.equal(confirmed.currentRunId, document.currentRunId)
   await page.getByText('현재 실행·텍스트 확인됨', { exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
   assert(!(await page.getByRole('button', { name: '분석으로 이동' }).isDisabled()), `${fileName}: analysis gate remained closed after confirmation`)
-  return confirmed
+  return { ...confirmed, staleConfirmationConflicts: [staleTextConflict, staleRunConflict] }
+}
+
+async function assertFailedDocumentCannotConfirmOrAnalyze(page, item, fileName) {
+  assert.equal(item.status, 'QUARANTINED', `${fileName}: negative fixture did not quarantine`)
+  assert.equal(item.errorCode, 'DOCUMENT_EXTRACTION_FAILED', `${fileName}: unexpected public extraction error`)
+  const path = `/api/documents/${item.documentId}`
+  const pending = page.waitForResponse((response) => response.request().method() === 'GET' && apiPath(response.url()) === path, { timeout: UI_TIMEOUT_MS })
+  await page.goto(`${FRONTEND_URL}/documents/${item.documentId}`, { waitUntil: 'domcontentloaded' })
+  const response = await pending
+  assert(response.ok(), `${fileName}: failed document lookup failed`)
+  const document = await response.json()
+  assert.equal(document.extractStatus, 'FAILED', `${fileName}: document is not FAILED`)
+  assert.equal(document.confirmed, false, `${fileName}: failed extraction was confirmable`)
+  assert.equal(document.requiresConfirmation, false, `${fileName}: failed extraction requires confirmation`)
+  assert.equal(document.currentRunId, null, `${fileName}: failed extraction published a run`)
+  assert.deepEqual(document.pages, [], `${fileName}: failed extraction published partial page provenance`)
+  assert.equal(document.error?.errorCode, 'DOCUMENT_EXTRACTION_FAILED', `${fileName}: failure provenance changed`)
+  await page.getByText('추출 실패', { exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
+  assert.equal(await page.locator('textarea').count(), 0, `${fileName}: failed document exposes a text editor`)
+  assert.equal(await page.getByRole('button', { name: /^(텍스트 저장|현재 실행·텍스트 확정|분석으로 이동)$/ }).count(), 0, `${fileName}: failed document exposes confirmation or analysis controls`)
+  if (fileName === 'blank-image-page.pdf') assert.equal(item.attemptCount, 1, 'blank/no-text failure must not retry')
+  return { fileName, documentId: item.documentId, errorCode: item.errorCode, mutationControls: 0 }
 }
 
 async function assertReviewerReadOnly(page, expectedDocuments) {
@@ -258,6 +348,11 @@ async function assertReviewerReadOnly(page, expectedDocuments) {
     assert.equal(loaded.currentRunId, expected.currentRunId)
     assert.equal(loaded.currentTextHash, expected.currentTextHash)
     assert.equal(loaded.confirmed, true)
+    if (fileName === 'low-confidence-korean-scan.pdf') {
+      assert.equal(loaded.pages[0].ocrConfidenceBand, 'LOW')
+      assert(Number(loaded.pages[0].ocrConfidence) < 70)
+      await page.getByText(/낮음/, { exact: false }).waitFor({ timeout: UI_TIMEOUT_MS })
+    }
     assert(await page.locator('textarea').isDisabled(), `${fileName}: reviewer can edit confirmed text`)
     assert.equal(await page.getByRole('button', { name: /^(텍스트 저장|현재 실행·텍스트 확정|분석으로 이동|재시도)$/ }).count(), 0, `${fileName}: reviewer mutation control is visible`)
     const reloadPath = `/api/documents/${expected.documentId}`
@@ -281,6 +376,7 @@ function assertCleanSignals() {
   assert.deepEqual(browserSignals.requestFailures, [], `request failures: ${browserSignals.requestFailures.join('\n')}`)
   assert.deepEqual(browserSignals.unexpectedApiCalls, [], `unexpected API calls: ${JSON.stringify(browserSignals.unexpectedApiCalls)}`)
   assert.deepEqual(browserSignals.unexpectedApiResponses, [], `unexpected API responses: ${JSON.stringify(browserSignals.unexpectedApiResponses)}`)
+  assert.equal(pendingExpectedTextConflicts, 0, 'not all expected stale confirmation conflicts were observed')
 }
 
 let browser
@@ -302,14 +398,21 @@ try {
   const pm = await login(pmPage, '상품 담당자')
   const product = await createProduct(pmPage)
   const batchId = await uploadBatch(pmPage, product.productId, fixtureEvidence.fixtures)
-  const terminalBatch = await waitForSuccessfulBatch(pmPage, batchId)
-  assert.equal(terminalBatch.items.length, 3)
+  const terminalBatch = await waitForTerminalBatch(pmPage, batchId)
+  assert.equal(terminalBatch.batch?.status, 'QUARANTINED')
+  assert.equal(terminalBatch.items.length, fixtureNames.length)
   const itemsByName = Object.fromEntries(terminalBatch.items.map((item) => [item.fileName, item]))
   const confirmedDocuments = {}
-  for (const fileName of fixtureNames) {
+  for (const fileName of readyFixtureNames) {
     assert(itemsByName[fileName]?.documentId != null, `${fileName}: batch item omitted documentId`)
+    assert.equal(itemsByName[fileName].status, 'SUCCEEDED', `${fileName}: expected successful extraction`)
     const document = await openDocument(pmPage, itemsByName[fileName].documentId)
-    confirmedDocuments[fileName] = await assertPmAndConfirm(pmPage, document, fileName)
+    confirmedDocuments[fileName] = await assertPmAndConfirm(pmPage, pm, document, fileName)
+  }
+  const negativeEvidence = []
+  for (const fileName of failedFixtureNames) {
+    assert(itemsByName[fileName]?.documentId != null, `${fileName}: batch item omitted documentId`)
+    negativeEvidence.push(await assertFailedDocumentCannotConfirmOrAnalyze(pmPage, itemsByName[fileName], fileName))
   }
   const reviewer = await login(reviewerPage, '컴플라이언스 검토자')
   assert.notEqual(pm.userId, reviewer.userId, 'PM and reviewer resolved to the same user')
@@ -326,13 +429,16 @@ try {
     actors: { productManager: { userId: pm.userId, role: pm.role }, reviewer: { userId: reviewer.userId, role: reviewer.role }, isolatedBrowserContexts: true },
     ids: { productId: product.productId, batchId },
     assertions: {
-      uploadedThroughPmUi: true, allExtractionsReady: true, pageRoutesMatched: true,
+      uploadedThroughPmUi: true, expectedReadyAndFailedOutcomes: true, pageRoutesMatched: true,
       provenanceAndConfidencePresent: true, unconfirmedAnalysisGateClosed: true,
+      blankNoTextCannotConfirmOrAnalyze: true, corruptPdfCannotConfirmOrAnalyze: true,
+      lowConfidenceWarningAndReviewerPersistence: true, staleRunAndTextHashConfirmation409: true,
       pmSavedAndConfirmedAllDocuments: true, reviewerOcrDisplayReadOnly: true,
       provenanceSurvivedReviewerReload: true,
     },
     documents: Object.fromEntries(Object.entries(confirmedDocuments).map(([fileName, document]) => [fileName, { documentId: document.documentId, currentRunId: document.currentRunId, currentTextHash: document.currentTextHash, pages: document.pages }])),
     reviewerEvidence,
+    negativeEvidence,
     browserSignals,
   }
   console.log(`PASS real Korean OCR browser E2E; receipt: ${receiptPath}`)

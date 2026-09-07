@@ -1,0 +1,948 @@
+{
+  "outcome": "PASS",
+  "mode": "real-local-docker-browser",
+  "issue": 87,
+  "runKey": "20260907061434186-96120",
+  "startedAt": "2026-09-07T06:14:34.188Z",
+  "receiptPath": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//korean-ocr-e2e-20260907061434186-96120.json",
+  "services": {
+    "frontend": "http://127.0.0.1:5173",
+    "backend": "http://127.0.0.1:8080"
+  },
+  "completedAt": "2026-09-07T06:14:56.546Z",
+  "syntheticFixtureProvenance": {
+    "manifestSha256": "6c48743fa5535238cacc829b5d5a3c6ed140fc59da2b6b6d55554efc6239b528",
+    "generator": "argus-synthetic-korean-ocr-v1",
+    "classification": "SYNTHETIC_ONLY",
+    "files": [
+      {
+        "fileName": "born-digital-ko-en.pdf",
+        "bytes": 4762,
+        "sha256": "47664981a80eec4dce5a70ed3fb50cda50194045db3c16b006d4c6157bb86fde",
+        "expectedRoutes": [
+          "PDFBOX_TEXT"
+        ]
+      },
+      {
+        "fileName": "image-only-korean-scan.pdf",
+        "bytes": 36896,
+        "sha256": "e0eed5fcd8b87ff4fc0e246d10c02f450ad829c9a578419a3a899e52fb66038e",
+        "expectedRoutes": [
+          "OCR_KOR_ENG"
+        ]
+      },
+      {
+        "fileName": "mixed-three-page.pdf",
+        "bytes": 42107,
+        "sha256": "24913627c4ee934b8d7cec4d13e76dd93aa58cc261903fc46e694014fb6c04ef",
+        "expectedRoutes": [
+          "PDFBOX_TEXT",
+          "OCR_KOR_ENG",
+          "PDFBOX_TEXT"
+        ]
+      },
+      {
+        "fileName": "low-confidence-korean-scan.pdf",
+        "bytes": 355969,
+        "sha256": "74758ddf875ee53f0c59b798794b69804af3559481a46f34c723b4f0c9968862",
+        "expectedRoutes": [
+          "OCR_KOR_ENG"
+        ]
+      },
+      {
+        "fileName": "blank-image-page.pdf",
+        "bytes": 2314,
+        "sha256": "4372afd4e38047adb81f130d59d329350593a6c4aab8fdde16d25d6494ab699f",
+        "expectedRoutes": []
+      },
+      {
+        "fileName": "corrupt.pdf",
+        "bytes": 54,
+        "sha256": "4c490ce28ce97671a0996ca01c9e863a5fdc961588d446fda68695f73a986511",
+        "expectedRoutes": []
+      }
+    ]
+  },
+  "actors": {
+    "productManager": {
+      "userId": 1,
+      "role": "PRODUCT_MANAGER"
+    },
+    "reviewer": {
+      "userId": 2,
+      "role": "COMPLIANCE_REVIEWER"
+    },
+    "isolatedBrowserContexts": true
+  },
+  "ids": {
+    "productId": 95,
+    "batchId": 44
+  },
+  "assertions": {
+    "uploadedThroughPmUi": true,
+    "expectedReadyAndFailedOutcomes": true,
+    "pageRoutesMatched": true,
+    "provenanceAndConfidencePresent": true,
+    "unconfirmedAnalysisGateClosed": true,
+    "blankNoTextCannotConfirmOrAnalyze": true,
+    "corruptPdfCannotConfirmOrAnalyze": true,
+    "lowConfidenceWarningAndReviewerPersistence": true,
+    "staleRunAndTextHashConfirmation409": true,
+    "pmSavedAndConfirmedAllDocuments": true,
+    "reviewerOcrDisplayReadOnly": true,
+    "provenanceSurvivedReviewerReload": true
+  },
+  "documents": {
+    "born-digital-ko-en.pdf": {
+      "documentId": 681,
+      "currentRunId": 345,
+      "currentTextHash": "c23b837f2df2e9af048b145cd7b5c16941919b612f1b442cf64ab7a604a3ca62",
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "475521238c18cffee3ed98a2a9ba7882491ed487e553bc2c315584f378c3c8c6",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        }
+      ]
+    },
+    "image-only-korean-scan.pdf": {
+      "documentId": 682,
+      "currentRunId": 346,
+      "currentTextHash": "608cfea77764cb3beafed38c71a16ecd92729131d71de7baba0ceb0eaec9e972",
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "OCR_KOR_ENG",
+          "textHash": "300cc872bf4caa304409aa3d155c18924fdb6d00a512b5a98140122e83dbfdcd",
+          "renderArtifactHash": "6174a2e28c20961e432c47f30834c132f0beda256f92e584c13135388ccbd93b",
+          "renderArtifactUrl": "/api/documents/682/pages/1/render",
+          "ocrConfidence": 94.8933,
+          "ocrConfidenceBand": "HIGH",
+          "ocrEngine": "tesseract",
+          "ocrModelVersion": "5.3.0 (tessdata debian-tessdata-4.1.0-2)",
+          "ocrLanguage": "kor+eng",
+          "ocrWarnings": []
+        }
+      ]
+    },
+    "mixed-three-page.pdf": {
+      "documentId": 683,
+      "currentRunId": 347,
+      "currentTextHash": "d0c02844ab7d3e3854e4448ebbcef9334fd2e5263058d5289865e0cba9d26e0c",
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "0f97449a103d203c2cf9cfedf9cdb163f5276fff70ef004cd76b46df7399fa39",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        },
+        {
+          "pageNumber": 2,
+          "selectedMethod": "OCR_KOR_ENG",
+          "textHash": "300cc872bf4caa304409aa3d155c18924fdb6d00a512b5a98140122e83dbfdcd",
+          "renderArtifactHash": "6174a2e28c20961e432c47f30834c132f0beda256f92e584c13135388ccbd93b",
+          "renderArtifactUrl": "/api/documents/683/pages/2/render",
+          "ocrConfidence": 94.8933,
+          "ocrConfidenceBand": "HIGH",
+          "ocrEngine": "tesseract",
+          "ocrModelVersion": "5.3.0 (tessdata debian-tessdata-4.1.0-2)",
+          "ocrLanguage": "kor+eng",
+          "ocrWarnings": []
+        },
+        {
+          "pageNumber": 3,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "47551c6c8476eb7cd3ef94e2968b6c4847acb6cab3e3b46907435d6c2f9c8d4e",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        }
+      ]
+    },
+    "low-confidence-korean-scan.pdf": {
+      "documentId": 684,
+      "currentRunId": 348,
+      "currentTextHash": "3b46448b27c86237ffb4d218483ca7f6357f58e3dfbf0b9c4d55200d91771425",
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "OCR_KOR_ENG",
+          "textHash": "c3fdabc7db51428eea11594685228cd61e82304e6bc4b0402b482f60a61a1fc8",
+          "renderArtifactHash": "8a950ee889244ea3625ebf6bb99a0b12d91b0d2dbfc21e9e30b5a37522c08211",
+          "renderArtifactUrl": "/api/documents/684/pages/1/render",
+          "ocrConfidence": 26.2776,
+          "ocrConfidenceBand": "LOW",
+          "ocrEngine": "tesseract",
+          "ocrModelVersion": "5.3.0 (tessdata debian-tessdata-4.1.0-2)",
+          "ocrLanguage": "kor+eng",
+          "ocrWarnings": []
+        }
+      ]
+    }
+  },
+  "reviewerEvidence": [
+    {
+      "fileName": "born-digital-ko-en.pdf",
+      "documentId": 681,
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "475521238c18cffee3ed98a2a9ba7882491ed487e553bc2c315584f378c3c8c6",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        }
+      ],
+      "textareaDisabled": true,
+      "mutationControls": 0,
+      "provenanceReloaded": true
+    },
+    {
+      "fileName": "image-only-korean-scan.pdf",
+      "documentId": 682,
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "OCR_KOR_ENG",
+          "textHash": "300cc872bf4caa304409aa3d155c18924fdb6d00a512b5a98140122e83dbfdcd",
+          "renderArtifactHash": "6174a2e28c20961e432c47f30834c132f0beda256f92e584c13135388ccbd93b",
+          "renderArtifactUrl": "/api/documents/682/pages/1/render",
+          "ocrConfidence": 94.8933,
+          "ocrConfidenceBand": "HIGH",
+          "ocrEngine": "tesseract",
+          "ocrModelVersion": "5.3.0 (tessdata debian-tessdata-4.1.0-2)",
+          "ocrLanguage": "kor+eng",
+          "ocrWarnings": []
+        }
+      ],
+      "textareaDisabled": true,
+      "mutationControls": 0,
+      "provenanceReloaded": true
+    },
+    {
+      "fileName": "mixed-three-page.pdf",
+      "documentId": 683,
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "0f97449a103d203c2cf9cfedf9cdb163f5276fff70ef004cd76b46df7399fa39",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        },
+        {
+          "pageNumber": 2,
+          "selectedMethod": "OCR_KOR_ENG",
+          "textHash": "300cc872bf4caa304409aa3d155c18924fdb6d00a512b5a98140122e83dbfdcd",
+          "renderArtifactHash": "6174a2e28c20961e432c47f30834c132f0beda256f92e584c13135388ccbd93b",
+          "renderArtifactUrl": "/api/documents/683/pages/2/render",
+          "ocrConfidence": 94.8933,
+          "ocrConfidenceBand": "HIGH",
+          "ocrEngine": "tesseract",
+          "ocrModelVersion": "5.3.0 (tessdata debian-tessdata-4.1.0-2)",
+          "ocrLanguage": "kor+eng",
+          "ocrWarnings": []
+        },
+        {
+          "pageNumber": 3,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "47551c6c8476eb7cd3ef94e2968b6c4847acb6cab3e3b46907435d6c2f9c8d4e",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        }
+      ],
+      "textareaDisabled": true,
+      "mutationControls": 0,
+      "provenanceReloaded": true
+    },
+    {
+      "fileName": "low-confidence-korean-scan.pdf",
+      "documentId": 684,
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "OCR_KOR_ENG",
+          "textHash": "c3fdabc7db51428eea11594685228cd61e82304e6bc4b0402b482f60a61a1fc8",
+          "renderArtifactHash": "8a950ee889244ea3625ebf6bb99a0b12d91b0d2dbfc21e9e30b5a37522c08211",
+          "renderArtifactUrl": "/api/documents/684/pages/1/render",
+          "ocrConfidence": 26.2776,
+          "ocrConfidenceBand": "LOW",
+          "ocrEngine": "tesseract",
+          "ocrModelVersion": "5.3.0 (tessdata debian-tessdata-4.1.0-2)",
+          "ocrLanguage": "kor+eng",
+          "ocrWarnings": []
+        }
+      ],
+      "textareaDisabled": true,
+      "mutationControls": 0,
+      "provenanceReloaded": true
+    }
+  ],
+  "negativeEvidence": [
+    {
+      "fileName": "blank-image-page.pdf",
+      "documentId": 685,
+      "errorCode": "DOCUMENT_EXTRACTION_FAILED",
+      "mutationControls": 0
+    },
+    {
+      "fileName": "corrupt.pdf",
+      "documentId": 686,
+      "errorCode": "DOCUMENT_EXTRACTION_FAILED",
+      "mutationControls": 0
+    }
+  ],
+  "browserSignals": {
+    "pageErrors": [],
+    "consoleErrors": [],
+    "requestFailures": [],
+    "apiResponses": [
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/demo/users",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/demo/session",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/dashboard/me",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/products",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/products",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/products",
+        "status": 201
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/products/95",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/products/95/document-batches",
+        "status": 202
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/44/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/681",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/681/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/681/text",
+        "status": 409
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/681/text",
+        "status": 409
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/681/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/682",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/682/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/682/text",
+        "status": 409
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/682/text",
+        "status": 409
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/682/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/683",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/683/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/683/text",
+        "status": 409
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/683/text",
+        "status": 409
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/683/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/684",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/684/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/684/text",
+        "status": 409
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/684/text",
+        "status": 409
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/684/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/685",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/686",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/demo/users",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/demo/session",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/dashboard/compliance",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/681",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/681",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/682",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/682",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/683",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/683",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/684",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/684",
+        "status": 200
+      }
+    ],
+    "expectedApiConflicts": [
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/681/text",
+        "status": 409,
+        "errorCode": "DOCUMENT_CONFIRMATION_STALE",
+        "message": "현재 추출 실행 또는 텍스트가 변경되었습니다. 다시 조회한 뒤 확인하세요."
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/681/text",
+        "status": 409,
+        "errorCode": "DOCUMENT_CONFIRMATION_STALE",
+        "message": "현재 추출 실행 또는 텍스트가 변경되었습니다. 다시 조회한 뒤 확인하세요."
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/682/text",
+        "status": 409,
+        "errorCode": "DOCUMENT_CONFIRMATION_STALE",
+        "message": "현재 추출 실행 또는 텍스트가 변경되었습니다. 다시 조회한 뒤 확인하세요."
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/682/text",
+        "status": 409,
+        "errorCode": "DOCUMENT_CONFIRMATION_STALE",
+        "message": "현재 추출 실행 또는 텍스트가 변경되었습니다. 다시 조회한 뒤 확인하세요."
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/683/text",
+        "status": 409,
+        "errorCode": "DOCUMENT_CONFIRMATION_STALE",
+        "message": "현재 추출 실행 또는 텍스트가 변경되었습니다. 다시 조회한 뒤 확인하세요."
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/683/text",
+        "status": 409,
+        "errorCode": "DOCUMENT_CONFIRMATION_STALE",
+        "message": "현재 추출 실행 또는 텍스트가 변경되었습니다. 다시 조회한 뒤 확인하세요."
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/684/text",
+        "status": 409,
+        "errorCode": "DOCUMENT_CONFIRMATION_STALE",
+        "message": "현재 추출 실행 또는 텍스트가 변경되었습니다. 다시 조회한 뒤 확인하세요."
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/684/text",
+        "status": 409,
+        "errorCode": "DOCUMENT_CONFIRMATION_STALE",
+        "message": "현재 추출 실행 또는 텍스트가 변경되었습니다. 다시 조회한 뒤 확인하세요."
+      }
+    ],
+    "unexpectedApiCalls": [],
+    "unexpectedApiResponses": []
+  }
+}

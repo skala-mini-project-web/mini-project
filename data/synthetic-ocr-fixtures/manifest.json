@@ -63,11 +63,14 @@
       "bytes": 355969,
       "expectations": {
         "expected_confidence_band": "LOW",
-        "expected_outcome": "READY_LOW_CONFIDENCE_OR_FAILED_LOW_SIGNAL",
+        "expected_confidence_below": 70,
+        "expected_outcome": "READY_UNCONFIRMED",
         "expected_page_routes": [
           "OCR_KOR_ENG"
         ],
         "page_count": 1,
+        "required_ocr_language": "kor+eng",
+        "requires_reviewer_confirmation": true,
         "scenario": "low-confidence-scan"
       },
       "file": "low-confidence-korean-scan.pdf",
@@ -75,15 +78,15 @@
       "synthetic": true
     },
     {
-      "bytes": 1399,
+      "bytes": 2314,
       "expectations": {
         "expected_outcome": "FAILED_NO_TEXT",
         "expected_page_routes": [],
         "page_count": 1,
-        "scenario": "blank"
+        "scenario": "blank-image-page"
       },
-      "file": "blank.pdf",
-      "sha256": "8c87db9c97e111d93273d781a4c2b86881732aefc5d338b9d2ea4f73cc0f993a",
+      "file": "blank-image-page.pdf",
+      "sha256": "4372afd4e38047adb81f130d59d329350593a6c4aab8fdde16d25d6494ab699f",
       "synthetic": true
     },
     {
@@ -104,7 +107,7 @@
     "sha256": "e33989af92c53dd2b80efd88f50c404094a046658d0e7a7692619587570e616c"
   },
   "generator": "argus-synthetic-korean-ocr-v1",
-  "generator_sha256": "c8260eed3d6ea2393184ca201346c9570ebc8e7a03a3c1e0bf83dabf05349230",
+  "generator_sha256": "b21391d4b2d89ee34df79f81494d1a2d302e645743ecc5fd61cd7e0e75d70aa8",
   "provenance": {
     "classification": "SYNTHETIC_ONLY",
     "contains_real_company_or_product_data": false,

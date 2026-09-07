@@ -1,0 +1,863 @@
+{
+  "outcome": "PASS",
+  "mode": "real-localhost-browser-api",
+  "runKey": "20260907050911985-37742",
+  "startedAt": "2026-09-07T05:09:11.990Z",
+  "services": {
+    "frontend": "http://127.0.0.1:5173",
+    "backend": "http://127.0.0.1:8080",
+    "ai": "http://127.0.0.1:8000"
+  },
+  "receiptPath": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime/cross-role-authz-e2e-20260907050911985-37742.json",
+  "finishedAt": "2026-09-07T05:09:47.802Z",
+  "fixture": {
+    "path": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/data/synthetic-financial-corpus/documents/river-flex-savings/product-overview.pdf",
+    "fileName": "cross-role-authz-20260907050911985-37742.pdf",
+    "bytes": 90695,
+    "sha256": "ec7c42a5c51054264a5870a3f2d44aeef9f2992b3e362d7e83205526c92b04bd",
+    "syntheticOnly": true
+  },
+  "actors": {
+    "productManager": {
+      "userId": 1,
+      "role": "PRODUCT_MANAGER"
+    },
+    "reviewer": {
+      "userId": 2,
+      "role": "COMPLIANCE_REVIEWER"
+    },
+    "isolatedBrowserContexts": true
+  },
+  "ids": {
+    "productId": 73,
+    "batchId": 24,
+    "itemId": 56,
+    "documentId": 152,
+    "approvalAnalysisId": 35,
+    "rejectionAnalysisId": 36,
+    "approvalReviewId": 19,
+    "rejectionReviewId": 20,
+    "riskPatternId": 17,
+    "guardFitActionId": 16
+  },
+  "authorization": {
+    "reviewerForbidden": [
+      {
+        "method": "POST",
+        "path": "/api/products/73/document-batches",
+        "status": 403,
+        "errorCode": "FORBIDDEN_OWNERSHIP"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/documents/152/text",
+        "status": 403,
+        "errorCode": "FORBIDDEN_OWNERSHIP"
+      },
+      {
+        "method": "POST",
+        "path": "/api/documents/152/retry",
+        "status": 403,
+        "errorCode": "FORBIDDEN_OWNERSHIP"
+      },
+      {
+        "method": "POST",
+        "path": "/api/document-batches/24/cancel",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "method": "POST",
+        "path": "/api/document-batches/24/quarantine",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "method": "POST",
+        "path": "/api/document-batches/24/items/56/cancel",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "method": "POST",
+        "path": "/api/document-batches/24/items/56/quarantine",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "method": "POST",
+        "path": "/api/document-batches/24/items/56/retry",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      }
+    ],
+    "productManagerForbidden": [
+      {
+        "method": "POST",
+        "path": "/api/reviews/20/decision",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/risk-patterns/17",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "method": "POST",
+        "path": "/api/guardfit/actions",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/guardfit/actions/16",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      }
+    ],
+    "stateUnchangedAfterReviewerRequests": true,
+    "pendingReviewUnchangedAfterPmDecision": true,
+    "riskPatternStateUnchangedAfterPmMutation": true,
+    "guardFitStateUnchangedAfterPmUpdate": true
+  },
+  "rejection": {
+    "status": "REJECTED",
+    "comment": "Synthetic rejection persisted 20260907050911985-37742",
+    "selectedFindingIds": [],
+    "riskPatternIds": [],
+    "riskPatternLibraryUnchanged": true,
+    "pmApiVisible": true,
+    "pmBrowserVisible": true
+  },
+  "browserSignals": {
+    "pageErrors": [],
+    "consoleErrors": [
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "PM: Failed to load resource: the server responded with a status of 403 ()",
+      "PM: Failed to load resource: the server responded with a status of 403 ()",
+      "PM: Failed to load resource: the server responded with a status of 403 ()",
+      "PM: Failed to load resource: the server responded with a status of 403 ()"
+    ],
+    "requestFailures": [],
+    "apiResponses": [
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/demo/users",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/demo/session",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/dashboard/me",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/demo/users",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/products",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/demo/session",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews?status=PENDING&page=0&size=1",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/products",
+        "status": 201,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/products/73/document-batches",
+        "status": 202,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/dashboard/compliance",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/24",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/24",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/24",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/24/items",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/152",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/152/text",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/152/text",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/152",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/24",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/24/items/56",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/products/73",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/products/73/document-batches",
+        "status": 403,
+        "errorCode": "FORBIDDEN_OWNERSHIP"
+      },
+      {
+        "actor": "reviewer",
+        "method": "PATCH",
+        "path": "/api/documents/152/text",
+        "status": 403,
+        "errorCode": "FORBIDDEN_OWNERSHIP"
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/documents/152/retry",
+        "status": 403,
+        "errorCode": "FORBIDDEN_OWNERSHIP"
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/document-batches/24/cancel",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/document-batches/24/quarantine",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/document-batches/24/items/56/cancel",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/document-batches/24/items/56/quarantine",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/document-batches/24/items/56/retry",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/152",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/24",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/24/items/56",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/products/73",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/product-documents/152/ground-truth-facts",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "PUT",
+        "path": "/api/ground-truth-facts/52/verification",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/red-team-packs",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/evidence-documents?active=true",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/persona-templates",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/analyses",
+        "status": 202,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/analyses",
+        "status": 202,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews?status=PENDING&page=0&size=1",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews?status=PENDING&page=0&size=1",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews?status=PENDING&page=0&size=1",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/35/result",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/reviews",
+        "status": 201,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/reviews",
+        "status": 201,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/reviews/20/decision",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews/20",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/reviews/19/decision",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "PATCH",
+        "path": "/api/risk-patterns/17",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/risk-patterns/17",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/risk-patterns?page=0&size=100",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/guardfit/actions",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/guardfit/actions",
+        "status": 201,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/guardfit/actions?riskPatternId=17&page=0&size=100",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "PUT",
+        "path": "/api/guardfit/actions/16",
+        "status": 403,
+        "errorCode": "FORBIDDEN"
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/guardfit/actions?riskPatternId=17&page=0&size=100",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/risk-patterns?page=0&size=100",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews?status=PENDING&page=0&size=1",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews/20",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/analyses/36/result",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/reviews/20/decision",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/risk-patterns?page=0&size=100",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36/review",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/reviews/20",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews?status=PENDING&page=0&size=12",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36/result",
+        "status": 200,
+        "errorCode": null
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/analyses/36/review",
+        "status": 200,
+        "errorCode": null
+      }
+    ],
+    "unexpectedApiResponses": [],
+    "expectedAuthorizationConsoleErrors": [
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "reviewer: Failed to load resource: the server responded with a status of 403 ()",
+      "PM: Failed to load resource: the server responded with a status of 403 ()",
+      "PM: Failed to load resource: the server responded with a status of 403 ()",
+      "PM: Failed to load resource: the server responded with a status of 403 ()",
+      "PM: Failed to load resource: the server responded with a status of 403 ()"
+    ],
+    "unexpectedConsoleErrors": []
+  }
+}
