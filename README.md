@@ -20,6 +20,8 @@
 
 ### 핵심 흐름
 
+![ARGUS 서비스 전체 이용 흐름](docs/assets/service-usage-flow.png)
+
 ```text
 PM
 상품 등록 → PDF 업로드·텍스트 확정 → 공식 사실 확인

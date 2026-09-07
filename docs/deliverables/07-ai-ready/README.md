@@ -10,6 +10,8 @@
 
 - pgvector 검색 결과 chunk만 모델에 전달
 - full-document·keyword fallback 없음
-- Finding은 `retrievedContextChunkIds`와 exact `evidenceSpans`를 함께 반환
+- Ollama는 `evidenceSpanOptionIds`만 선택하고, FastAPI가 option ID를 retrieval snapshot의 exact `evidenceSpans`로 materialize
+- Finding은 `policyRuleCode`·`retrievedContextChunkIds`·exact `evidenceSpans`를 함께 반환
+- provider `riskScore`는 trace일 뿐이며 운영 score는 reviewer 승인 후 backend가 Policy v1로 산출
 - backend가 chunk membership·excerpt containment·Persona·공식 사실 ID를 검증
 - AI 내부 endpoint는 backend shared bearer token이 없으면 401 거부
