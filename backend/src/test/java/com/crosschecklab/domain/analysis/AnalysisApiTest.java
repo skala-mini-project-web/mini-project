@@ -1351,6 +1351,36 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("Provider가 요청에서 선택하지 않은 persona를 반환하면 결과를 저장하지 않는다")
+    void unselectedPersonaReferenceIsRejected() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    AnalysisRequest.RetrievedContextPayload context = request.retrievedContexts().getFirst();
+                    return new AnalysisResult(82, "mock-risk-v1", "mock-prompt-v1", List.of(new FindingPayload(
+                            "선택하지 않은 persona를 인용한 결과입니다.",
+                            Severity.HIGH,
+                            RedTeamRuleCode.STABILITY_KEYWORD,
+                            List.of(PersonaCode.LIMITED_PRODUCT_FAMILIARITY, PersonaCode.SENIOR),
+                            List.of(context.chunkId()),
+                            List.of(new FindingPayload.EvidenceSpanPayload(
+                                    context.chunkId(), context.chunkText())),
+                            List.of(),
+                            "선택 persona 범위 안에서만 설명하세요.")));
+                });
+
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.retryable").value(false))
+                .andExpect(jsonPath("$.errorCode").value("PROVIDER_RESPONSE_INVALID"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isZero();
+    }
+
+    @Test
     @DisplayName("Provider가 검색 결과에 없는 chunkId를 인용하면 결과를 저장하지 않는다")
     void unretrievedContextChunkReferenceIsRejected() throws Exception {
         FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;

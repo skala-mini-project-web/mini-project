@@ -53,6 +53,8 @@ class ProviderResponseInvalidError(AiServiceError):
 
 class RiskAnalysisService:
     OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v13"
+    # 100,000 UTF-8 bytes 한글 prompt ≈ 25k token. qwen2.5 7B KV cache 약 1.9GB.
+    DEFAULT_OLLAMA_NUM_CTX = 32768
     FIXTURE_POLICY_RULE_CODES = {
         "GUARANTEE_MISUNDERSTANDING_HIGH": RedTeamRuleCode.STABILITY_KEYWORD,
         "EARLY_TERMINATION_COST_MEDIUM": RedTeamRuleCode.COST_OMISSION,
@@ -108,6 +110,14 @@ class RiskAnalysisService:
         self.ollama_model = os.getenv(
             "OLLAMA_MODEL", "qwen2.5:7b-instruct"
         )
+        # Ollama 기본 context(4096 token)는 confirmedText 상한과 retrieved context를 담지 못하고
+        # 초과분을 앞에서 조용히 잘라 system prompt까지 잃는다. aggregate prompt 상한
+        # 100,000 UTF-8 bytes가 들어가는 크기를 명시한다.
+        self.ollama_num_ctx = self._read_positive_int_env(
+            "OLLAMA_NUM_CTX", self.DEFAULT_OLLAMA_NUM_CTX
+        )
+        # 미설정이면 Ollama 서버 기본값(5m)을 따른다. 로컬 메모리를 줄이려면 "0" 또는 "1m" 등으로 지정한다.
+        self.ollama_keep_alive = os.getenv("OLLAMA_KEEP_ALIVE", "").strip() or None
         self.http_client = http_client or httpx.Client(timeout=60.0)
         self._attempts: dict[tuple[int, str], int] = {}
         self._attempt_lock = Lock()
@@ -243,8 +253,14 @@ class RiskAnalysisService:
             ],
             "format": response_schema,
             "stream": False,
-            "options": {"temperature": 0, "seed": 42},
+            "options": {
+                "temperature": 0,
+                "seed": 42,
+                "num_ctx": self.ollama_num_ctx,
+            },
         }
+        if self.ollama_keep_alive is not None:
+            payload["keep_alive"] = self.ollama_keep_alive
 
         generated_json = self._call_ollama(payload)
         try:
@@ -308,6 +324,19 @@ class RiskAnalysisService:
                 "prompt_version": self.OLLAMA_PROMPT_VERSION,
             }
         )
+
+    @staticmethod
+    def _read_positive_int_env(name: str, default: int) -> int:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = int(raw)
+        except ValueError as error:
+            raise ValueError(f"{name} must be a positive integer.") from error
+        if value <= 0:
+            raise ValueError(f"{name} must be a positive integer.")
+        return value
 
     def _call_ollama(self, payload: dict[str, Any]) -> str:
         try:

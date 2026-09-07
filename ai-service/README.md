@@ -57,6 +57,9 @@ export OLLAMA_MODEL=qwen2.5:7b-instruct
 uvicorn app.main:app --reload
 ```
 
+- `OLLAMA_NUM_CTX`(기본 32768): 모델 context 크기. Ollama 기본 4096은 confirmedText 상한 20,000자와 retrieved context를 담지 못하고 초과분을 앞에서 조용히 잘라 system prompt를 잃는다. 짧은 데모 문서만 쓰는 로컬에서는 8192로 낮춰 KV cache 메모리를 줄일 수 있다.
+- `OLLAMA_KEEP_ALIVE`(기본 미설정 = Ollama 서버 기본 5m): 응답 후 모델을 메모리에 유지하는 시간. 다른 작업과 메모리를 나눠 쓰려면 `1m` 또는 `0`으로 지정한다. 다음 분석 시 모델 재로드 시간이 늘어난다.
+
 선택한 provider와 모델의 접근 가능 여부는 다음 명령으로 검증합니다.
 성공 응답은 `{"status":"UP","provider":"ollama"}`입니다.
 

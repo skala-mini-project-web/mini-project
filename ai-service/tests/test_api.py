@@ -831,6 +831,13 @@ def test_ollama_repair_excerpt_options_are_bounded_and_exact(
     response = call_api("POST", "/internal/v1/risk-analyses", json=request)
 
     assert response.status_code == 200
+    for provider_request in provider_requests:
+        assert provider_request["options"] == {
+            "temperature": 0,
+            "seed": 42,
+            "num_ctx": RiskAnalysisService.DEFAULT_OLLAMA_NUM_CTX,
+        }
+        assert "keep_alive" not in provider_request
     initial_user_payload = json.loads(
         provider_requests[0]["messages"][1]["content"]
     )
@@ -1093,3 +1100,59 @@ def test_rejects_fixture_output_citing_unknown_known_fact(
     assert response.status_code == 500
     assert response.json()["errorCode"] == "AI_PROVIDER_RESPONSE_INVALID"
     assert response.json()["retryable"] is False
+
+
+def test_ollama_context_and_keep_alive_follow_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "8192")
+    monkeypatch.setenv("OLLAMA_KEEP_ALIVE", "1m")
+    request = guarantee_request()
+    provider_requests: list[dict[str, Any]] = []
+
+    def provider_response(provider_request: httpx.Request) -> httpx.Response:
+        provider_requests.append(json.loads(provider_request.content))
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "riskScore": 82,
+                            "modelVersion": "qwen2.5:7b-instruct",
+                            "promptVersion": RiskAnalysisService.OLLAMA_PROMPT_VERSION,
+                            "findings": [
+                                {
+                                    "statement": "안정성 표현이 원금 손실 가능성을 가릴 수 있습니다.",
+                                    "severity": "HIGH",
+                                    "policyRuleCode": "STABILITY_KEYWORD",
+                                    "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+                                    "retrievedContextChunkIds": [11],
+                                    "evidenceSpanOptionIds": ["evidence-option-1"],
+                                    "knownFactIds": [],
+                                    "recommendation": "손실 가능성을 같은 화면에 표시하세요.",
+                                }
+                            ],
+                        }
+                    )
+                }
+            },
+        )
+
+    service = RiskAnalysisService(
+        http_client=httpx.Client(transport=httpx.MockTransport(provider_response))
+    )
+    service.analyze(RiskAnalysisRequest.model_validate(request))
+
+    assert provider_requests[0]["options"]["num_ctx"] == 8192
+    assert provider_requests[0]["keep_alive"] == "1m"
+
+
+def test_ollama_num_ctx_rejects_non_positive_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "0")
+
+    with pytest.raises(ValueError, match="OLLAMA_NUM_CTX"):
+        RiskAnalysisService()

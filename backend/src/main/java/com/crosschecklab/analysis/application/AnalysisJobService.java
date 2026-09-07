@@ -475,6 +475,9 @@ public class AnalysisJobService {
         Set<RedTeamRuleCode> selectedRuleCodes = request.ruleCodes() == null
                 ? Set.of()
                 : Set.copyOf(request.ruleCodes());
+        Set<PersonaCode> selectedPersonaCodes = request.personaCodes() == null
+                ? Set.of()
+                : Set.copyOf(request.personaCodes());
         Set<Long> acceptedChunkIds = request.retrievedContexts() == null ? Set.of()
                 : request.retrievedContexts().stream()
                         .map(AnalysisRequest.RetrievedContextPayload::chunkId)
@@ -490,6 +493,22 @@ public class AnalysisJobService {
             if (!selectedRuleCodes.contains(finding.policyRuleCode())) {
                 throw invalidProviderResponse(
                         "요청에서 선택하지 않은 policyRuleCode: " + finding.policyRuleCode());
+            }
+            // FastAPI 검증과 별개로 Spring이 다시 확인한다. 선택하지 않은 persona는 현재 execution에 저장하지 않는다.
+            if (finding.affectedPersonaCodes() == null) {
+                throw invalidProviderResponse("finding 에 affectedPersonaCodes 가 없음");
+            }
+            Set<PersonaCode> citedPersonaCodes = new LinkedHashSet<>();
+            for (PersonaCode personaCode : finding.affectedPersonaCodes()) {
+                if (personaCode == null) {
+                    throw invalidProviderResponse("persona 인용에 code 가 없음");
+                }
+                if (!citedPersonaCodes.add(personaCode)) {
+                    throw invalidProviderResponse("중복된 persona 인용: " + personaCode);
+                }
+                if (!selectedPersonaCodes.contains(personaCode)) {
+                    throw invalidProviderResponse("요청에서 선택하지 않은 persona: " + personaCode);
+                }
             }
             if (finding.retrievedContextChunkIds() == null) {
                 throw invalidProviderResponse("finding 에 retrievedContextChunkIds 가 없음");
