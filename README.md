@@ -262,8 +262,8 @@ ollama list
   - `[완료]` PostgreSQL durable batch queue, `SKIP LOCKED` lease/fence, item별 retry·cancel·quarantine·attempt audit
   - `[완료]` 1–100 파일 batch upload, CSV error report, PM management·reviewer read-only, actual browser E2E
 - PDF 한글 OCR
-  - `[완료]` PDF-only OCR worker·page routing·confidence·원본 대조·PM confirmation 설계 확정
-  - `[예정]` pinned `kor+eng` OCR worker, page artifact, critical-field review, actual Compose/browser E2E: [#87](https://github.com/skala-mini-project-web/mini-project/issues/87)
+  - `[완료]` PDFBox-first page routing, isolated `kor+eng` OCR worker, page artifact/hash·confidence·engine provenance
+  - `[완료]` PM current run/text-hash confirmation, reviewer read-only, synthetic scan fixtures, actual Compose/browser E2E
 - 실서비스 검증·합성 corpus
   - `[완료]` 실제 browser E2E: PM 수정·확정, 분석 후 수정 409, reviewer read-only, malformed PDF 실패 화면, RAG→review→Risk Pattern→GuardFit
   - `[완료]` 6개 합성 상품군·30개 PDF·102페이지 corpus의 PDFBox extraction·SHA-256·source revision 검증

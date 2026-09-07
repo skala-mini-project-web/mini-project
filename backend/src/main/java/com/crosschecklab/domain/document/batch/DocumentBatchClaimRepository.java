@@ -91,6 +91,30 @@ public interface DocumentBatchClaimRepository extends Repository<DocumentBatchIt
     );
 
     /**
+     * Locks a live, uncancelled claim before its structured extraction result is persisted. Holding
+     * this item lock through completion makes the provenance inserts and the fenced item/document
+     * transition one atomic transaction.
+     */
+    @Query(value = """
+            SELECT i.product_document_id
+            FROM document_batch_items i
+            JOIN document_batches b ON b.id = i.batch_id
+            WHERE i.id = :itemId
+              AND i.status = 'LEASED'
+              AND i.lease_owner = :workerOwner
+              AND i.lease_fence = :leaseFence
+              AND i.lease_until > :finishedAt
+              AND coalesce(i.cancel_requested_at, b.cancel_requested_at) IS NULL
+            FOR UPDATE OF i
+            """, nativeQuery = true)
+    Optional<Long> lockCompletableClaimDocument(
+            @Param("itemId") Long itemId,
+            @Param("workerOwner") String workerOwner,
+            @Param("leaseFence") long leaseFence,
+            @Param("finishedAt") OffsetDateTime finishedAt
+    );
+
+    /**
      * Starts extraction only while this exact lease is current. A cancellation already recorded on
      * the item is finalized instead, including its attempt audit, and no extraction target is returned.
      * An empty result can also mean that the lease is stale or that an expected dependent row was

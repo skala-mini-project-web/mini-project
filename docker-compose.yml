@@ -47,6 +47,38 @@ services:
     networks:
       - data
 
+  ocr-worker:
+    build:
+      context: ./ocr-worker
+    restart: unless-stopped
+    init: true
+    user: ocr
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+    environment:
+      OCR_WORKER_TOKEN: ${OCR_WORKER_TOKEN:-crosschecklab-local-ocr-token}
+      OCR_TIMEOUT_SECONDS: ${OCR_WORKER_TIMEOUT_SECONDS:-30}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; connection = socket.create_connection(('127.0.0.1', 8080), 2); connection.close()"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    cpus: 1.0
+    mem_limit: 768m
+    networks:
+      - ocr
+
   storage-init:
     image: argus-backend:local
     restart: "no"
@@ -71,6 +103,11 @@ services:
       AI_SERVICE_ALLOW_INSECURE_HTTP: "true"
       AI_SERVICE_INTERNAL_TOKEN: ${AI_SERVICE_INTERNAL_TOKEN:-crosschecklab-local-internal-token}
       AI_SERVICE_READ_TIMEOUT: ${AI_SERVICE_READ_TIMEOUT:-180s}
+      OCR_WORKER_URL: http://ocr-worker:8080
+      OCR_WORKER_ALLOW_INSECURE_HTTP: "true"
+      OCR_WORKER_TOKEN: ${OCR_WORKER_TOKEN:-crosschecklab-local-ocr-token}
+      OCR_WORKER_CONNECT_TIMEOUT: ${OCR_WORKER_CONNECT_TIMEOUT:-2s}
+      OCR_WORKER_REQUEST_TIMEOUT: ${OCR_WORKER_REQUEST_TIMEOUT:-45s}
       SPRING_PROFILES_ACTIVE: real-extraction
       RAG_OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       RAG_OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-bge-m3:latest}
@@ -87,6 +124,8 @@ services:
         condition: service_healthy
       ai-service:
         condition: service_healthy
+      ocr-worker:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health"]
       interval: 10s
@@ -96,6 +135,7 @@ services:
     networks:
       - app
       - data
+      - ocr
 
   frontend:
     build:
@@ -118,3 +158,5 @@ volumes:
 networks:
   app:
   data:
+  ocr:
+    internal: true

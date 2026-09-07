@@ -7,6 +7,7 @@
 import { mockServer, ingestExtraction, ingestAnalysis } from './mock/server.js'
 import { http, uuid } from './client.js'
 import { getAuth } from './auth-context.js'
+import { ApiError } from './errors.js'
 import { extractDocument } from '../lib/extract.js'
 import { analyzeDocument } from '../lib/analyze.js'
 
@@ -78,6 +79,11 @@ const normalizeDocument = (document) => ({
   status: document.status ?? document.extractStatus,
   rawExtractedText: document.rawExtractedText ?? document.extractedText,
   verifiedText: document.verifiedText ?? document.extractedText,
+  currentRunId: document.currentRunId ?? null,
+  currentTextHash: document.currentTextHash ?? null,
+  requiresConfirmation: document.requiresConfirmation
+    ?? (document.extractStatus === 'READY' && !document.confirmed),
+  pages: (document.pages ?? []).slice().sort((a, b) => a.pageNumber - b.pageNumber),
   error: document.error == null
     ? null
     : {
@@ -162,11 +168,44 @@ export const api = {
   },
   getDocument: (id) =>
     USE_MOCK ? mockServer.getDocument(auth(), id) : http.get(`/documents/${id}`).then(normalizeDocument),
+  getDocumentPageRender: async (renderArtifactUrl) => {
+    const currentAuth = auth()
+    const response = await fetch(renderArtifactUrl, {
+      headers: currentAuth
+        ? {
+            'X-Demo-User-Id': currentAuth.userId,
+            'X-Demo-Role': currentAuth.role,
+          }
+        : {},
+    })
+    if (!response.ok) {
+      let error = {}
+      try { error = await response.json() } catch { /* empty/non-JSON error response */ }
+      throw new ApiError({
+        status: response.status,
+        errorCode: error.errorCode || 'UNKNOWN',
+        message: error.message || response.statusText,
+        retryable: error.retryable ?? false,
+        fieldErrors: error.fieldErrors || [],
+        traceId: error.traceId,
+      })
+    }
+    return response.blob()
+  },
   patchDocumentText: (id, body) =>
     USE_MOCK
       ? mockServer.patchDocumentText(auth(), id, body)
       : http
-          .patch(`/documents/${id}/text`, { extractedText: body.verifiedText, confirmed: body.confirmed })
+          .patch(
+            `/documents/${id}/text`,
+            { extractedText: body.verifiedText, confirmed: body.confirmed },
+            body.confirmed && body.currentRunId != null
+              ? {
+                  'X-Expected-Extraction-Run-Id': body.currentRunId,
+                  'X-Expected-Text-Hash': body.currentTextHash,
+                }
+              : undefined,
+          )
           .then(normalizeDocument),
   retryDocument: async (id) => {
     if (!USE_MOCK) return http.post(`/documents/${id}/retry`, { reason: 'USER_RETRY' })

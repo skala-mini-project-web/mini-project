@@ -39,6 +39,21 @@ ai-service:
   # X-Demo-Scenario 헤더가 없을 때 사용할 기본 Fixture 시나리오
   default-scenario-code: GUARANTEE_MISUNDERSTANDING_HIGH
 
+ocr:
+  base-url: ${OCR_WORKER_URL:http://localhost:8081}
+  allow-insecure-http: ${OCR_WORKER_ALLOW_INSECURE_HTTP:false}
+  bearer-token: ${OCR_WORKER_TOKEN:crosschecklab-local-ocr-token}
+  connect-timeout: ${OCR_WORKER_CONNECT_TIMEOUT:2s}
+  request-timeout: ${OCR_WORKER_REQUEST_TIMEOUT:45s}
+  routing:
+    minimum-text-codepoints: 32
+    minimum-readable-ratio: 0.70
+    render-dpi: 300
+    language: kor+eng
+  confidence:
+    minimum: 0
+    maximum: 100
+
 rag:
   ollama:
     base-url: http://localhost:11434

@@ -242,7 +242,8 @@ class GroundTruthFactApiTest extends IntegrationTestSupport {
                     confirmationBackendPid.set(
                             jdbcTemplate.queryForObject("select pg_backend_pid()", Integer.class));
                     productDocumentService.updateText(documentId,
-                            new DocumentTextUpdateRequest("동시성 이후 확정본", true), owner);
+                            new DocumentTextUpdateRequest("동시성 이후 확정본", true),
+                            null, null, owner);
                     confirmationRefreshed.countDown();
                     await(allowConfirmationCommit);
                 });

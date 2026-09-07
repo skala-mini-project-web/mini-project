@@ -1,8 +1,17 @@
 package com.crosschecklab.domain.document;
 
 import com.crosschecklab.domain.document.batch.DocumentBatchClaimRepository;
+import com.crosschecklab.domain.document.extraction.DocumentExtractionPage;
+import com.crosschecklab.domain.document.extraction.DocumentExtractionResult;
+import com.crosschecklab.domain.document.extraction.DocumentExtractionRun;
 import com.crosschecklab.domain.document.extraction.ExtractionTarget;
+import com.crosschecklab.domain.document.extraction.PageExtractionMethod;
+import com.crosschecklab.domain.document.extraction.PageExtractionResult;
+import com.crosschecklab.domain.document.extraction.TextExtractionException;
+import com.crosschecklab.global.common.enums.ExtractStatus;
+import jakarta.persistence.EntityManager;
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -19,14 +28,18 @@ public class DocumentExtractionTransitions {
 
     private static final String FAILURE_LOCK_TIMEOUT = "2s";
     private static final String FAILURE_STATEMENT_TIMEOUT = "5s";
+    private static final String EXTRACTION_CONFIG_VERSION = "pdfbox-ocr-v1";
 
     private final ProductDocumentRepository productDocumentRepository;
     private final DocumentBatchClaimRepository batchClaimRepository;
+    private final EntityManager entityManager;
 
     // 문서가 이미 지워졌을 수 있으므로 Optional 로 돌려준다.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<ExtractionTarget> beginExtraction(Long documentId) {
-        return productDocumentRepository.findById(documentId)
+        return productDocumentRepository.findByIdForUpdate(documentId)
+                .filter(document -> document.getExtractStatus() == ExtractStatus.UPLOADED
+                        || document.getExtractStatus() == ExtractStatus.EXTRACTING)
                 .map(document -> {
                     document.markExtracting();
                     return ExtractionTarget.from(document);
@@ -34,15 +47,115 @@ public class DocumentExtractionTransitions {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void completeExtraction(Long documentId, String extractedText) {
-        productDocumentRepository.findById(documentId)
-                .ifPresent(document -> document.markReady(extractedText));
+    public void completeExtraction(
+            Long documentId,
+            String extractedText,
+            boolean legacyMockExtraction
+    ) {
+        productDocumentRepository.findByIdForUpdate(documentId)
+                .filter(document -> document.getExtractStatus() == ExtractStatus.EXTRACTING)
+                .ifPresent(document -> {
+                    if (!legacyMockExtraction && isPdf(document)) {
+                        throw new TextExtractionException(
+                                "PDF extraction cannot complete without page provenance.");
+                    }
+                    document.markReady(extractedText);
+                });
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void completeExtraction(
+            Long documentId,
+            DocumentExtractionResult result,
+            boolean legacyMockExtraction
+    ) {
+        productDocumentRepository.findByIdForUpdate(documentId)
+                .filter(document -> document.getExtractStatus() == ExtractStatus.EXTRACTING)
+                .ifPresent(document -> persistResult(document, result, legacyMockExtraction));
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void failExtraction(Long documentId, String errorCode, String publicMessage, boolean retryable) {
-        productDocumentRepository.findById(documentId)
+        productDocumentRepository.findByIdForUpdate(documentId)
+                .filter(document -> document.getExtractStatus() == ExtractStatus.EXTRACTING)
                 .ifPresent(document -> document.markFailed(errorCode, publicMessage, retryable));
+    }
+
+    private void persistResult(
+            ProductDocument document,
+            DocumentExtractionResult result,
+            boolean legacyMockExtraction
+    ) {
+        if (!result.hasPageResults()) {
+            if (!legacyMockExtraction && isPdf(document)) {
+                throw new TextExtractionException(
+                        "PDF extraction cannot complete without page provenance.");
+            }
+            document.markReady(result.text());
+            return;
+        }
+
+        Number maximumGeneration = (Number) entityManager.createQuery("""
+                        select coalesce(max(run.runGeneration), 0)
+                        from DocumentExtractionRun run
+                        where run.productDocument.id = :documentId
+                        """)
+                .setParameter("documentId", document.getId())
+                .getSingleResult();
+        int generation = Math.addExact(maximumGeneration.intValue(), 1);
+        DocumentExtractionRun run = DocumentExtractionRun.succeeded(
+                document,
+                generation,
+                result.sourceHash(),
+                EXTRACTION_CONFIG_VERSION,
+                Map.of(
+                        "routing", "pdfbox-first-per-page",
+                        "minimumTextCodepoints", 32,
+                        "minimumReadableRatio", 0.70d,
+                        "renderDpi", 300,
+                        "ocrLanguage", "kor+eng"),
+                result.textHash(),
+                result.pages().size());
+        entityManager.persist(run);
+        for (PageExtractionResult page : result.pages()) {
+            entityManager.persist(toEntity(run, page));
+        }
+        document.markReady(result.text(), run);
+    }
+
+    private static boolean isPdf(ProductDocument document) {
+        return DocumentMediaType.resolve(document.getMediaType(), document.getFileName())
+                .filter(mediaType -> mediaType == DocumentMediaType.PDF)
+                .isPresent();
+    }
+
+    private static DocumentExtractionPage toEntity(
+            DocumentExtractionRun run,
+            PageExtractionResult page
+    ) {
+        if (page.selectedMethod() == PageExtractionMethod.PDFBOX_TEXT) {
+            return DocumentExtractionPage.pdfBoxText(
+                    run,
+                    page.pageNumber(),
+                    page.selectedText(),
+                    page.selectedTextHash(),
+                    page.pdfboxCandidateHash());
+        }
+        return DocumentExtractionPage.ocrKorEng(
+                run,
+                page.pageNumber(),
+                page.selectedText(),
+                page.selectedTextHash(),
+                page.pdfboxCandidateHash(),
+                page.ocrRenderArtifactKey(),
+                page.ocrRenderArtifactHash(),
+                page.ocrConfigSnapshot(),
+                page.ocrEngine().name(),
+                page.ocrEngine().version()
+                        + " (tessdata " + page.ocrEngine().tessdataVersion() + ")",
+                page.ocrEngine().language(),
+                page.ocrConfidence(),
+                page.ocrWarnings());
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -82,6 +195,39 @@ public class DocumentExtractionTransitions {
         int affectedRows = batchClaimRepository.completeClaim(
                 itemId, workerOwner, leaseFence, finishedAt, extractedText);
         return affectedRows == 1;
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean completeBatchExtraction(
+            Long itemId,
+            String workerOwner,
+            long leaseFence,
+            OffsetDateTime finishedAt,
+            DocumentExtractionResult result
+    ) {
+        if (batchClaimRepository.lockClaimBatch(itemId, workerOwner, leaseFence).isEmpty()) {
+            return false;
+        }
+        Optional<Long> documentId = batchClaimRepository.lockCompletableClaimDocument(
+                itemId, workerOwner, leaseFence, finishedAt);
+        if (documentId.isEmpty()) {
+            return batchClaimRepository.completeClaim(
+                    itemId, workerOwner, leaseFence, finishedAt, result.text()) == 1;
+        }
+
+        ProductDocument document = productDocumentRepository.findByIdForUpdate(documentId.get())
+                .filter(candidate -> candidate.getExtractStatus() == ExtractStatus.EXTRACTING)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Completable batch claim has no extracting document. itemId=" + itemId));
+        persistResult(document, result, false);
+
+        int affectedRows = batchClaimRepository.completeClaim(
+                itemId, workerOwner, leaseFence, finishedAt, result.text());
+        if (affectedRows != 1) {
+            throw new IllegalStateException(
+                    "Locked batch claim became stale during completion. itemId=" + itemId);
+        }
+        return true;
     }
 
     /**

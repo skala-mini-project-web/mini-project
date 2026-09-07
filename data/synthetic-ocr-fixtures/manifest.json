@@ -1,0 +1,115 @@
+{
+  "deterministic_seed": 870031,
+  "fixtures": [
+    {
+      "bytes": 4762,
+      "expectations": {
+        "expected_outcome": "READY_UNCONFIRMED",
+        "expected_page_routes": [
+          "PDFBOX_TEXT"
+        ],
+        "page_count": 1,
+        "required_text": [
+          "가온 테스트 적립 플랜",
+          "ARGUS-OCR-SYNTHETIC-87"
+        ],
+        "scenario": "born-digital-korean-english"
+      },
+      "file": "born-digital-ko-en.pdf",
+      "sha256": "47664981a80eec4dce5a70ed3fb50cda50194045db3c16b006d4c6157bb86fde",
+      "synthetic": true
+    },
+    {
+      "bytes": 36896,
+      "expectations": {
+        "expected_outcome": "READY_UNCONFIRMED",
+        "expected_page_routes": [
+          "OCR_KOR_ENG"
+        ],
+        "page_count": 1,
+        "required_ocr_language": "kor+eng",
+        "required_text": [
+          "가온",
+          "적립"
+        ],
+        "scenario": "image-only-korean-scan"
+      },
+      "file": "image-only-korean-scan.pdf",
+      "sha256": "e0eed5fcd8b87ff4fc0e246d10c02f450ad829c9a578419a3a899e52fb66038e",
+      "synthetic": true
+    },
+    {
+      "bytes": 42107,
+      "expectations": {
+        "expected_outcome": "READY_UNCONFIRMED",
+        "expected_page_routes": [
+          "PDFBOX_TEXT",
+          "OCR_KOR_ENG",
+          "PDFBOX_TEXT"
+        ],
+        "page_count": 3,
+        "required_ocr_language": "kor+eng",
+        "required_text": [
+          "가온",
+          "ARGUS-OCR-SYNTHETIC-87"
+        ],
+        "scenario": "mixed-three-page"
+      },
+      "file": "mixed-three-page.pdf",
+      "sha256": "24913627c4ee934b8d7cec4d13e76dd93aa58cc261903fc46e694014fb6c04ef",
+      "synthetic": true
+    },
+    {
+      "bytes": 355969,
+      "expectations": {
+        "expected_confidence_band": "LOW",
+        "expected_outcome": "READY_LOW_CONFIDENCE_OR_FAILED_LOW_SIGNAL",
+        "expected_page_routes": [
+          "OCR_KOR_ENG"
+        ],
+        "page_count": 1,
+        "scenario": "low-confidence-scan"
+      },
+      "file": "low-confidence-korean-scan.pdf",
+      "sha256": "74758ddf875ee53f0c59b798794b69804af3559481a46f34c723b4f0c9968862",
+      "synthetic": true
+    },
+    {
+      "bytes": 1399,
+      "expectations": {
+        "expected_outcome": "FAILED_NO_TEXT",
+        "expected_page_routes": [],
+        "page_count": 1,
+        "scenario": "blank"
+      },
+      "file": "blank.pdf",
+      "sha256": "8c87db9c97e111d93273d781a4c2b86881732aefc5d338b9d2ea4f73cc0f993a",
+      "synthetic": true
+    },
+    {
+      "bytes": 54,
+      "expectations": {
+        "expected_outcome": "FAILED_CORRUPT_PDF",
+        "expected_page_routes": [],
+        "page_count": null,
+        "scenario": "corrupt"
+      },
+      "file": "corrupt.pdf",
+      "sha256": "4c490ce28ce97671a0996ca01c9e863a5fdc961588d446fda68695f73a986511",
+      "synthetic": true
+    }
+  ],
+  "font": {
+    "file_name": "AppleSDGothicNeo.ttc",
+    "sha256": "e33989af92c53dd2b80efd88f50c404094a046658d0e7a7692619587570e616c"
+  },
+  "generator": "argus-synthetic-korean-ocr-v1",
+  "generator_sha256": "c8260eed3d6ea2393184ca201346c9570ebc8e7a03a3c1e0bf83dabf05349230",
+  "provenance": {
+    "classification": "SYNTHETIC_ONLY",
+    "contains_real_company_or_product_data": false,
+    "contains_real_customer_data": false,
+    "notice": "Programmatically generated fictional Korean/English QA content only."
+  },
+  "schema_version": 1
+}

@@ -1,0 +1,592 @@
+{
+  "outcome": "PASS",
+  "mode": "real-local-docker-browser",
+  "issue": 87,
+  "runKey": "20260907032051806-82306",
+  "startedAt": "2026-09-07T03:20:51.807Z",
+  "receiptPath": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-korean-ocr/docs/reports/runtime//korean-ocr-e2e-20260907032051806-82306.json",
+  "services": {
+    "frontend": "http://127.0.0.1:5173",
+    "backend": "http://127.0.0.1:8080"
+  },
+  "completedAt": "2026-09-07T03:21:08.364Z",
+  "syntheticFixtureProvenance": {
+    "manifestSha256": "460dce1228dee93824e0f331474fb8cac10dc59bb6ac981ec207ab7419ab8808",
+    "generator": "argus-synthetic-korean-ocr-v1",
+    "classification": "SYNTHETIC_ONLY",
+    "files": [
+      {
+        "fileName": "born-digital-ko-en.pdf",
+        "bytes": 4762,
+        "sha256": "47664981a80eec4dce5a70ed3fb50cda50194045db3c16b006d4c6157bb86fde",
+        "expectedRoutes": [
+          "PDFBOX_TEXT"
+        ]
+      },
+      {
+        "fileName": "image-only-korean-scan.pdf",
+        "bytes": 36896,
+        "sha256": "e0eed5fcd8b87ff4fc0e246d10c02f450ad829c9a578419a3a899e52fb66038e",
+        "expectedRoutes": [
+          "OCR_KOR_ENG"
+        ]
+      },
+      {
+        "fileName": "mixed-three-page.pdf",
+        "bytes": 42107,
+        "sha256": "24913627c4ee934b8d7cec4d13e76dd93aa58cc261903fc46e694014fb6c04ef",
+        "expectedRoutes": [
+          "PDFBOX_TEXT",
+          "OCR_KOR_ENG",
+          "PDFBOX_TEXT"
+        ]
+      }
+    ]
+  },
+  "actors": {
+    "productManager": {
+      "userId": 1,
+      "role": "PRODUCT_MANAGER"
+    },
+    "reviewer": {
+      "userId": 2,
+      "role": "COMPLIANCE_REVIEWER"
+    },
+    "isolatedBrowserContexts": true
+  },
+  "ids": {
+    "productId": 66,
+    "batchId": 17
+  },
+  "assertions": {
+    "uploadedThroughPmUi": true,
+    "allExtractionsReady": true,
+    "pageRoutesMatched": true,
+    "provenanceAndConfidencePresent": true,
+    "unconfirmedAnalysisGateClosed": true,
+    "pmSavedAndConfirmedAllDocuments": true,
+    "reviewerOcrDisplayReadOnly": true,
+    "provenanceSurvivedReviewerReload": true
+  },
+  "documents": {
+    "born-digital-ko-en.pdf": {
+      "documentId": 133,
+      "currentRunId": 7,
+      "currentTextHash": "b1255b1c31e034ca6fe042729039cb3d67a3418a7ad88f8e5b4187e9d3cb9404",
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "475521238c18cffee3ed98a2a9ba7882491ed487e553bc2c315584f378c3c8c6",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        }
+      ]
+    },
+    "image-only-korean-scan.pdf": {
+      "documentId": 134,
+      "currentRunId": 8,
+      "currentTextHash": "2f4ba4e57b9cadece2da61a9273517bed50e854db7f91643d90d9b3929985c71",
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "OCR_KOR_ENG",
+          "textHash": "300cc872bf4caa304409aa3d155c18924fdb6d00a512b5a98140122e83dbfdcd",
+          "renderArtifactHash": "6174a2e28c20961e432c47f30834c132f0beda256f92e584c13135388ccbd93b",
+          "renderArtifactUrl": "/api/documents/134/pages/1/render",
+          "ocrConfidence": 94.8933,
+          "ocrConfidenceBand": "HIGH",
+          "ocrEngine": "tesseract",
+          "ocrModelVersion": "5.3.0 (tessdata debian-tessdata-4.1.0-2)",
+          "ocrLanguage": "kor+eng",
+          "ocrWarnings": []
+        }
+      ]
+    },
+    "mixed-three-page.pdf": {
+      "documentId": 135,
+      "currentRunId": 9,
+      "currentTextHash": "43e8a52755b468775c30436bd0d227e290551282b4d75789bf49a48c29c5a65f",
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "0f97449a103d203c2cf9cfedf9cdb163f5276fff70ef004cd76b46df7399fa39",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        },
+        {
+          "pageNumber": 2,
+          "selectedMethod": "OCR_KOR_ENG",
+          "textHash": "300cc872bf4caa304409aa3d155c18924fdb6d00a512b5a98140122e83dbfdcd",
+          "renderArtifactHash": "6174a2e28c20961e432c47f30834c132f0beda256f92e584c13135388ccbd93b",
+          "renderArtifactUrl": "/api/documents/135/pages/2/render",
+          "ocrConfidence": 94.8933,
+          "ocrConfidenceBand": "HIGH",
+          "ocrEngine": "tesseract",
+          "ocrModelVersion": "5.3.0 (tessdata debian-tessdata-4.1.0-2)",
+          "ocrLanguage": "kor+eng",
+          "ocrWarnings": []
+        },
+        {
+          "pageNumber": 3,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "47551c6c8476eb7cd3ef94e2968b6c4847acb6cab3e3b46907435d6c2f9c8d4e",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        }
+      ]
+    }
+  },
+  "reviewerEvidence": [
+    {
+      "fileName": "born-digital-ko-en.pdf",
+      "documentId": 133,
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "475521238c18cffee3ed98a2a9ba7882491ed487e553bc2c315584f378c3c8c6",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        }
+      ],
+      "textareaDisabled": true,
+      "mutationControls": 0,
+      "provenanceReloaded": true
+    },
+    {
+      "fileName": "image-only-korean-scan.pdf",
+      "documentId": 134,
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "OCR_KOR_ENG",
+          "textHash": "300cc872bf4caa304409aa3d155c18924fdb6d00a512b5a98140122e83dbfdcd",
+          "renderArtifactHash": "6174a2e28c20961e432c47f30834c132f0beda256f92e584c13135388ccbd93b",
+          "renderArtifactUrl": "/api/documents/134/pages/1/render",
+          "ocrConfidence": 94.8933,
+          "ocrConfidenceBand": "HIGH",
+          "ocrEngine": "tesseract",
+          "ocrModelVersion": "5.3.0 (tessdata debian-tessdata-4.1.0-2)",
+          "ocrLanguage": "kor+eng",
+          "ocrWarnings": []
+        }
+      ],
+      "textareaDisabled": true,
+      "mutationControls": 0,
+      "provenanceReloaded": true
+    },
+    {
+      "fileName": "mixed-three-page.pdf",
+      "documentId": 135,
+      "pages": [
+        {
+          "pageNumber": 1,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "0f97449a103d203c2cf9cfedf9cdb163f5276fff70ef004cd76b46df7399fa39",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        },
+        {
+          "pageNumber": 2,
+          "selectedMethod": "OCR_KOR_ENG",
+          "textHash": "300cc872bf4caa304409aa3d155c18924fdb6d00a512b5a98140122e83dbfdcd",
+          "renderArtifactHash": "6174a2e28c20961e432c47f30834c132f0beda256f92e584c13135388ccbd93b",
+          "renderArtifactUrl": "/api/documents/135/pages/2/render",
+          "ocrConfidence": 94.8933,
+          "ocrConfidenceBand": "HIGH",
+          "ocrEngine": "tesseract",
+          "ocrModelVersion": "5.3.0 (tessdata debian-tessdata-4.1.0-2)",
+          "ocrLanguage": "kor+eng",
+          "ocrWarnings": []
+        },
+        {
+          "pageNumber": 3,
+          "selectedMethod": "PDFBOX_TEXT",
+          "textHash": "47551c6c8476eb7cd3ef94e2968b6c4847acb6cab3e3b46907435d6c2f9c8d4e",
+          "renderArtifactHash": null,
+          "renderArtifactUrl": null,
+          "ocrConfidence": null,
+          "ocrConfidenceBand": null,
+          "ocrEngine": null,
+          "ocrModelVersion": null,
+          "ocrLanguage": null,
+          "ocrWarnings": []
+        }
+      ],
+      "textareaDisabled": true,
+      "mutationControls": 0,
+      "provenanceReloaded": true
+    }
+  ],
+  "browserSignals": {
+    "pageErrors": [],
+    "consoleErrors": [],
+    "requestFailures": [],
+    "apiResponses": [
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/demo/users",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/demo/session",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/dashboard/me",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/products",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/products",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/products",
+        "status": 201
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/products/66",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/products/66/document-batches",
+        "status": 202
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17/items",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/17",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/133",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/133/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/133/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/134",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/134/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/134/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/documents/135",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/135/text",
+        "status": 200
+      },
+      {
+        "actor": "PM",
+        "method": "PATCH",
+        "path": "/api/documents/135/text",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/demo/users",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/demo/session",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/dashboard/compliance",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/133",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/133",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/134",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/134",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/135",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/documents/135",
+        "status": 200
+      }
+    ],
+    "unexpectedApiCalls": [],
+    "unexpectedApiResponses": []
+  }
+}

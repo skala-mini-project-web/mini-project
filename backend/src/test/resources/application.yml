@@ -15,12 +15,31 @@ spring:
       hibernate:
         format_sql: false
 
+document:
+  storage:
+    root: ${DOCUMENT_STORAGE_ROOT:/tmp/argus-test-documents}
+
 # 테스트는 외부 ai-service를 호출하지 않는다(FakeRiskAnalysisProvider). 기본 시나리오만 고정한다.
 ai-service:
   base-url: http://localhost:8000
   connect-timeout: 1s
   read-timeout: 5s
   default-scenario-code: GUARANTEE_MISUNDERSTANDING_HIGH
+
+ocr:
+  base-url: http://localhost:8081
+  allow-insecure-http: true
+  bearer-token: test-ocr-token
+  connect-timeout: 1s
+  request-timeout: 5s
+  routing:
+    minimum-text-codepoints: 32
+    minimum-readable-ratio: 0.70
+    render-dpi: 300
+    language: kor+eng
+  confidence:
+    minimum: 0
+    maximum: 100
 
 logging:
   level:

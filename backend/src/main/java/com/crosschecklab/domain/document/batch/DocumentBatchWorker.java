@@ -1,6 +1,8 @@
 package com.crosschecklab.domain.document.batch;
 
 import com.crosschecklab.domain.document.DocumentExtractionTransitions;
+import com.crosschecklab.domain.document.DocumentMediaType;
+import com.crosschecklab.domain.document.extraction.DocumentExtractionResult;
 import com.crosschecklab.domain.document.extraction.ExtractionTarget;
 import com.crosschecklab.domain.document.extraction.TextExtractionException;
 import com.crosschecklab.domain.document.extraction.TextExtractionService;
@@ -296,9 +298,23 @@ public class DocumentBatchWorker {
                         + "attempt={}",
                 item.getId(), item.getBatch().getId(), workerOwner, leaseFence,
                 item.getAttemptCount());
-        String extractedText;
+        DocumentExtractionResult extractionResult;
         try {
-            extractedText = textExtractionService.extract(target.get());
+            try {
+                extractionResult = textExtractionService.extractResult(target.get());
+            } catch (UnsupportedOperationException unsupported) {
+                if (isPdf(target.get())) {
+                    throw new TextExtractionException(
+                            "PDF extractor must provide structured page results.", unsupported);
+                }
+                String extractedText = textExtractionService.extract(target.get());
+                completeBatchExtraction(item, leaseFence, extractedText);
+                return;
+            }
+            if (isPdf(target.get()) && !extractionResult.hasPageResults()) {
+                throw new TextExtractionException(
+                        "PDF extractor returned no page provenance.");
+            }
         } catch (RuntimeException e) {
             log.warn("Document batch extraction threw an exception. "
                             + "itemId={}, batchId={}, owner={}, fence={}, attempt={}, exception={}",
@@ -306,6 +322,27 @@ public class DocumentBatchWorker {
                     item.getAttemptCount(), e.getClass().getName());
             throw e;
         }
+        log.info("Document batch extraction ended. itemId={}, batchId={}, owner={}, fence={}, "
+                        + "attempt={}",
+                item.getId(), item.getBatch().getId(), workerOwner, leaseFence,
+                item.getAttemptCount());
+        OffsetDateTime finishedAt = OffsetDateTime.now(clock);
+        boolean completed = transitions.completeBatchExtraction(
+                item.getId(), workerOwner, leaseFence, finishedAt, extractionResult);
+        log.info("Document batch complete result. itemId={}, batchId={}, owner={}, fence={}, "
+                        + "attempt={}, accepted={}",
+                item.getId(), item.getBatch().getId(), workerOwner, leaseFence,
+                item.getAttemptCount(), completed);
+        if (!completed) {
+            finishLifecycleInconsistency(item, leaseFence, PHASE_COMPLETE);
+        }
+    }
+
+    private void completeBatchExtraction(
+            DocumentBatchItem item,
+            long leaseFence,
+            String extractedText
+    ) {
         log.info("Document batch extraction ended. itemId={}, batchId={}, owner={}, fence={}, "
                         + "attempt={}",
                 item.getId(), item.getBatch().getId(), workerOwner, leaseFence,
@@ -320,6 +357,12 @@ public class DocumentBatchWorker {
         if (!completed) {
             finishLifecycleInconsistency(item, leaseFence, PHASE_COMPLETE);
         }
+    }
+
+    private static boolean isPdf(ExtractionTarget target) {
+        return DocumentMediaType.resolve(target.mediaType(), target.fileName())
+                .filter(mediaType -> mediaType == DocumentMediaType.PDF)
+                .isPresent();
     }
 
     void shutdown() {

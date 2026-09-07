@@ -2,10 +2,14 @@ package com.crosschecklab.domain.document.extraction;
 
 import com.crosschecklab.domain.document.DocumentMediaType;
 import com.crosschecklab.domain.document.storage.FileStorage;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayInputStream;
+import java.time.Duration;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -25,8 +29,34 @@ public class RealDocumentTextExtractor implements TextExtractionService {
                 extractorsByMediaType.put(extractor.supportedMediaType(), extractor));
     }
 
+    // A static factory avoids a dependency cycle between this aggregate extractor and the
+    // PdfBoxTextExtractor that optionally consumes the client.
+    @Bean
+    @Profile("real-extraction")
+    public static OcrClient ocrClient(
+            @Value("${ocr.base-url}") String baseUrl,
+            @Value("${ocr.bearer-token}") String bearerToken,
+            @Value("${ocr.connect-timeout}") Duration connectTimeout,
+            @Value("${ocr.request-timeout}") Duration requestTimeout,
+            @Value("${ocr.allow-insecure-http:false}") boolean allowInsecureHttp,
+            ObjectMapper objectMapper
+    ) {
+        return new HttpOcrClient(
+                baseUrl,
+                bearerToken,
+                connectTimeout,
+                requestTimeout,
+                allowInsecureHttp,
+                objectMapper);
+    }
+
     @Override
     public String extract(ExtractionTarget target) {
+        return extractResult(target).text();
+    }
+
+    @Override
+    public DocumentExtractionResult extractResult(ExtractionTarget target) {
         DocumentMediaType mediaType = DocumentMediaType.resolve(target.mediaType(), target.fileName())
                 .orElseThrow(() -> new TextExtractionException("추출할 수 없는 형식입니다: " + target.mediaType()));
 
@@ -39,6 +69,11 @@ public class RealDocumentTextExtractor implements TextExtractionService {
                 .orElseThrow(() -> new TextExtractionException(
                         "저장된 업로드 원본을 찾을 수 없습니다: " + target.storageKey()));
 
-        return extractor.extract(new ByteArrayInputStream(content));
+        if (extractor instanceof PdfBoxTextExtractor pdfExtractor) {
+            return pdfExtractor.extractResult(content);
+        }
+        String text = extractor.extract(new ByteArrayInputStream(content));
+        return DocumentExtractionResult.withoutPageProvenance(
+                text, PageExtractionResult.hashBytes(content));
     }
 }

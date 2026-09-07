@@ -1,12 +1,16 @@
 package com.crosschecklab.domain.document;
 
+import com.crosschecklab.domain.document.extraction.DocumentExtractionResult;
 import com.crosschecklab.domain.document.extraction.ExtractionTarget;
+import com.crosschecklab.domain.document.extraction.MockDocumentTextExtractor;
+import com.crosschecklab.domain.document.extraction.OcrClient;
 import com.crosschecklab.domain.document.extraction.TextExtractionException;
 import com.crosschecklab.domain.document.extraction.TextExtractionService;
 import com.crosschecklab.global.config.AsyncConfig;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.aop.support.AopUtils;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -42,11 +46,42 @@ public class DocumentExtractionRunner {
             log.warn("추출을 시작할 문서가 없습니다. documentId={}", documentId);
             return;
         }
+        ExtractionTarget extractionTarget = target.get();
+        boolean pdf = DocumentMediaType.resolve(
+                        extractionTarget.mediaType(), extractionTarget.fileName())
+                .filter(mediaType -> mediaType == DocumentMediaType.PDF)
+                .isPresent();
+        boolean legacyMockExtraction = MockDocumentTextExtractor.class.isAssignableFrom(
+                AopUtils.getTargetClass(textExtractionService));
 
         try {
-            String extractedText = textExtractionService.extract(target.get());
-            transitions.completeExtraction(documentId, extractedText);
+            DocumentExtractionResult result;
+            try {
+                result = textExtractionService.extractResult(extractionTarget);
+            } catch (UnsupportedOperationException unsupported) {
+                if (!legacyMockExtraction && pdf) {
+                    throw new TextExtractionException(
+                            "PDF extractor must provide structured page results.", unsupported);
+                }
+                String text = textExtractionService.extract(extractionTarget);
+                transitions.completeExtraction(documentId, text, legacyMockExtraction);
+                log.info("문서 {} 추출 완료 ({}자)", documentId, text.length());
+                return;
+            }
+            if (!legacyMockExtraction && pdf && !result.hasPageResults()) {
+                throw new TextExtractionException(
+                        "PDF extractor returned no page provenance.");
+            }
+            transitions.completeExtraction(documentId, result, legacyMockExtraction);
+            String extractedText = result.text();
             log.info("문서 {} 추출 완료 ({}자)", documentId, extractedText.length());
+        } catch (OcrClient.OcrException e) {
+            log.warn("문서 {} OCR 실패. kind={}", documentId, e.kind(), e);
+            transitions.failExtraction(
+                    documentId,
+                    EXTRACTION_FAILED_CODE,
+                    EXTRACTION_FAILED_MESSAGE,
+                    e.retryable());
         } catch (TextExtractionException e) {
             log.warn("문서 {} 추출 실패", documentId, e);
             transitions.failExtraction(

@@ -10,15 +10,23 @@ import com.crosschecklab.domain.document.storage.DurableLocalFileStorage;
 import com.crosschecklab.domain.document.storage.FileStorage;
 import com.crosschecklab.domain.document.storage.StoredFile;
 import com.crosschecklab.support.IntegrationTestSupport;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.Map;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -36,6 +44,12 @@ class RealExtractionProfileTest extends IntegrationTestSupport {
 
     @Autowired
     private TextExtractionService textExtractionService;
+
+    @Autowired
+    private DocumentExtractionRunner documentExtractionRunner;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @TempDir
     private Path temporaryStorageRoot;
@@ -73,5 +87,93 @@ class RealExtractionProfileTest extends IntegrationTestSupport {
                 .hasValueSatisfying(content -> assertThat(content).containsExactly(original));
         assertThat(storage.read(stored.storageKey()))
                 .hasValueSatisfying(content -> assertThat(content).containsExactly(original));
+    }
+
+    @Test
+    @DisplayName("실제 born-digital PDF 추출은 현재 PDFBOX run과 page를 저장하고 확정을 해제한다")
+    void persistsCurrentPdfBoxRunAndPageBeforeReady() throws Exception {
+        byte[] pdf = bornDigitalPdf();
+        MockMultipartFile upload =
+                new MockMultipartFile("file", "born-digital.pdf", "application/pdf", pdf);
+        StoredFile stored = fileStorage.store(upload, "born-digital-provenance");
+        Long productId = jdbcTemplate.queryForObject("""
+                INSERT INTO products (owner_id, name, product_type, created_at, updated_at)
+                VALUES (1, 'OCR provenance regression', 'INVESTMENT', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id
+                """, Long.class);
+        Long documentId = jdbcTemplate.queryForObject("""
+                INSERT INTO product_documents (
+                    product_id, file_name, media_type, file_size, checksum, storage_key,
+                    extract_status, extracted_text, extracted_text_hash,
+                    confirmed, confirmed_by, confirmed_at, confirmed_text_hash,
+                    created_at, updated_at
+                ) VALUES (
+                    ?, 'born-digital.pdf', 'application/pdf', ?, ?, ?,
+                    'UPLOADED', 'previous confirmed text', ?,
+                    TRUE, 1, CURRENT_TIMESTAMP, ?,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                RETURNING id
+                """,
+                Long.class,
+                productId,
+                stored.size(),
+                stored.checksum(),
+                stored.storageKey(),
+                stored.checksum(),
+                stored.checksum());
+
+        documentExtractionRunner.run(documentId);
+
+        Map<String, Object> persisted = jdbcTemplate.queryForMap("""
+                SELECT d.extract_status,
+                       d.current_extraction_run_id,
+                       d.confirmed,
+                       d.confirmed_by,
+                       d.confirmed_at,
+                       d.confirmed_extraction_run_id,
+                       d.confirmed_text_hash,
+                       r.state AS run_state,
+                       r.page_count,
+                       p.page_number,
+                       p.selected_method
+                FROM product_documents d
+                JOIN document_extraction_runs r
+                  ON r.id = d.current_extraction_run_id
+                JOIN document_extraction_pages p
+                  ON p.extraction_run_id = r.id
+                WHERE d.id = ?
+                """, documentId);
+        assertThat(persisted)
+                .containsEntry("extract_status", "READY")
+                .containsEntry("confirmed", false)
+                .containsEntry("run_state", "SUCCEEDED")
+                .containsEntry("page_count", 1)
+                .containsEntry("page_number", 1)
+                .containsEntry("selected_method", "PDFBOX_TEXT");
+        assertThat(persisted.get("current_extraction_run_id")).isNotNull();
+        assertThat(persisted.get("confirmed_by")).isNull();
+        assertThat(persisted.get("confirmed_at")).isNull();
+        assertThat(persisted.get("confirmed_extraction_run_id")).isNull();
+        assertThat(persisted.get("confirmed_text_hash")).isNull();
+    }
+
+    private static byte[] bornDigitalPdf() throws Exception {
+        try (PDDocument document = new PDDocument();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            PDPage page = new PDPage();
+            document.addPage(page);
+            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                content.beginText();
+                content.setFont(
+                        new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                content.newLineAtOffset(72, 700);
+                content.showText(
+                        "Born digital extraction provenance regression page with readable text.");
+                content.endText();
+            }
+            document.save(output);
+            return output.toByteArray();
+        }
     }
 }
