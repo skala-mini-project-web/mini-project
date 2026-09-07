@@ -109,6 +109,18 @@ frontend/scripts/
 
 파일 흐름은 `PM upload → durable storage → page extraction/provenance → PM save/confirm → analysis execution → reviewer decision → score/action`으로 변경한다. 이전 V8–V11만 표시한 migration strip은 제거한다.
 
+root tree는 repository에 실제 있는 항목만 표시한다. `참고 파일/`, `.github/`처럼 repository 밖 로컬 작업 폴더나 없는 디렉터리는 넣지 않는다.
+
+## `service-usage-flow.png`
+
+README `핵심 흐름` 아래에 넣는 전체 이용 흐름이다. 세 band로 그린다.
+
+1. 문서 등록·추출·확정 (PM): 로그인/상품 등록 → 단일 PDF 또는 1–100 batch 업로드 → PDFBox-first page route(`PDFBOX_TEXT` / `OCR_KOR_ENG`) → PM text save → current run/text-hash 확정(stale 409)
+2. 분석 (PM, backend/FastAPI/Ollama): VERIFIED fact snapshot → immutable 분석 입력(evidence 1–3·persona·Red Team rule) → pgvector retrieval snapshot → Ollama option ID 선택 → Spring exact anchor/scope 검증
+3. 검토·점수·조치 (PM → Compliance reviewer): 검토 요청 → reviewer decision → APPROVED는 deterministic score ledger → Risk Pattern → GuardFit, REJECTED는 comment 필수·승격 없음·`NOT_SCORED`
+
+batch terminal state(`SUCCEEDED`/`CANCELLED`/`QUARANTINED`), 역할 경계 위반 403, PM 반려 확인 화면을 보조 박스로 표시한다.
+
 ## `ai-logic-flow.png`
 
 다음 순서로 그린다.

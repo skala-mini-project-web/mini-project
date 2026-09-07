@@ -1,7 +1,7 @@
 # Database 구성
 
 - DBMS: PostgreSQL 16 + pgvector
-- migration: Flyway V1~V14
+- migration: Flyway V1~V24
 - vector index: `vector(1024)`, HNSW cosine index
 - `ARGUS_MVP_데이터_명세서_v0.3.docx`: 데이터 명세서
 - `ARGUS-current-schema.sql`: 실행 중인 DB에서 추출한 schema-only DDL

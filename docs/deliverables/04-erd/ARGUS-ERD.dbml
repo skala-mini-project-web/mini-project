@@ -1,43 +1,54 @@
 // ARGUS logical ERD
-// Source: running PostgreSQL + pgvector schema (Flyway V1–V14)
+// Source: running PostgreSQL + pgvector schema (Flyway V1–V24)
 // Paste this entire file into https://dbdiagram.io/d/6a980de65450bea1becc5dd7
-// Excluded: flyway_schema_history (migration tool internal table)
+// Generated schema export: ../05-database/ARGUS-current-schema.sql
+// Excluded: flyway_schema_history
 
-TableGroup identity_and_product {
+TableGroup identity_and_document {
   users
   products
   product_documents
+  document_source_revisions
+  document_extraction_runs
+  document_extraction_pages
   ground_truth_facts
 }
 
-TableGroup analysis_configuration {
+TableGroup durable_batch {
+  document_batches
+  document_batch_items
+  document_batch_item_attempts
+}
+
+TableGroup analysis_input_and_rag {
   persona_templates
   red_team_packs
   red_team_rules
   evidence_documents
   evidence_document_chunks
-}
-
-TableGroup analysis_and_rag {
   analyses
   analysis_personas
   analysis_evidence_documents
   analysis_ground_truth_fact_snapshots
+  analysis_executions
   analysis_rag_runs
   analysis_rag_retrieval_snapshots
 }
 
-TableGroup review_and_guardfit {
+TableGroup finding_review_score_action {
   findings
   finding_affected_personas
-  evidence_references
+  finding_evidence_anchors
+  finding_review_decisions
   reviews
   review_selected_findings
+  risk_score_runs
+  risk_score_ledger_entries
   risk_patterns
   guardfit_actions
 }
 
-TableGroup operations_and_demo_data {
+TableGroup audit_and_demo {
   audit_events
   idempotency_claims
   demo_corpus_artifacts
@@ -49,7 +60,7 @@ Table users {
   username varchar [not null, unique]
   name varchar [not null]
   role varchar [not null, note: 'PRODUCT_MANAGER | COMPLIANCE_REVIEWER']
-  active boolean [not null, default: true]
+  active boolean [not null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
@@ -72,18 +83,74 @@ Table product_documents {
   file_size bigint
   checksum varchar
   storage_key varchar [not null]
-  extract_status varchar [not null, default: 'UPLOADED', note: 'UPLOADED | EXTRACTING | READY | FAILED']
+  extract_status varchar [not null, note: 'UPLOADED | EXTRACTING | READY | FAILED']
   extracted_text text
-  confirmed boolean [not null, default: false]
+  current_extraction_run_id bigint
+  confirmed_extraction_run_id bigint
+  current_text_hash varchar [note: 'SHA-256 current text']
+  confirmed boolean [not null]
   confirmed_by bigint
   confirmed_at timestamptz
+  error_code varchar
+  error_retryable boolean
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
 
+Table document_source_revisions {
+  id bigint [pk, increment]
+  product_document_id bigint [not null]
+  revision_number integer [not null]
+  source_hash varchar [not null]
+  text_hash varchar [not null]
+  text text [not null]
+  created_at timestamptz [not null]
+
+  Indexes { (product_document_id, revision_number) [unique] }
+}
+
+Table document_extraction_runs {
+  id bigint [pk, increment]
+  product_document_id bigint [not null]
+  run_generation integer [not null]
+  state varchar [not null, note: 'SUCCEEDED | FAILED; append-only terminal run']
+  source_hash varchar [not null]
+  result_text_hash varchar
+  page_count integer [not null]
+  config_version varchar [not null]
+  config_snapshot jsonb [not null]
+  error_code varchar
+  error_message varchar
+  error_retryable boolean [not null]
+  created_at timestamptz [not null]
+
+  Indexes { (product_document_id, run_generation) [unique] }
+}
+
+Table document_extraction_pages {
+  id bigint [pk, increment]
+  extraction_run_id bigint [not null]
+  page_number integer [not null]
+  selected_method varchar [not null, note: 'PDFBOX_TEXT | OCR_KOR_ENG']
+  source_hash varchar [not null]
+  render_artifact_hash varchar
+  text_hash varchar [not null]
+  extracted_text text [not null]
+  confidence numeric
+  confidence_band varchar
+  engine_name varchar
+  engine_version varchar
+  model_version varchar
+  language varchar
+  warnings jsonb
+  created_at timestamptz [not null]
+
+  Indexes { (extraction_run_id, page_number) [unique] }
+}
+
 Table ground_truth_facts {
   id bigint [pk, increment]
-  document_id bigint [not null, unique, note: 'Current schema permits one fact row per document']
+  document_id bigint [not null]
   label varchar [not null]
   value text [not null]
   importance varchar [not null]
@@ -97,13 +164,68 @@ Table ground_truth_facts {
   updated_at timestamptz [not null]
 }
 
+Table document_batches {
+  id bigint [pk, increment]
+  product_id bigint [not null]
+  owner_id bigint [not null]
+  manifest_sha256 varchar [not null]
+  status varchar [not null, note: 'PENDING | LEASED | SUCCEEDED | CANCELLED | QUARANTINED']
+  accepted_item_count integer [not null]
+  succeeded_item_count integer [not null]
+  cancelled_item_count integer [not null]
+  quarantined_item_count integer [not null]
+  cancellation_reason varchar
+  terminal_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table document_batch_items {
+  id bigint [pk, increment]
+  batch_id bigint [not null]
+  product_id bigint [not null]
+  ordinal integer [not null]
+  file_name varchar [not null]
+  checksum varchar [not null]
+  document_id bigint
+  status varchar [not null, note: 'PENDING | LEASED | RETRY_WAIT | SUCCEEDED | CANCELLED | QUARANTINED']
+  attempt_count integer [not null]
+  lease_owner varchar
+  lease_fence bigint [not null]
+  lease_expires_at timestamptz
+  due_at timestamptz
+  error_code varchar
+  error_message varchar
+  terminal_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Indexes { (batch_id, ordinal) [unique] }
+}
+
+Table document_batch_item_attempts {
+  id bigint [pk, increment]
+  item_id bigint [not null]
+  attempt_no integer [not null]
+  lease_fence bigint [not null]
+  worker_owner varchar
+  started_at timestamptz [not null]
+  ended_at timestamptz
+  outcome varchar [note: 'append-only; completed once']
+  public_error_code varchar
+  public_error_message varchar
+  diagnostic_reference varchar
+
+  Indexes { (item_id, attempt_no) [unique] }
+}
+
 Table persona_templates {
   id bigint [pk, increment]
   code varchar [not null, unique]
   name varchar [not null]
   criteria jsonb
   risk_focus jsonb
-  active boolean [not null, default: true]
+  active boolean [not null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
@@ -112,10 +234,7 @@ Table red_team_packs {
   id bigint [pk, increment]
   code varchar [not null, unique]
   name varchar [not null]
-  description varchar
-  active boolean [not null, default: true]
-  created_at timestamptz [not null]
-  updated_at timestamptz [not null]
+  active boolean [not null]
 }
 
 Table red_team_rules {
@@ -123,20 +242,16 @@ Table red_team_rules {
   code varchar [not null, unique]
   pack_id bigint [not null]
   name varchar [not null]
-  description varchar
-  sort_order integer
-  active boolean [not null, default: true]
-  created_at timestamptz [not null]
-  updated_at timestamptz [not null]
+  active boolean [not null]
 }
 
 Table evidence_documents {
   id bigint [pk, increment]
-  source_type varchar [not null, note: 'INTERNAL_POLICY | REGULATION | PRODUCT_POLICY']
+  source_type varchar [not null]
   title varchar [not null]
   version varchar
   content text
-  active boolean [not null, default: true]
+  active boolean [not null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
@@ -149,51 +264,53 @@ Table evidence_document_chunks {
   chunking_version varchar [not null]
   chunk_hash varchar [not null]
   chunk_text text [not null]
-  embedding_model varchar [not null, note: 'Ollama tag + immutable digest identity']
-  embedding vector [not null, note: 'pgvector(1024), positive norm required']
+  embedding_model varchar [not null]
+  embedding vector [not null, note: 'pgvector(1024)']
   created_at timestamptz [not null]
-
-  Indexes {
-    (id, evidence_document_id) [unique]
-    (evidence_document_id, source_hash, chunking_version, embedding_model, chunk_ordinal) [unique]
-  }
 }
 
 Table analyses {
   id bigint [pk, increment]
   product_document_id bigint [not null]
   red_team_pack_id bigint [not null]
-  status varchar [not null, default: 'CREATED', note: 'CREATED | RUNNING | COMPLETED | FAILED']
-  progress integer [not null, default: 0]
-  risk_score integer
-  model_version varchar
-  prompt_version varchar
-  requires_human_approval boolean [not null, default: true]
-  retryable boolean [not null, default: false]
-  error_code varchar
-  completed_at timestamptz
+  status varchar [not null]
+  progress integer [not null]
+  current_successful_execution_id bigint
+  requires_human_approval boolean [not null]
+  input_hash varchar [not null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
-  input_hash varchar [not null]
-  execution_token varchar [not null, default: 'not-started', note: 'Retry and stale-worker fence']
+}
+
+Table analysis_executions {
+  id bigint [pk, increment]
+  analysis_id bigint [not null]
+  attempt_no integer [not null]
+  execution_token varchar [not null, unique]
+  status varchar [not null, note: 'RUNNING | SUCCEEDED | FAILED | DISCARDED; append-only terminal']
+  provider_risk_score integer
+  model_version varchar
+  prompt_version varchar
+  retrieval_version varchar [not null]
+  error_code varchar
+  retryable boolean [not null]
+  started_at timestamptz [not null]
+  finished_at timestamptz
+  created_at timestamptz [not null]
+
+  Indexes { (analysis_id, attempt_no) [unique] }
 }
 
 Table analysis_personas {
   analysis_id bigint [not null]
   persona_template_id bigint [not null]
-
-  Indexes {
-    (analysis_id, persona_template_id) [pk]
-  }
+  Indexes { (analysis_id, persona_template_id) [pk] }
 }
 
 Table analysis_evidence_documents {
   analysis_id bigint [not null]
   evidence_document_id bigint [not null]
-
-  Indexes {
-    (analysis_id, evidence_document_id) [pk]
-  }
+  Indexes { (analysis_id, evidence_document_id) [pk] }
 }
 
 Table analysis_ground_truth_fact_snapshots {
@@ -202,19 +319,14 @@ Table analysis_ground_truth_fact_snapshots {
   ground_truth_fact_id bigint [not null]
   label varchar [not null]
   value text [not null]
-
-  Indexes {
-    (analysis_id, ground_truth_fact_id) [unique]
-  }
 }
 
 Table analysis_rag_runs {
   id bigint [pk, increment]
-  analysis_id bigint [not null, unique]
+  analysis_execution_id bigint [not null]
   query_hash varchar [not null]
   embedding_model varchar [not null]
   retrieval_version varchar [not null]
-  requested_result_count integer [not null]
   retrieved_at timestamptz [not null]
 }
 
@@ -227,22 +339,16 @@ Table analysis_rag_retrieval_snapshots {
   source_hash varchar [not null]
   chunk_hash varchar [not null]
   chunk_text text [not null]
-  similarity float [not null, note: 'Cosine similarity at retrieval time']
-  created_at timestamptz [not null]
-
-  Note: 'Completed analysis snapshots are immutable. Retry runs replace snapshots only while analysis is RUNNING.'
-
-  Indexes {
-    (rag_run_id, evidence_document_chunk_id) [unique]
-    (rag_run_id, rank) [unique]
-  }
+  similarity float [not null]
 }
 
 Table findings {
   id bigint [pk, increment]
   analysis_id bigint [not null]
+  analysis_execution_id bigint [not null]
   statement text [not null]
-  severity varchar [not null, note: 'HIGH | MEDIUM | LOW']
+  severity varchar [not null]
+  policy_rule_code varchar [not null]
   recommendation text
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
@@ -251,39 +357,76 @@ Table findings {
 Table finding_affected_personas {
   finding_id bigint [not null]
   persona_template_id bigint [not null]
-
-  Indexes {
-    (finding_id, persona_template_id) [pk]
-  }
+  Indexes { (finding_id, persona_template_id) [pk] }
 }
 
-Table evidence_references {
+Table finding_evidence_anchors {
   id bigint [pk, increment]
   finding_id bigint [not null]
-  evidence_document_id bigint [not null]
-  excerpt text
+  source_role varchar [not null, note: 'DOCUMENT_CLAIM | POLICY_REQUIREMENT']
+  source_document_id bigint
+  source_revision_id bigint
+  evidence_document_id bigint
+  retrieved_chunk_id bigint
+  source_hash varchar [not null]
+  page_number integer [not null]
+  utf8_start_offset integer [not null]
+  utf8_end_offset integer [not null]
+  exact_excerpt text [not null]
+  excerpt_hash varchar [not null]
   created_at timestamptz [not null]
+
+  Note: 'Immutable exact UTF-8 source evidence'
 }
 
 Table reviews {
   id bigint [pk, increment]
   analysis_id bigint [not null, unique]
+  analysis_execution_id bigint [not null]
   reviewer_id bigint
-  status varchar [not null, default: 'PENDING', note: 'PENDING | APPROVED | REJECTED']
+  status varchar [not null, note: 'PENDING | APPROVED | REJECTED']
+  submission_comment varchar
   comment varchar
   decided_at timestamptz
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
-  submission_comment varchar
+}
+
+Table finding_review_decisions {
+  id bigint [pk, increment]
+  review_id bigint [not null]
+  analysis_execution_id bigint [not null]
+  finding_id bigint [not null]
+  decision varchar [not null, note: 'APPROVED | REJECTED']
+  created_at timestamptz [not null]
 }
 
 Table review_selected_findings {
   review_id bigint [not null]
   finding_id bigint [not null]
+  Indexes { (review_id, finding_id) [pk] }
+}
 
-  Indexes {
-    (review_id, finding_id) [pk]
-  }
+Table risk_score_runs {
+  id bigint [pk, increment]
+  analysis_execution_id bigint [not null]
+  review_id bigint [not null]
+  policy_version varchar [not null]
+  score integer
+  state varchar [not null, note: 'PENDING_REVIEW | SCORED | NOT_SCORED']
+  not_scored_reason varchar
+  created_at timestamptz [not null]
+}
+
+Table risk_score_ledger_entries {
+  id bigint [pk, increment]
+  risk_score_run_id bigint [not null]
+  finding_revision_id bigint [not null]
+  document_claim_anchor_id bigint [not null]
+  policy_requirement_anchor_id bigint [not null]
+  policy_rule_code varchar [not null]
+  severity varchar [not null]
+  created_at timestamptz [not null]
 }
 
 Table risk_patterns {
@@ -292,7 +435,7 @@ Table risk_patterns {
   review_id bigint
   name varchar [not null]
   severity varchar [not null]
-  status varchar [not null, default: 'ACTIVE']
+  status varchar [not null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
@@ -303,9 +446,9 @@ Table guardfit_actions {
   action_type varchar [not null]
   label varchar [not null]
   placement varchar [not null]
-  required boolean [not null, default: false]
+  required boolean [not null]
   preview text
-  status varchar [not null, default: 'DRAFT', note: 'DRAFT | APPROVED']
+  status varchar [not null]
   updated_by bigint
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
@@ -319,10 +462,7 @@ Table audit_events {
   action varchar [not null]
   resource_type varchar [not null]
   resource_id bigint [not null]
-  resource_label varchar
   analysis_id bigint
-
-  Note: 'resource_id and analysis_id are polymorphic audit references, so the database does not enforce FKs for them.'
 }
 
 Table idempotency_claims {
@@ -334,10 +474,6 @@ Table idempotency_claims {
   analysis_id bigint
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
-
-  Indexes {
-    (actor_id, operation, idempotency_key) [unique]
-  }
 }
 
 Table demo_corpus_artifacts {
@@ -345,11 +481,9 @@ Table demo_corpus_artifacts {
   artifact_path varchar [not null, unique]
   artifact_sha256 char [not null, unique]
   artifact_version varchar [not null]
-  license varchar [not null]
   synthetic boolean [not null]
   demo_only boolean [not null]
   evidence_document_id bigint [unique]
-  created_at timestamptz [not null]
 }
 
 Table demo_corpus_evidence_mappings {
@@ -357,62 +491,71 @@ Table demo_corpus_evidence_mappings {
   evidence_logical_id varchar [not null]
   evidence_document_id bigint [not null]
   selection_order smallint [not null]
-  created_at timestamptz [not null]
-
-  Indexes {
-    (product_logical_id, evidence_logical_id) [pk]
-    (product_logical_id, evidence_document_id) [unique]
-    (product_logical_id, selection_order) [unique]
-  }
+  Indexes { (product_logical_id, evidence_logical_id) [pk] }
 }
 
-// Identity and product
 Ref: products.owner_id > users.id
 Ref: product_documents.product_id > products.id
 Ref: product_documents.confirmed_by > users.id
+Ref: product_documents.current_extraction_run_id > document_extraction_runs.id
+Ref: product_documents.confirmed_extraction_run_id > document_extraction_runs.id
+Ref: document_source_revisions.product_document_id > product_documents.id
+Ref: document_extraction_runs.product_document_id > product_documents.id
+Ref: document_extraction_pages.extraction_run_id > document_extraction_runs.id
 Ref: ground_truth_facts.document_id > product_documents.id
 Ref: ground_truth_facts.created_by > users.id
 Ref: ground_truth_facts.decided_by > users.id
 
-// Analysis configuration
+Ref: document_batches.product_id > products.id
+Ref: document_batches.owner_id > users.id
+Ref: document_batch_items.batch_id > document_batches.id
+Ref: document_batch_items.product_id > products.id
+Ref: document_batch_items.document_id > product_documents.id
+Ref: document_batch_item_attempts.item_id > document_batch_items.id
+
 Ref: red_team_rules.pack_id > red_team_packs.id
 Ref: evidence_document_chunks.evidence_document_id > evidence_documents.id
-
-// Analysis input snapshots
 Ref: analyses.product_document_id > product_documents.id
 Ref: analyses.red_team_pack_id > red_team_packs.id
+Ref: analyses.current_successful_execution_id > analysis_executions.id
+Ref: analysis_executions.analysis_id > analyses.id
 Ref: analysis_personas.analysis_id > analyses.id
 Ref: analysis_personas.persona_template_id > persona_templates.id
 Ref: analysis_evidence_documents.analysis_id > analyses.id
 Ref: analysis_evidence_documents.evidence_document_id > evidence_documents.id
 Ref: analysis_ground_truth_fact_snapshots.analysis_id > analyses.id
 Ref: analysis_ground_truth_fact_snapshots.ground_truth_fact_id > ground_truth_facts.id
-
-// RAG provenance
-Ref: analysis_rag_runs.analysis_id > analyses.id
+Ref: analysis_rag_runs.analysis_execution_id > analysis_executions.id
 Ref: analysis_rag_retrieval_snapshots.rag_run_id > analysis_rag_runs.id
 Ref: analysis_rag_retrieval_snapshots.evidence_document_id > evidence_documents.id
-Ref: analysis_rag_retrieval_snapshots.(evidence_document_chunk_id, evidence_document_id) > evidence_document_chunks.(id, evidence_document_id)
+Ref: analysis_rag_retrieval_snapshots.evidence_document_chunk_id > evidence_document_chunks.id
 
-// Findings, review, and protection actions
 Ref: findings.analysis_id > analyses.id
+Ref: findings.analysis_execution_id > analysis_executions.id
 Ref: finding_affected_personas.finding_id > findings.id
 Ref: finding_affected_personas.persona_template_id > persona_templates.id
-Ref: evidence_references.finding_id > findings.id
-Ref: evidence_references.evidence_document_id > evidence_documents.id
+Ref: finding_evidence_anchors.finding_id > findings.id
 Ref: reviews.analysis_id > analyses.id
+Ref: reviews.analysis_execution_id > analysis_executions.id
 Ref: reviews.reviewer_id > users.id
+Ref: finding_review_decisions.review_id > reviews.id
+Ref: finding_review_decisions.analysis_execution_id > analysis_executions.id
+Ref: finding_review_decisions.finding_id > findings.id
 Ref: review_selected_findings.review_id > reviews.id
 Ref: review_selected_findings.finding_id > findings.id
+Ref: risk_score_runs.analysis_execution_id > analysis_executions.id
+Ref: risk_score_runs.review_id > reviews.id
+Ref: risk_score_ledger_entries.risk_score_run_id > risk_score_runs.id
+Ref: risk_score_ledger_entries.finding_revision_id > findings.id
+Ref: risk_score_ledger_entries.document_claim_anchor_id > finding_evidence_anchors.id
+Ref: risk_score_ledger_entries.policy_requirement_anchor_id > finding_evidence_anchors.id
 Ref: risk_patterns.finding_id > findings.id
 Ref: risk_patterns.review_id > reviews.id
 Ref: guardfit_actions.risk_pattern_id > risk_patterns.id
 Ref: guardfit_actions.updated_by > users.id
 
-// Operations and synthetic demo corpus
 Ref: audit_events.actor_id > users.id
 Ref: idempotency_claims.actor_id > users.id
 Ref: idempotency_claims.analysis_id > analyses.id
 Ref: demo_corpus_artifacts.evidence_document_id > evidence_documents.id
-Ref: demo_corpus_evidence_mappings.product_logical_id > demo_corpus_artifacts.logical_id
-Ref: demo_corpus_evidence_mappings.(evidence_logical_id, evidence_document_id) > demo_corpus_artifacts.(logical_id, evidence_document_id)
+Ref: demo_corpus_evidence_mappings.evidence_document_id > evidence_documents.id
