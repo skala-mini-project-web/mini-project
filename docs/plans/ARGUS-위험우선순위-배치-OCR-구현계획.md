@@ -239,7 +239,9 @@ Backend durable OCR job
 
 - branch: `feature/durable-document-batch`
 - Issue: [#86 대량 문서 durable queue와 재시도 workflow 구현](https://github.com/skala-mini-project-web/mini-project/issues/86)
+- 상태: 완료
 - 완료 기준: one-item compatibility, batch lifecycle, claim/lease/fence/recovery, cancellation, error CSV, non-mock browser E2E
+- 완료 근거: V23 durable queue·attempt audit, 1–100 batch upload, `SKIP LOCKED` lease/fence, retry·cancel·quarantine, formula-safe CSV, actual Docker/browser E2E
 
 ### Feature 4. PDF Korean OCR
 

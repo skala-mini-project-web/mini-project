@@ -24,7 +24,7 @@ spring:
   servlet:
     multipart:
       max-file-size: 10MB
-      max-request-size: 10MB
+      max-request-size: 1024MB
 
 # 외부 ai-service(FastAPI Mock) 호출 설정. Provider 교체 시 여기만 바꾼다.
 ai-service:
@@ -54,6 +54,9 @@ server:
 logging:
   level:
     org.hibernate.SQL: debug
+    com.crosschecklab.domain.document.batch.DocumentBatchWorker: info
+    com.crosschecklab.domain.document.DocumentExtractionTransitions: info
+    com.crosschecklab.domain.document.batch.DocumentBatchClaimRepository: info
 
   # 로그 라인마다 traceId 를 찍어서 요청 단위로 추적
   pattern:
