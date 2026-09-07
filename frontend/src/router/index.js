@@ -8,6 +8,7 @@ const routes = [
   { path: '/products/:productId', name: 'product-detail', component: () => import('@/views/ProductDetailView.vue'), props: true },
   { path: '/products/:productId/analyze', name: 'analysis-new', component: () => import('@/views/AnalysisNewView.vue'), props: true, meta: { role: 'PRODUCT_MANAGER' } },
   { path: '/documents/:documentId', name: 'document', component: () => import('@/views/DocumentWorkspaceView.vue'), props: true },
+  { path: '/document-batches/:batchId', name: 'document-batch', component: () => import('@/views/DocumentBatchDetailView.vue'), props: true },
   { path: '/analyses/:analysisId', name: 'analysis', component: () => import('@/views/AnalysisResultView.vue'), props: true },
   { path: '/reviews', name: 'reviews', component: () => import('@/views/ReviewsView.vue'), meta: { role: 'COMPLIANCE_REVIEWER' } },
   { path: '/reviews/:reviewId', name: 'review-detail', component: () => import('@/views/ReviewDetailView.vue'), props: true, meta: { role: 'COMPLIANCE_REVIEWER' } },

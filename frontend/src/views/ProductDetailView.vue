@@ -13,6 +13,7 @@ import GStatusPill from '@/components/ui/GStatusPill.vue'
 import GBadge from '@/components/ui/GBadge.vue'
 import GEmptyState from '@/components/ui/GEmptyState.vue'
 import GSkeleton from '@/components/ui/GSkeleton.vue'
+import DocumentBatchUploadDialog from '@/components/document/DocumentBatchUploadDialog.vue'
 
 const props = defineProps({ productId: { type: String, required: true } })
 const router = useRouter()
@@ -22,6 +23,7 @@ const loading = ref(true)
 const product = ref(null)
 const uploading = ref(false)
 const fileInput = ref(null)
+const batchDialogOpen = ref(false)
 
 const canEdit = computed(() => session.isPM && product.value && product.value.ownerId === session.user?.userId)
 const confirmedDoc = computed(() => (product.value?.documents || []).find((d) => d.extractStatus === 'READY' && d.confirmed))
@@ -67,7 +69,9 @@ function docIcon(mt, n) { if (/pptx?$/i.test(n) || /presentation/.test(mt || '')
       <section class="sec">
         <div class="sec-head">
           <h2 class="d-h3">문서 <span class="mono cnt">{{ product.documents?.length || 0 }}</span></h2>
-
+          <GButton v-if="canEdit" variant="secondary" size="sm" @click="batchDialogOpen = true">
+            <template #icon><PhUploadSimple :size="15" /></template>문서 일괄 업로드
+          </GButton>
         </div>
         <p class="sec-note t-sm mute">PDF 또는 PPTX, 최대 10MB. 서버가 실제 텍스트를 추출합니다.</p>
 
@@ -105,6 +109,7 @@ function docIcon(mt, n) { if (/pptx?$/i.test(n) || /presentation/.test(mt || '')
           </li>
         </ul>
       </section>
+      <DocumentBatchUploadDialog v-if="batchDialogOpen" :product-id="productId" @close="batchDialogOpen = false" />
     </template>
   </div>
 </template>

@@ -1,0 +1,541 @@
+{
+  "outcome": "PASS",
+  "mode": "real-docker-browser",
+  "issue": 86,
+  "runKey": "20260907011342342-70012",
+  "startedAt": "2026-09-07T01:13:42.343Z",
+  "services": {
+    "frontend": "http://127.0.0.1:5173",
+    "backend": "http://127.0.0.1:8080",
+    "ai": "http://127.0.0.1:8000"
+  },
+  "receiptPath": "/Users/shinjuyong/SKALA 4기/팀프로젝트/AI 웹 서비스 설계 Mini-project_1조_09.02-09.04/mini-project-feature-durable-batch/frontend/docs/reports/v1/real-batch-e2e-20260907011342342-70012.json",
+  "completedAt": "2026-09-07T01:13:56.982Z",
+  "actors": {
+    "productManager": {
+      "userId": 1,
+      "role": "PRODUCT_MANAGER"
+    },
+    "reviewer": {
+      "userId": 2,
+      "role": "COMPLIANCE_REVIEWER"
+    },
+    "isolatedBrowserContexts": true
+  },
+  "ids": {
+    "productId": 58,
+    "batchId": 11
+  },
+  "product": {
+    "name": "Durable Batch E2E 20260907011342342-70012",
+    "createdThroughPmUi": true
+  },
+  "submission": {
+    "createdThroughPmUi": true,
+    "acceptedItemCount": 2,
+    "idempotentReplay": false,
+    "files": [
+      {
+        "fileName": "valid-synthetic-20260907011342342-70012.pdf",
+        "bytes": 90695,
+        "sha256": "ec7c42a5c51054264a5870a3f2d44aeef9f2992b3e362d7e83205526c92b04bd",
+        "expected": "SUCCEEDED"
+      },
+      {
+        "fileName": "malformed-synthetic-20260907011342342-70012.pdf",
+        "bytes": 39,
+        "sha256": "883554ebb44c6bfee4d775edeb2772b50b8cc072e28afdb6c679c6f777f6c83f",
+        "expected": "QUARANTINED"
+      }
+    ]
+  },
+  "firstTerminal": {
+    "batch": {
+      "batchId": 11,
+      "productId": 58,
+      "scenario": "GUARANTEE_MISUNDERSTANDING_HIGH",
+      "requestedItemCount": 2,
+      "status": "QUARANTINED",
+      "pendingItemCount": 0,
+      "leasedItemCount": 0,
+      "retryWaitingItemCount": 0,
+      "succeededItemCount": 1,
+      "cancelledItemCount": 0,
+      "quarantinedItemCount": 1,
+      "totalAttemptCount": 2,
+      "cancellationReason": null,
+      "quarantineReason": "Document extraction failed permanently or exhausted its attempts.",
+      "terminalAt": "2026-09-07T01:13:50.161909Z",
+      "createdAt": "2026-09-07T01:13:46.041955Z",
+      "updatedAt": "2026-09-07T01:13:50.161909Z"
+    },
+    "items": [
+      {
+        "itemId": 21,
+        "batchId": 11,
+        "documentId": 115,
+        "ordinal": 1,
+        "fileName": "valid-synthetic-20260907011342342-70012.pdf",
+        "mediaType": "application/pdf",
+        "fileSize": 90695,
+        "status": "SUCCEEDED",
+        "attemptCount": 1,
+        "maxAttempts": 3,
+        "errorCode": null,
+        "errorMessage": null,
+        "errorTimestamp": "2026-09-07T01:13:50.118419Z",
+        "dueAt": "2026-09-07T01:13:46.045972Z",
+        "terminalAt": "2026-09-07T01:13:50.118419Z",
+        "cancellationReason": null,
+        "quarantineReason": null,
+        "createdAt": "2026-09-07T01:13:46.055703Z",
+        "updatedAt": "2026-09-07T01:13:50.118419Z"
+      },
+      {
+        "itemId": 22,
+        "batchId": 11,
+        "documentId": 116,
+        "ordinal": 2,
+        "fileName": "malformed-synthetic-20260907011342342-70012.pdf",
+        "mediaType": "application/pdf",
+        "fileSize": 39,
+        "status": "QUARANTINED",
+        "attemptCount": 1,
+        "maxAttempts": 3,
+        "errorCode": "DOCUMENT_EXTRACTION_FAILED",
+        "errorMessage": "문서에서 텍스트를 추출하지 못했습니다.",
+        "errorTimestamp": "2026-09-07T01:13:50.161909Z",
+        "dueAt": "2026-09-07T01:13:46.045972Z",
+        "terminalAt": "2026-09-07T01:13:50.161909Z",
+        "cancellationReason": null,
+        "quarantineReason": "Document extraction failed permanently or exhausted its attempts.",
+        "createdAt": "2026-09-07T01:13:46.067066Z",
+        "updatedAt": "2026-09-07T01:13:50.161909Z"
+      }
+    ]
+  },
+  "action": {
+    "type": "RETRY_QUARANTINED_ITEM",
+    "itemId": 22,
+    "responseStatus": 200,
+    "attemptsBefore": 1,
+    "attemptsAfter": 2
+  },
+  "finalTerminal": {
+    "batch": {
+      "batchId": 11,
+      "productId": 58,
+      "scenario": "GUARANTEE_MISUNDERSTANDING_HIGH",
+      "requestedItemCount": 2,
+      "status": "QUARANTINED",
+      "pendingItemCount": 0,
+      "leasedItemCount": 0,
+      "retryWaitingItemCount": 0,
+      "succeededItemCount": 1,
+      "cancelledItemCount": 0,
+      "quarantinedItemCount": 1,
+      "totalAttemptCount": 3,
+      "cancellationReason": null,
+      "quarantineReason": "Document extraction failed permanently or exhausted its attempts.",
+      "terminalAt": "2026-09-07T01:13:55.193234Z",
+      "createdAt": "2026-09-07T01:13:46.041955Z",
+      "updatedAt": "2026-09-07T01:13:55.193234Z"
+    },
+    "items": [
+      {
+        "itemId": 21,
+        "batchId": 11,
+        "documentId": 115,
+        "ordinal": 1,
+        "fileName": "valid-synthetic-20260907011342342-70012.pdf",
+        "mediaType": "application/pdf",
+        "fileSize": 90695,
+        "status": "SUCCEEDED",
+        "attemptCount": 1,
+        "maxAttempts": 3,
+        "errorCode": null,
+        "errorMessage": null,
+        "errorTimestamp": "2026-09-07T01:13:50.118419Z",
+        "dueAt": "2026-09-07T01:13:46.045972Z",
+        "terminalAt": "2026-09-07T01:13:50.118419Z",
+        "cancellationReason": null,
+        "quarantineReason": null,
+        "createdAt": "2026-09-07T01:13:46.055703Z",
+        "updatedAt": "2026-09-07T01:13:50.118419Z"
+      },
+      {
+        "itemId": 22,
+        "batchId": 11,
+        "documentId": 116,
+        "ordinal": 2,
+        "fileName": "malformed-synthetic-20260907011342342-70012.pdf",
+        "mediaType": "application/pdf",
+        "fileSize": 39,
+        "status": "QUARANTINED",
+        "attemptCount": 2,
+        "maxAttempts": 3,
+        "errorCode": "DOCUMENT_EXTRACTION_FAILED",
+        "errorMessage": "문서에서 텍스트를 추출하지 못했습니다.",
+        "errorTimestamp": "2026-09-07T01:13:55.193234Z",
+        "dueAt": "2026-09-07T01:13:50.929954Z",
+        "terminalAt": "2026-09-07T01:13:55.193234Z",
+        "cancellationReason": null,
+        "quarantineReason": "Document extraction failed permanently or exhausted its attempts.",
+        "createdAt": "2026-09-07T01:13:46.067066Z",
+        "updatedAt": "2026-09-07T01:13:55.193234Z"
+      }
+    ]
+  },
+  "csvReport": {
+    "downloadedThroughUi": true,
+    "suggestedFilename": "document-batch-11-errors.csv",
+    "header": "batchId,ordinal,filename,state,attempts,errorCode,errorMessage,timestamp",
+    "rowCount": 2,
+    "containsSuccessfulItem": true,
+    "containsMalformedError": true
+  },
+  "reviewerAuthorization": {
+    "detailVisible": true,
+    "readOnlyNoticeVisible": true,
+    "managementColumnVisible": false,
+    "mutationControlsVisible": false,
+    "csvReportVisible": true
+  },
+  "browserSignals": {
+    "pageErrors": [],
+    "consoleErrors": [],
+    "requestFailures": [],
+    "apiResponses": [
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/demo/users",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/demo/session",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/products",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/products",
+        "status": 201,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/products/58",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/products/58/document-batches",
+        "status": 202,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "POST",
+        "path": "/api/document-batches/11/items/22/retry",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "PM",
+        "method": "GET",
+        "path": "/api/document-batches/11/error-report.csv",
+        "status": 200,
+        "contentType": "text/csv;charset=UTF-8"
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/demo/users",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "reviewer",
+        "method": "POST",
+        "path": "/api/demo/session",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/reviews",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/document-batches/11",
+        "status": 200,
+        "contentType": "application/json"
+      },
+      {
+        "actor": "reviewer",
+        "method": "GET",
+        "path": "/api/document-batches/11/items",
+        "status": 200,
+        "contentType": "application/json"
+      }
+    ],
+    "unexpectedApiResponses": []
+  }
+}

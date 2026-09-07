@@ -59,14 +59,12 @@ public class ProductDocumentService {
         // 문서 업로드는 쓰기 작업이라 담당자 본인만 가능하다 (검토자도 올릴 수 없다).
         ownershipChecker.requireOwner(product.getOwnerId(), currentUser);
 
-        String fileName = resolveFileName(file);
-        DocumentMediaType mediaType = validate(file, fileName);
-        String scenarioCode = scenarioResolver.resolveCode(requestedScenario, fileName);
+        ValidatedUpload upload = validateUpload(file, requestedScenario, "file");
 
-        StoredFile stored = fileStorage.store(file, scenarioCode);
+        StoredFile stored = fileStorage.store(file, upload.scenarioCode());
 
         ProductDocument document = productDocumentRepository.save(ProductDocument.upload(
-                product, fileName, mediaType.contentType(),
+                product, upload.fileName(), upload.mediaType().contentType(),
                 stored.size(), stored.checksum(), stored.storageKey()));
         documentSourceRevisionRepository.save(DocumentSourceRevision.initial(document));
 
@@ -141,10 +139,21 @@ public class ProductDocumentService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.DEMO_USER_NOT_FOUND));
     }
 
-    private DocumentMediaType validate(MultipartFile file, String fileName) {
+    public ValidatedUpload validateUpload(
+            MultipartFile file,
+            String requestedScenario,
+            String fieldName
+    ) {
+        String fileName = resolveFileName(file);
+        DocumentMediaType mediaType = validate(file, fileName, fieldName);
+        String scenarioCode = scenarioResolver.resolveCode(requestedScenario, fileName);
+        return new ValidatedUpload(fileName, mediaType, scenarioCode);
+    }
+
+    private DocumentMediaType validate(MultipartFile file, String fileName, String fieldName) {
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR,
-                    List.of(new ErrorResponse.FieldError("file", "업로드할 파일이 비어 있습니다.")));
+                    List.of(new ErrorResponse.FieldError(fieldName, "업로드할 파일이 비어 있습니다.")));
         }
         if (file.getSize() > MAX_FILE_SIZE_BYTES) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE);
@@ -161,5 +170,12 @@ public class ProductDocumentService {
         }
         String cleaned = StringUtils.getFilename(StringUtils.cleanPath(original));
         return StringUtils.hasText(cleaned) ? cleaned : DEFAULT_FILE_NAME;
+    }
+
+    public record ValidatedUpload(
+            String fileName,
+            DocumentMediaType mediaType,
+            String scenarioCode
+    ) {
     }
 }

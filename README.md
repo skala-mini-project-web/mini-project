@@ -259,8 +259,8 @@ ollama list
   - `[완료]` 결정론 Policy v1 score engine·score ledger·state-first score UI, reviewer 승인 뒤 actual `SCORED` browser E2E
   - `[예정]` held-out TEVV calibration·artifact-pinned model comparison과 score band 재보정
 - 대량 파일 자동 처리
-  - `[완료]` PostgreSQL durable queue·storage·retry/cancel/quarantine 설계 확정
-  - `[예정]` one-item 호환 pipeline, item별 retry·cancel·quarantine·error report, browser E2E: [#86](https://github.com/skala-mini-project-web/mini-project/issues/86)
+  - `[완료]` PostgreSQL durable batch queue, `SKIP LOCKED` lease/fence, item별 retry·cancel·quarantine·attempt audit
+  - `[완료]` 1–100 파일 batch upload, CSV error report, PM management·reviewer read-only, actual browser E2E
 - PDF 한글 OCR
   - `[완료]` PDF-only OCR worker·page routing·confidence·원본 대조·PM confirmation 설계 확정
   - `[예정]` pinned `kor+eng` OCR worker, page artifact, critical-field review, actual Compose/browser E2E: [#87](https://github.com/skala-mini-project-web/mini-project/issues/87)

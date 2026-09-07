@@ -5,7 +5,9 @@ package com.crosschecklab.domain.document.extraction;
 public interface TextExtractionService {
 
     /**
-     * @throws TextExtractionException 추출에 실패한 경우. 호출 측이 문서를 FAILED 로 전이시킨다.
+     * @throws TextExtractionException 손상되었거나 지원하지 않는 문서처럼 재시도해도 복구되지
+     *         않는 입력은 non-retryable 예외로, 일시적인 실패는 retryable 예외로 보고한다.
+     *         호출 측은 이 분류를 보존해 문서나 배치 항목을 실패 상태로 전이시킨다.
      */
     String extract(ExtractionTarget target);
 }
