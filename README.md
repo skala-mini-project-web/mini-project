@@ -93,7 +93,7 @@ Frontend
 + Persona 1개 이상 + 활성 근거 문서 1~3개 + Red Team rule
 → 근거 문서 chunking
 → pgvector cosine top-6 검색
-→ Finding + policy rule + evidence option ID 반환
+→ Finding + policy rule + 정책 근거·문서 주장 option ID 반환
 → backend 검증
 → retrieval snapshot·Finding·audit 저장
 ```
@@ -101,8 +101,8 @@ Frontend
 ![AI 로직 흐름](docs/assets/ai-logic-flow.png)
 
 - 전체 근거 문서를 prompt에 넣지 않으며 lexical·full-document fallback을 사용하지 않음
-- 모델은 `retrievedContextChunkIds`와 허용된 `evidenceSpanOptionIds`만 반환
-- backend가 option ID를 exact retrieved chunk excerpt로 매핑·검증하며, 모델이 excerpt를 직접 만들 수 없음
+- 모델은 허용된 `evidenceSpanOptionIds`와 Finding별 단일 `docClaimOptionId`를 선택하며, AI service가 정확한 원문과 `retrievedContextChunkIds`로 매핑
+- backend는 정책 근거와 문서 주장을 별도로 검증하고, 고정된 문서 revision의 고유한 원문 범위·UTF-8 위치·hash로 anchor를 저장
 - 선택하지 않은 Persona·근거 문서·공식 사실 ID가 포함되면 저장을 거부
 - retrieval snapshot에는 configured model ID와 runtime이 제공한 embedding digest를 함께 기록한다. `latest` tag만으로 artifact pinning을 주장하지 않음
 - 완료된 retrieval snapshot은 변경 불가
@@ -295,6 +295,16 @@ ollama list
   - `[완료]` 실제 browser E2E: PM 수정·확정, 분석 후 수정 409, reviewer read-only, malformed PDF 실패 화면, RAG→review→Risk Pattern→GuardFit
   - `[완료]` 실제 browser E2E: PM/reviewer 서버 권한 거부 403, desktop·390px overflow/focus/action visibility
   - `[완료]` 6개 합성 상품군·30개 PDF·102페이지 corpus의 PDFBox extraction·SHA-256·source revision 검증
+
+### 최근 추가 보강 — [PR #110](https://github.com/skala-mini-project-web/mini-project/pull/110)
+
+- **근거·점수:** v18 명시적 문서 주장 선택·검증, Finding 0~20건·빈 검토 승인 지원, 정책 1.1.0의 동일 원문·규칙 중복 집계 제거. 근거 부족·빈 결과에 가짜 anchor나 0점 생성 금지
+- **복구·성능:** 수락 token·lease 기반 유실 작업 실패 복구, RAG 외부 호출과 DB 잠금 분리, PDF 렌더 자원 제한·공통 추출 시간 예산
+- **화면·조회:** 상품 전체 검색·필터·페이지/count, mock lifecycle 일치, polling 직렬화와 세션 변경 후 오래된 응답 차단
+- **OCR:** 본문 수신 전 admission 제한·취소 안전 permit. 대량 스캔은 durable batch queue 사용; 동시 단건 요청은 실패 후 수동 재시도가 필요할 수 있음
+- **검증:** backend 461·AI 90·OCR 7·frontend smoke 113개 및 실제 RAG·한국어 OCR browser E2E 통과
+- **제한 부하:** 조회 6,440건 오류 0, 실제 RAG 2동시 성공, 스캔 배치 8/8 성공(14.16초), 컨테이너 OOM·비정상 재시작 0. 장시간 soak·강제 OOM·최대 처리량은 미검증 — [측정 범위와 결과](https://github.com/skala-mini-project-web/mini-project/pull/110#issuecomment-5581397161)
+- **배포 주의:** V25 적용 전 구버전 worker 전체 중단, 구·신 worker 혼합 rolling 배포 금지. V26/V27은 제약 추가와 기존 행 검증을 별도 트랜잭션으로 분리
 
 ## 팀 구성
 
