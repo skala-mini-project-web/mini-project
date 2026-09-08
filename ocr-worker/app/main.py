@@ -38,6 +38,43 @@ OCR_PERMIT = threading.BoundedSemaphore(value=1)
 app = FastAPI(title="Private Korean page OCR worker", docs_url=None, redoc_url=None, openapi_url=None)
 
 
+class OcrReservation:
+    RESERVED = "reserved"
+    RUNNING = "running"
+    RELEASED = "released"
+
+    def __init__(self) -> None:
+        self._state = self.RESERVED
+        self._lock = threading.Lock()
+
+    @classmethod
+    def reserve(cls):
+        if not OCR_PERMIT.acquire(blocking=False):
+            return None
+        return cls()
+
+    def begin(self) -> bool:
+        with self._lock:
+            if self._state != self.RESERVED:
+                return False
+            self._state = self.RUNNING
+            return True
+
+    def release_reserved(self) -> None:
+        with self._lock:
+            if self._state != self.RESERVED:
+                return
+            self._state = self.RELEASED
+        OCR_PERMIT.release()
+
+    def release_running(self) -> None:
+        with self._lock:
+            if self._state != self.RUNNING:
+                return
+            self._state = self.RELEASED
+        OCR_PERMIT.release()
+
+
 def failure(status: int, code: str, message: str, retryable: bool = False) -> JSONResponse:
     return JSONResponse(
         status_code=status,
@@ -67,7 +104,15 @@ async def protect_private_endpoint(request: Request, call_next):
         return failure(400, "INVALID_CONTENT_LENGTH", "Content-Length is invalid")
     if length <= 0 or length > MAX_REQUEST_BYTES:
         return failure(413, "REQUEST_TOO_LARGE", "Request exceeds the configured byte limit")
-    return await call_next(request)
+
+    reservation = OcrReservation.reserve()
+    if reservation is None:
+        return failure(503, "OCR_BUSY", "OCR worker is already processing a page", True)
+    request.state.ocr_reservation = reservation
+    try:
+        return await call_next(request)
+    finally:
+        reservation.release_reserved()
 
 
 @app.exception_handler(RequestValidationError)
@@ -218,9 +263,11 @@ def run_tesseract(image_path: Path, output_base: Path) -> tuple[str, str]:
         raise OcrFailure(500, "OCR_OUTPUT_MISSING", "OCR engine output is unavailable", True) from exception
 
 
-def process_ocr(image_bytes: bytes, media_type: str) -> tuple[int, int, str, str, float, str]:
-    if not OCR_PERMIT.acquire(blocking=False):
-        raise OcrFailure(503, "OCR_BUSY", "OCR worker is already processing a page", True)
+def process_ocr(
+    reservation: OcrReservation, image_bytes: bytes, media_type: str
+) -> tuple[int, int, str, str, float, str]:
+    if not reservation.begin():
+        raise OcrFailure(503, "OCR_BUSY", "OCR request admission is no longer active", True)
     try:
         with tempfile.TemporaryDirectory(prefix="ocr-page-") as directory:
             directory_path = Path(directory)
@@ -235,11 +282,12 @@ def process_ocr(image_bytes: bytes, media_type: str) -> tuple[int, int, str, str
         version = engine_version()
         return width, height, text, raw_tsv, confidence, version
     finally:
-        OCR_PERMIT.release()
+        reservation.release_running()
 
 
 @app.post("/internal/v1/ocr/pages")
 async def recognize_page(
+    request: Request,
     image: Annotated[UploadFile, File()],
     page_number: Annotated[int, Form(ge=1, le=1000000)],
     source_hash: Annotated[str, Form(min_length=64, max_length=64)],
@@ -266,7 +314,7 @@ async def recognize_page(
         raise OcrFailure(400, "ARTIFACT_HASH_MISMATCH", "Image does not match artifactHash")
 
     width, height, text, raw_tsv, confidence, version = await run_in_threadpool(
-        process_ocr, image_bytes, media_type
+        process_ocr, request.state.ocr_reservation, image_bytes, media_type
     )
     return {
         "pageNumber": page_number,

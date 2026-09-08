@@ -46,6 +46,7 @@ class HttpRiskAnalysisProviderTest {
              "retrievedContextChunkIds":[11],
              "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
              "knownFactIds":[7],
+             "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
              "recommendation":"원금 손실 가능성을 명시하세요."}]}""";
 
     private HttpServer server;
@@ -91,7 +92,11 @@ class HttpRiskAnalysisProviderTest {
     }
 
     private AnalysisRequest request() {
-        return new AnalysisRequest(1L, "GUARANTEE_MISUNDERSTANDING_HIGH", "확정된 상품 설명 텍스트",
+        return request("확정된 상품 설명 텍스트");
+    }
+
+    private AnalysisRequest request(String confirmedText) {
+        return new AnalysisRequest(1L, "GUARANTEE_MISUNDERSTANDING_HIGH", confirmedText,
                 List.of(PersonaCode.FINANCIAL_BEGINNER), "CORE_FINANCIAL_RISK_V1",
                 List.of(RedTeamRuleCode.STABILITY_KEYWORD),
                 List.of(1L),
@@ -105,6 +110,10 @@ class HttpRiskAnalysisProviderTest {
     }
 
     private AnalysisResult analyzeWithMockServer(String body) {
+        return analyzeWithMockServer(body, request());
+    }
+
+    private AnalysisResult analyzeWithMockServer(String body, AnalysisRequest analysisRequest) {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost");
         MockRestServiceServer mockServer = MockRestServiceServer.bindTo(builder).build();
         mockServer.expect(requestTo("http://localhost/internal/v1/risk-analyses"))
@@ -118,7 +127,7 @@ class HttpRiskAnalysisProviderTest {
             throw new AssertionError("테스트용 RestClient 주입 실패", e);
         }
         try {
-            return provider.analyze(request());
+            return provider.analyze(analysisRequest);
         } finally {
             mockServer.verify();
         }
@@ -130,7 +139,9 @@ class HttpRiskAnalysisProviderTest {
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
-                 "knownFactIds":[],"recommendation":null}""";
+                 "knownFactIds":[],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
+                 "recommendation":null}""";
     }
 
     private static String resultJson(String riskScore, List<String> findings) {
@@ -156,6 +167,7 @@ class HttpRiskAnalysisProviderTest {
                 assertThat(span.excerpt()).isEqualTo("원금손실 가능성");
             });
             assertThat(finding.knownFactIds()).containsExactly(7L);
+            assertThat(finding.docClaim().excerpt()).isEqualTo("확정된 상품 설명 텍스트");
         });
         // ai-service 는 extra="forbid" 라 필드명이 정확히 일치해야 한다.
         assertThat(capturedRequest.get())
@@ -255,6 +267,104 @@ class HttpRiskAnalysisProviderTest {
     }
 
     @Test
+    @DisplayName("docClaim 또는 excerpt가 누락·null·공백이면 계약 위반으로 끊는다")
+    void requiredDocClaimIsRejectedWhenMissingNullOrBlank() {
+        List<String> invalidFindings = List.of(
+                validFindingJson().replace(
+                        "\"docClaim\":{\"excerpt\":\"확정된 상품 설명 텍스트\"},", ""),
+                validFindingJson().replace(
+                        "\"docClaim\":{\"excerpt\":\"확정된 상품 설명 텍스트\"}", "\"docClaim\":null"),
+                validFindingJson().replace(
+                        "\"docClaim\":{\"excerpt\":\"확정된 상품 설명 텍스트\"}", "\"docClaim\":{}"),
+                validFindingJson().replace(
+                        "\"docClaim\":{\"excerpt\":\"확정된 상품 설명 텍스트\"}",
+                        "\"docClaim\":{\"excerpt\":null}"),
+                validFindingJson().replace(
+                        "\"docClaim\":{\"excerpt\":\"확정된 상품 설명 텍스트\"}",
+                        "\"docClaim\":{\"excerpt\":\"   \"}"));
+
+        for (String invalidFinding : invalidFindings) {
+            assertThatThrownBy(() -> analyzeWithMockServer(resultJson("40", List.of(invalidFinding))))
+                    .isInstanceOfSatisfying(ProviderException.class, e ->
+                            assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID));
+        }
+    }
+
+    @Test
+    @DisplayName("docClaim excerpt는 Unicode code point 400개를 허용하고 UTF-16 길이는 기준으로 삼지 않는다")
+    void docClaimAllowsFourHundredUnicodeCodePoints() {
+        String excerpt = "😀".repeat(400);
+        String finding = validFindingJson().replace("확정된 상품 설명 텍스트", excerpt);
+
+        AnalysisResult result = analyzeWithMockServer(
+                resultJson("40", List.of(finding)), request(excerpt));
+
+        assertThat(excerpt.length()).isGreaterThan(400);
+        assertThat(result.findings()).singleElement().satisfies(found ->
+                assertThat(found.docClaim().excerpt()).isEqualTo(excerpt));
+    }
+
+    @Test
+    @DisplayName("docClaim excerpt가 Unicode code point 400개를 넘으면 계약 위반으로 끊는다")
+    void docClaimOverFourHundredUnicodeCodePointsIsRejected() {
+        String excerpt = "가".repeat(401);
+        String finding = validFindingJson().replace("확정된 상품 설명 텍스트", excerpt);
+
+        assertThatThrownBy(() -> analyzeWithMockServer(
+                resultJson("40", List.of(finding)), request(excerpt)))
+                .isInstanceOfSatisfying(ProviderException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID));
+    }
+
+    @Test
+    @DisplayName("confirmedText에 정확히 존재하지 않는 docClaim excerpt는 계약 위반으로 끊는다")
+    void docClaimOutsideConfirmedTextIsRejected() {
+        String finding = validFindingJson().replace(
+                "확정된 상품 설명 텍스트", "확정 원문에 없는 주장");
+
+        assertThatThrownBy(() -> analyzeWithMockServer(resultJson("40", List.of(finding))))
+                .isInstanceOfSatisfying(ProviderException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID));
+    }
+
+    @Test
+    @DisplayName("confirmedText에서 겹쳐 두 번 나타나는 docClaim excerpt는 모호하므로 거부한다")
+    void overlappingDuplicateDocClaimIsRejected() {
+        String finding = validFindingJson().replace("확정된 상품 설명 텍스트", "가가");
+
+        assertThatThrownBy(() -> analyzeWithMockServer(
+                resultJson("40", List.of(finding)), request("가가가")))
+                .isInstanceOfSatisfying(ProviderException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID));
+    }
+
+    @Test
+    @DisplayName("docClaim의 앞뒤 공백도 confirmedText에 정확히 한 번 존재하면 허용한다")
+    void docClaimWithExactLeadingAndTrailingWhitespaceIsAllowed() {
+        String excerpt = "  확정된 상품 설명 텍스트  ";
+        String finding = validFindingJson().replace("확정된 상품 설명 텍스트", excerpt);
+
+        AnalysisResult result = analyzeWithMockServer(
+                resultJson("40", List.of(finding)), request("앞" + excerpt + "뒤"));
+
+        assertThat(result.findings()).singleElement().satisfies(found ->
+                assertThat(found.docClaim().excerpt()).isEqualTo(excerpt));
+    }
+
+    @Test
+    @DisplayName("knownFactIds가 비어 있지 않아도 필수 docClaim을 대신하지 못한다")
+    void knownFactDoesNotReplaceRequiredDocClaim() {
+        String finding = validFindingJson()
+                .replace("\"knownFactIds\":[]", "\"knownFactIds\":[7]")
+                .replace(
+                        "\"docClaim\":{\"excerpt\":\"확정된 상품 설명 텍스트\"},", "");
+
+        assertThatThrownBy(() -> analyzeWithMockServer(resultJson("40", List.of(finding))))
+                .isInstanceOfSatisfying(ProviderException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID));
+    }
+
+    @Test
     @DisplayName("503 + retryable=true → AI_SERVICE_TEMPORARY_FAILURE, 재시도 가능")
     void temporaryFailure() {
         status = 503;
@@ -289,7 +399,9 @@ class HttpRiskAnalysisProviderTest {
                 {"riskScore":82,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"HIGH","policyRuleCode":"STABILITY_KEYWORD",
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
-                 "retrievedContextChunkIds":[],"recommendation":null}]}""";
+                 "retrievedContextChunkIds":[],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
+                 "recommendation":null}]}""";
 
         assertThatThrownBy(() -> provider().analyze(request()))
                 .isInstanceOfSatisfying(ProviderException.class, e -> {
@@ -328,6 +440,7 @@ class HttpRiskAnalysisProviderTest {
                  "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[99],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
                  "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
@@ -340,7 +453,9 @@ class HttpRiskAnalysisProviderTest {
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
-                 "retrievedContextChunkIds":[null],"recommendation":null}]}""";
+                 "retrievedContextChunkIds":[null],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
+                 "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }
@@ -352,7 +467,9 @@ class HttpRiskAnalysisProviderTest {
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
-                 "retrievedContextChunkIds":[11,11],"recommendation":null}]}""";
+                 "retrievedContextChunkIds":[11,11],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
+                 "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }
@@ -364,7 +481,9 @@ class HttpRiskAnalysisProviderTest {
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
                  "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
-                 "retrievedContextChunkIds":[11],"evidenceSpans":[],"recommendation":null}]}""";
+                 "retrievedContextChunkIds":[11],"evidenceSpans":[],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
+                 "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }
@@ -378,6 +497,7 @@ class HttpRiskAnalysisProviderTest {
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11,12],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
                  "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
@@ -392,6 +512,7 @@ class HttpRiskAnalysisProviderTest {
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"   "}],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
                  "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
@@ -406,6 +527,7 @@ class HttpRiskAnalysisProviderTest {
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"원금 손실 가능성"}],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
                  "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
@@ -420,6 +542,7 @@ class HttpRiskAnalysisProviderTest {
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":12,"excerpt":"중도해지 비용"}],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
                  "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
@@ -436,6 +559,7 @@ class HttpRiskAnalysisProviderTest {
                  "evidenceSpans":[
                    {"chunkId":11,"excerpt":"원금손실 가능성"},
                    {"chunkId":11,"excerpt":"원금손실 가능성"}],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
                  "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
@@ -450,7 +574,9 @@ class HttpRiskAnalysisProviderTest {
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
-                 "knownFactIds":[99],"recommendation":null}]}""";
+                 "knownFactIds":[99],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
+                 "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }
@@ -464,7 +590,9 @@ class HttpRiskAnalysisProviderTest {
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
-                 "knownFactIds":[null],"recommendation":null}]}""";
+                 "knownFactIds":[null],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
+                 "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }
@@ -478,7 +606,9 @@ class HttpRiskAnalysisProviderTest {
                  "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
-                 "knownFactIds":[7,7],"recommendation":null}]}""";
+                 "knownFactIds":[7,7],
+                 "docClaim":{"excerpt":"확정된 상품 설명 텍스트"},
+                 "recommendation":null}]}""";
 
         assertInvalidProviderResponse();
     }

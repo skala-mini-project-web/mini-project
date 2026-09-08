@@ -49,6 +49,7 @@ class FakeRiskAnalysisProvider implements RiskAnalysisProvider {
                 List.of(context.chunkId()),
                 List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText())),
                 List.of(),
+                new FindingPayload.DocClaimPayload("안정적인 수익률"),
                 "안정성 표현과 같은 영역에 원금 손실 가능성을 명시하세요.")));
     }
 }

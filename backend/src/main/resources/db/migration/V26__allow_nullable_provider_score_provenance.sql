@@ -34,4 +34,4 @@ ALTER TABLE analysis_executions
             AND provider_risk_score IS NULL
             AND model_version IS NULL
             AND prompt_version IS NULL)
-    );
+    ) NOT VALID;

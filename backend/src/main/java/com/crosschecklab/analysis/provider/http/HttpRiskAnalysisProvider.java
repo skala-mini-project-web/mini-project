@@ -44,6 +44,7 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
     private static final int MAX_KNOWN_FACT_IDS = 50;
     private static final int MAX_EVIDENCE_SPANS = 60;
     private static final int MAX_EVIDENCE_EXCERPT_LENGTH = 8_000;
+    private static final int MAX_DOC_CLAIM_CODE_POINTS = 400;
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
@@ -269,12 +270,30 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
                     throw invalid("요청에 없는 사실 인용: " + factId);
                 }
             }
+            validateDocClaim(request.confirmedText(), finding.docClaim());
             if (finding.recommendation() != null
                     && finding.recommendation().length() > MAX_RECOMMENDATION_LENGTH) {
                 throw invalid("finding.recommendation 길이 초과");
             }
         }
         return result;
+    }
+
+    private void validateDocClaim(String confirmedText, FindingPayload.DocClaimPayload docClaim) {
+        if (docClaim == null || docClaim.excerpt() == null || docClaim.excerpt().isBlank()) {
+            throw invalid("finding 에 docClaim.excerpt 가 없음");
+        }
+        String excerpt = docClaim.excerpt();
+        if (excerpt.codePointCount(0, excerpt.length()) > MAX_DOC_CLAIM_CODE_POINTS) {
+            throw invalid("finding.docClaim.excerpt 길이 초과");
+        }
+        if (confirmedText == null) {
+            throw invalid("요청의 confirmedText 가 없음");
+        }
+        int first = confirmedText.indexOf(excerpt);
+        if (first < 0 || confirmedText.indexOf(excerpt, first + 1) >= 0) {
+            throw invalid("confirmedText 에 exact docClaim excerpt 범위가 없거나 둘 이상임");
+        }
     }
 
     private void requireNonBlank(String value, String fieldName, int maximumLength) {

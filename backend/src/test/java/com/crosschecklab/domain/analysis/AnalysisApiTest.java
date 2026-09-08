@@ -44,6 +44,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
@@ -499,6 +500,21 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 "SELECT COUNT(*) FROM audit_events WHERE trace_id = ?", Long.class, traceId)).isZero();
     }
 
+    private void assertProviderInvalidWithoutFindingWrites(Long analysisId) throws Exception {
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.retryable").value(false))
+                .andExpect(jsonPath("$.errorCode").value("PROVIDER_RESPONSE_INVALID"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isZero();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM finding_evidence_anchors anchor
+                JOIN findings finding ON finding.id = anchor.finding_id
+                WHERE finding.analysis_id = ?
+                """, Long.class, analysisId)).isZero();
+    }
+
     private String request(Long documentId, List<Integer> evidenceIds, List<Integer> personaIds) throws Exception {
         return objectMapper.writeValueAsString(Map.of(
                 "productDocumentId", documentId,
@@ -545,6 +561,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 List.of(context.chunkId()),
                 List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText())),
                 List.of(factId),
+                new FindingPayload.DocClaimPayload(request.confirmedText()),
                 "검증된 사실을 기준으로 설명하세요.")));
     }
 
@@ -558,7 +575,23 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 chunkIds,
                 spans,
                 List.of(),
+                new FindingPayload.DocClaimPayload("안정적인 수익률"),
                 "검색된 근거를 기준으로 설명하세요.")));
+    }
+
+    private AnalysisResult resultWithDocClaim(
+            AnalysisRequest request, FindingPayload.DocClaimPayload docClaim) {
+        AnalysisRequest.RetrievedContextPayload context = request.retrievedContexts().getFirst();
+        return new AnalysisResult(82, "claim-model", "claim-prompt", List.of(new FindingPayload(
+                "확정 원문 주장을 직접 인용한 분석 결과입니다.",
+                Severity.HIGH,
+                RedTeamRuleCode.STABILITY_KEYWORD,
+                DEFAULT_PERSONA_CODES,
+                List.of(context.chunkId()),
+                List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText())),
+                List.of(),
+                docClaim,
+                "확정 원문과 함께 위험을 설명하세요.")));
     }
 
     private AnalysisResult duplicateClaimResult(
@@ -575,6 +608,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 List.of(context.chunkId()),
                 List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText())),
                 List.of(factId),
+                new FindingPayload.DocClaimPayload(request.confirmedText()),
                 "비용을 명시하세요.");
         FindingPayload paraphrase = new FindingPayload(
                 "동일한 문서 주장에 관한 비용 설명이 충분하지 않습니다.",
@@ -586,6 +620,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 List.of(context.chunkId()),
                 List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText())),
                 List.of(factId),
+                new FindingPayload.DocClaimPayload(request.confirmedText()),
                 "같은 비용을 명확히 설명하세요.");
         return new AnalysisResult(
                 99,
@@ -618,6 +653,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                                     List.of(new FindingPayload.EvidenceSpanPayload(
                                             context.chunkId(), context.chunkText())),
                                     List.of(),
+                                    new FindingPayload.DocClaimPayload("안정적인 수익률"),
                                     "안정성 표현과 같은 영역에 원금 손실 가능성을 명시하세요.")));
                 });
     }
@@ -713,7 +749,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                        anchor.exact_excerpt
                 FROM findings f
                 JOIN finding_evidence_anchors anchor ON anchor.finding_id = f.id
-                WHERE f.analysis_id = ?
+                WHERE f.analysis_id = ? AND anchor.source_role = 'POLICY_REQUIREMENT'
                 """, analysisId);
         assertThat(anchoredFinding)
                 .containsEntry("analysis_execution_id", execution.get("id"))
@@ -800,6 +836,8 @@ class AnalysisApiTest extends IntegrationTestSupport {
                                             new FindingPayload.EvidenceSpanPayload(
                                                     first.chunkId(), first.chunkText())),
                                     List.of(factId),
+                                    new FindingPayload.DocClaimPayload(
+                                            "정책에 비추어 검토할 확정 문서 주장"),
                                     "검증된 사실을 기준으로 설명하세요.")));
                 });
 
@@ -999,6 +1037,8 @@ class AnalysisApiTest extends IntegrationTestSupport {
                                     List.of(new FindingPayload.EvidenceSpanPayload(
                                             context.chunkId(), context.chunkText())),
                                     List.of(factId),
+                                    new FindingPayload.DocClaimPayload(
+                                            "환매 조건과 비용을 함께 명확히 고지합니다."),
                                     "환매 조건을 명시하세요."),
                             new FindingPayload(
                                     "같은 문장의 비용 고지가 불충분합니다.",
@@ -1009,6 +1049,8 @@ class AnalysisApiTest extends IntegrationTestSupport {
                                     List.of(new FindingPayload.EvidenceSpanPayload(
                                             context.chunkId(), context.chunkText())),
                                     List.of(factId),
+                                    new FindingPayload.DocClaimPayload(
+                                            "환매 조건과 비용을 함께 명확히 고지합니다."),
                                     "비용을 명시하세요.")));
                 });
 
@@ -1090,6 +1132,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                             List.of(new FindingPayload.EvidenceSpanPayload(
                                     context.chunkId(), context.chunkText())),
                             List.of(firstFactId),
+                            new FindingPayload.DocClaimPayload("첫 번째 확정 주장"),
                             "첫 권고")));
                 });
         Long firstAnalysisId = createAnalysis(
@@ -1115,6 +1158,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                             List.of(new FindingPayload.EvidenceSpanPayload(
                                     context.chunkId(), context.chunkText())),
                             List.of(secondFactId),
+                            new FindingPayload.DocClaimPayload("두 번째 확정 주장은 원문도 다름"),
                             "다른 권고")));
                 });
         Long secondAnalysisId = createAnalysis(
@@ -1186,10 +1230,35 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
                 Long.class,
                 analysisId);
-        Long findingId = jdbc.queryForObject(
+        Long originalFindingId = jdbc.queryForObject(
                 "SELECT id FROM findings WHERE analysis_execution_id = ?", Long.class, executionId);
+        Long legacyFindingId = jdbc.queryForObject("""
+                INSERT INTO findings
+                    (analysis_id, analysis_execution_id, lineage_id, revision_number,
+                     statement, severity, policy_rule_code, recommendation, created_at, updated_at)
+                SELECT analysis_id, analysis_execution_id, ?, 1,
+                       statement, severity, policy_rule_code, recommendation, NOW(), NOW()
+                FROM findings
+                WHERE id = ?
+                RETURNING id
+                """, Long.class, UUID.randomUUID().toString(), originalFindingId);
+        jdbc.update("""
+                INSERT INTO finding_evidence_anchors
+                    (finding_id, source_role, source_document_id, source_revision_id,
+                     evidence_document_id, retrieved_chunk_id, source_hash, page_number,
+                     utf8_start_offset, utf8_end_offset, excerpt_hash, exact_excerpt)
+                SELECT ?, source_role, source_document_id, source_revision_id,
+                       evidence_document_id, retrieved_chunk_id, source_hash, page_number,
+                       utf8_start_offset, utf8_end_offset, excerpt_hash, exact_excerpt
+                FROM finding_evidence_anchors
+                WHERE finding_id = ? AND source_role = 'POLICY_REQUIREMENT'
+                """, legacyFindingId, originalFindingId);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM finding_evidence_anchors
+                WHERE finding_id = ? AND source_role = 'POLICY_REQUIREMENT'
+                """, Long.class, legacyFindingId)).isEqualTo(1L);
         Long reviewId = createReview(analysisId);
-        decideReview(reviewId, "APPROVED", List.of(findingId));
+        decideReview(reviewId, "APPROVED", List.of(legacyFindingId));
 
         assertThat(jdbc.queryForMap("""
                 SELECT state, score_value, not_scored_reason
@@ -1213,22 +1282,8 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("#85: cited fact가 원문에서 모호하면 claim anchor를 만들지 않고 NOT_SCORED다")
-    void approvedFindingWithAmbiguousFactAnchorIsNotScored() throws Exception {
-        String sourceText = "반복된 문서 주장 / 반복된 문서 주장";
-        Long factId = confirmFact(sourceText, "CANDIDATE");
-        jdbc.update("""
-                UPDATE ground_truth_facts
-                SET value = '반복된 문서 주장',
-                    verification_status = 'VERIFIED',
-                    decided_by = 1,
-                    decided_at = NOW()
-                WHERE id = ?
-                """, factId);
-        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
-        ReflectionTestUtils.setField(fake, "behavior",
-                (Function<AnalysisRequest, AnalysisResult>) request -> resultCiting(request, factId));
-
+    @DisplayName("#85: known fact가 없어도 explicit claim anchor로 점수화한다")
+    void approvedFindingWithEmptyKnownFactsIsScored() throws Exception {
         Long analysisId = createAnalysis();
         Long executionId = jdbc.queryForObject(
                 "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
@@ -1239,18 +1294,18 @@ class AnalysisApiTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM finding_evidence_anchors
                 WHERE finding_id = ? AND source_role = 'DOCUMENT_CLAIM'
-                """, Long.class, findingId)).isZero();
+                """, Long.class, findingId)).isEqualTo(1L);
         Long reviewId = createReview(analysisId);
         decideReview(reviewId, "APPROVED", List.of(findingId));
 
         assertThat(jdbc.queryForMap("""
                 SELECT state, score_value, not_scored_reason
                 FROM risk_score_runs
-                WHERE analysis_execution_id = ? AND state = 'NOT_SCORED'
+                WHERE analysis_execution_id = ? AND state = 'SCORED'
                 """, executionId))
-                .containsEntry("state", "NOT_SCORED")
-                .containsEntry("score_value", null)
-                .containsEntry("not_scored_reason", "REQUIRED_ANCHOR_CARDINALITY");
+                .containsEntry("state", "SCORED")
+                .containsEntry("score_value", 100)
+                .containsEntry("not_scored_reason", null);
     }
 
     @Test
@@ -1494,6 +1549,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
     @DisplayName("#43: VERIFIED가 아닌 사실은 분석 snapshot과 Provider 요청에 포함되지 않는다")
     void nonVerifiedFactsAreNotAccepted() throws Exception {
         confirmFact("검증에서 제외할 사실", "REJECTED");
+        ReflectionTestUtils.setField(provider, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultWithDocClaim(
+                        request, new FindingPayload.DocClaimPayload("검증에서 제외할 사실")));
 
         Long analysisId = createAnalysis();
 
@@ -1574,6 +1632,11 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 .containsEntry("page_number", 1)
                 .containsEntry("utf8_start_offset", 0L)
                 .containsEntry("exact_excerpt", "Provider가 인용할 검증된 사실");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM finding_evidence_anchors anchor
+                JOIN findings finding ON finding.id = anchor.finding_id
+                WHERE finding.analysis_id = ?
+                """, Long.class, analysisId)).isEqualTo(2L);
     }
 
     @Test
@@ -1597,6 +1660,172 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("explicit doc claim이 없으면 provider invalid로 실패하고 일부도 저장하지 않는다")
+    void missingDocClaimIsRejectedWithoutPartialWrites() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultWithDocClaim(request, null));
+
+        Long analysisId = createAnalysis();
+
+        assertProviderInvalidWithoutFindingWrites(analysisId);
+    }
+
+    @Test
+    @DisplayName("공백뿐인 explicit doc claim은 provider invalid로 실패한다")
+    void blankDocClaimIsRejectedWithoutPartialWrites() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultWithDocClaim(
+                        request, new FindingPayload.DocClaimPayload(" \n\t")));
+
+        Long analysisId = createAnalysis();
+
+        assertProviderInvalidWithoutFindingWrites(analysisId);
+    }
+
+    @Test
+    @DisplayName("겹쳐서 반복되는 exact doc claim은 모호하므로 일부도 저장하지 않는다")
+    void overlappingAmbiguousDocClaimIsRejectedWithoutPartialWrites() throws Exception {
+        jdbc.update(
+                "UPDATE product_documents SET extracted_text = ? WHERE id = ?",
+                "가가가",
+                confirmedDocumentId);
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultWithDocClaim(
+                        request, new FindingPayload.DocClaimPayload("가가")));
+
+        Long analysisId = createAnalysis();
+
+        assertProviderInvalidWithoutFindingWrites(analysisId);
+    }
+
+    @Test
+    @DisplayName("확정 원문의 공백과 다른 doc claim은 exact 일치가 아니므로 거부한다")
+    void alteredWhitespaceDocClaimIsRejectedWithoutPartialWrites() throws Exception {
+        jdbc.update(
+                "UPDATE product_documents SET extracted_text = ? WHERE id = ?",
+                "앞 문장\n  한글  청구 문구  \n뒤 문장",
+                confirmedDocumentId);
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultWithDocClaim(
+                        request, new FindingPayload.DocClaimPayload("  한글 청구 문구  ")));
+
+        Long analysisId = createAnalysis();
+
+        assertProviderInvalidWithoutFindingWrites(analysisId);
+    }
+
+    @Test
+    @DisplayName("한글과 공백을 보존한 exact doc claim은 pinned 원문의 UTF-8 byte 범위로 저장한다")
+    void koreanWhitespaceExactDocClaimUsesUtf8Offsets() throws Exception {
+        String prefix = "앞 문장\n";
+        String excerpt = "  한글  청구 문구  ";
+        jdbc.update(
+                "UPDATE product_documents SET extracted_text = ? WHERE id = ?",
+                prefix + excerpt + "\n뒤 문장",
+                confirmedDocumentId);
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultWithDocClaim(
+                        request, new FindingPayload.DocClaimPayload(excerpt)));
+
+        Long analysisId = createAnalysis();
+
+        assertThat(jdbc.queryForMap("""
+                SELECT anchor.utf8_start_offset, anchor.utf8_end_offset, anchor.exact_excerpt
+                FROM finding_evidence_anchors anchor
+                JOIN findings finding ON finding.id = anchor.finding_id
+                WHERE finding.analysis_id = ? AND anchor.source_role = 'DOCUMENT_CLAIM'
+                """, analysisId))
+                .containsEntry(
+                        "utf8_start_offset",
+                        (long) prefix.getBytes(StandardCharsets.UTF_8).length)
+                .containsEntry(
+                        "utf8_end_offset",
+                        (long) (prefix + excerpt).getBytes(StandardCharsets.UTF_8).length)
+                .containsEntry("exact_excerpt", excerpt);
+    }
+
+    @Test
+    @DisplayName("doc claim 길이는 UTF-16 길이가 아니라 Unicode code point 400개까지 허용한다")
+    void docClaimLengthUsesUnicodeCodePoints() throws Exception {
+        String excerpt = "😀".repeat(300);
+        jdbc.update(
+                "UPDATE product_documents SET extracted_text = ? WHERE id = ?",
+                excerpt,
+                confirmedDocumentId);
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultWithDocClaim(
+                        request, new FindingPayload.DocClaimPayload(excerpt)));
+
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+    }
+
+    @Test
+    @DisplayName("Unicode code point 400개를 넘는 doc claim은 일부도 저장하지 않는다")
+    void overlongDocClaimIsRejectedWithoutPartialWrites() throws Exception {
+        String excerpt = "😀".repeat(401);
+        jdbc.update(
+                "UPDATE product_documents SET extracted_text = ? WHERE id = ?",
+                excerpt,
+                confirmedDocumentId);
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> resultWithDocClaim(
+                        request, new FindingPayload.DocClaimPayload(excerpt)));
+
+        Long analysisId = createAnalysis();
+
+        assertProviderInvalidWithoutFindingWrites(analysisId);
+    }
+
+    @Test
+    @DisplayName("Provider 호출 뒤 확정 원문이 바뀌면 stale source 결과를 저장하지 않는다")
+    void staleConfirmedSourceIsRejectedWithoutPartialWrites() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    jdbc.update(
+                            "UPDATE product_documents SET extracted_text = ? WHERE id = ?",
+                            "Provider 호출 뒤 변경된 확정 원문",
+                            confirmedDocumentId);
+                    return resultWithDocClaim(
+                            request, new FindingPayload.DocClaimPayload("안정적인 수익률"));
+                });
+
+        Long analysisId = createAnalysis();
+
+        assertProviderInvalidWithoutFindingWrites(analysisId);
+    }
+
+    @Test
+    @DisplayName("Provider 호출 뒤 확정 원문 hash가 바뀌면 결과를 저장하지 않는다")
+    void wrongConfirmedSourceHashIsRejectedWithoutPartialWrites() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    jdbc.update(
+                            "UPDATE product_documents SET checksum = ? WHERE id = ?",
+                            "e".repeat(64),
+                            confirmedDocumentId);
+                    return resultWithDocClaim(
+                            request, new FindingPayload.DocClaimPayload("안정적인 수익률"));
+                });
+
+        Long analysisId = createAnalysis();
+
+        assertProviderInvalidWithoutFindingWrites(analysisId);
+    }
+
+    @Test
     @DisplayName("Provider가 요청에서 선택하지 않은 persona를 반환하면 결과를 저장하지 않는다")
     void unselectedPersonaReferenceIsRejected() throws Exception {
         FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
@@ -1612,6 +1841,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                             List.of(new FindingPayload.EvidenceSpanPayload(
                                     context.chunkId(), context.chunkText())),
                             List.of(),
+                            new FindingPayload.DocClaimPayload("안정적인 수익률"),
                             "선택 persona 범위 안에서만 설명하세요.")));
                 });
 
@@ -1642,6 +1872,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                             List.of(new FindingPayload.EvidenceSpanPayload(
                                     context.chunkId(), context.chunkText())),
                             List.of(),
+                            new FindingPayload.DocClaimPayload("안정적인 수익률"),
                             "persona를 선택해 설명하세요.")));
                 });
 
@@ -1674,6 +1905,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                             List.of(new FindingPayload.EvidenceSpanPayload(
                                     context.chunkId(), context.chunkText())),
                             List.of(),
+                            new FindingPayload.DocClaimPayload("안정적인 수익률"),
                             "중복 없는 persona 범위에서 설명하세요.")));
                 });
 
@@ -2179,6 +2411,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                                     List.of(new FindingPayload.EvidenceSpanPayload(
                                             context.chunkId(), context.chunkText())),
                                     List.of(),
+                                    new FindingPayload.DocClaimPayload("안정적인 수익률"),
                                     "중복 실행하지 않습니다.")));
                 });
         String requestToken = "10000000-0000-0000-0000-000000000004";
@@ -2280,7 +2513,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 SELECT COUNT(*) FROM finding_evidence_anchors anchor
                 JOIN findings finding ON finding.id = anchor.finding_id
                 WHERE finding.analysis_id = ?
-                """, Long.class, analysisId)).isEqualTo(2L);
+                """, Long.class, analysisId)).isEqualTo(4L);
 
         mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
                 .andExpect(status().isOk())
@@ -2436,6 +2669,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                     List.of(new FindingPayload.EvidenceSpanPayload(
                             context.chunkId(), context.chunkText())),
                     List.of(),
+                    new FindingPayload.DocClaimPayload("안정적인 수익률"),
                     "저장되면 안 됩니다.")));
         };
         ReflectionTestUtils.setField(fake, "behavior", staleResult);
@@ -2507,7 +2741,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 JOIN analysis_executions execution ON execution.id = finding.analysis_execution_id
                 WHERE finding.analysis_id = ?
                   AND execution.status = 'SUCCEEDED'
-                """, Long.class, analysisId)).isEqualTo(1L);
+                """, Long.class, analysisId)).isEqualTo(2L);
         List<Map<String, Object>> executions = jdbc.queryForList("""
                 SELECT id, attempt_no, status, provider_risk_score, model_version
                 FROM analysis_executions

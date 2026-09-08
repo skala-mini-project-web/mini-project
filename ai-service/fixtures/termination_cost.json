@@ -6,6 +6,9 @@
     {
       "statement": "중도해지 비용이 수익 정보보다 눈에 띄지 않아 총비용을 오인할 가능성이 있습니다.",
       "severity": "MEDIUM",
+      "docClaim": {
+        "excerpt": "중도해지 시 수수료가 발생할 수 있습니다."
+      },
       "affectedPersonaCodes": [
         "SHORT_TERM_LIQUIDITY"
       ],

@@ -11,6 +11,7 @@ from app.errors import AiServiceError
 from app.fixture_loader import FixtureLoader
 from app.schemas import (
     AnalysisProvider,
+    DocumentClaim,
     EvidenceSpan,
     FindingPayload,
     HealthResponse,
@@ -55,7 +56,11 @@ class ProviderResponseInvalidError(AiServiceError):
 
 
 class RiskAnalysisService:
-    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v17"
+    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v18"
+    MAX_SERIALIZED_PROMPT_BYTES = 100_000
+    OLLAMA_NUM_PREDICT = 4096
+    DOCUMENT_CLAIM_WINDOW_CHARS = 400
+    DOCUMENT_CLAIM_WINDOW_STRIDE = 320
     # 100,000 UTF-8 bytes 한글 prompt ≈ 25k token. qwen2.5 7B KV cache 약 1.9GB.
     DEFAULT_OLLAMA_NUM_CTX = 32768
     FIXTURE_POLICY_RULE_CODES = {
@@ -221,14 +226,20 @@ class RiskAnalysisService:
             "selected opaque option IDs to exact source excerpts. "
             "Never put confirmedText, product text, or known facts into "
             "evidenceSpanOptionIds. Do not cite unknown or unretrieved "
-            "contexts. knownFactIds are separate DOCUMENT_CLAIM provenance. "
-            "When a supplied known fact records product wording containing "
-            "the claim criticized by a finding, cite that actual applicable "
-            "factId. CONFIRMED_DOCUMENT verification confirms the wording and "
-            "source, not the truth or compliance of a marketing claim; citing "
-            "the fact does not endorse the claim. knownFactIds may be empty "
-            "when no supplied known fact contains or applies to the criticized "
-            "claim, even when knownFacts is non-empty. Any selected "
+            "contexts. For every actual finding, docClaimOptionId selects "
+            "exactly one opaque ID from allowedDocClaimOptions, separately "
+            "from policy evidence. It anchors the criticized wording to an "
+            "exact excerpt of the unchanged confirmedText. Never invent or "
+            "alter this ID, and never use a policy evidence option ID for it. "
+            "For a localized omission, select an existing affected passage "
+            "where the omission matters and describe only that local issue; "
+            "do not claim that content is absent globally. Do not fabricate "
+            "a global document claim. Do not author hashes, offsets, revision "
+            "IDs, document IDs, excerpts, or other document anchors. "
+            "knownFactIds are optional related provenance only, never document "
+            "claim anchors. When a supplied known fact is actually related to "
+            "a finding, cite that applicable factId. knownFactIds may be empty "
+            "even when knownFacts is non-empty. Any selected "
             "knownFactIds must be exact applicable factId values supplied in "
             "knownFacts. Never invent, alter, or substitute a fact reference, "
             "and never select the first fact merely because it was supplied. "
@@ -246,9 +257,16 @@ class RiskAnalysisService:
             raise OllamaRequestRejectedError(
                 "The request contains no usable source evidence excerpts."
             )
+        doc_claim_options = self._document_claim_options(request)
         user_payload["allowedEvidenceSpanOptions"] = excerpt_options
+        user_payload["allowedDocClaimOptions"] = doc_claim_options
         serialized_options = json.dumps(
             excerpt_options,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        serialized_doc_claim_options = json.dumps(
+            doc_claim_options,
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -271,18 +289,20 @@ class RiskAnalysisService:
                 "temperature": 0,
                 "seed": 42,
                 "num_ctx": self.ollama_num_ctx,
+                "num_predict": self.OLLAMA_NUM_PREDICT,
             },
         }
         if self.ollama_keep_alive is not None:
             payload["keep_alive"] = self.ollama_keep_alive
 
+        self._validate_serialized_prompt_size(payload)
         generated_json = self._call_ollama(payload)
         try:
             ollama_response = OllamaRiskAnalysisResponse.model_validate_json(
                 generated_json
             )
             response = self._map_ollama_response(
-                ollama_response, excerpt_options
+                ollama_response, excerpt_options, doc_claim_options
             )
             self._validate_grounding(request, response)
         except (ValidationError, TypeError, ValueError):
@@ -318,29 +338,29 @@ class RiskAnalysisService:
                             "the selected options. "
                             "Do not invent, alter, or duplicate option IDs "
                             "within a finding; the same option may be used by "
-                            "different findings. knownFactIds are separate "
-                            "DOCUMENT_CLAIM provenance. When a supplied known "
-                            "fact records product wording containing the claim "
-                            "criticized by a finding, cite that actual "
-                            "applicable factId. CONFIRMED_DOCUMENT verification "
-                            "confirms the wording and source, not the truth or "
-                            "compliance of a marketing claim; citing the fact "
-                            "does not endorse the claim. knownFactIds may be "
-                            "empty when no supplied known fact contains or "
-                            "applies to the criticized claim, even when "
-                            "knownFacts is non-empty. Any selected knownFactIds "
-                            "must be exact applicable factId values from "
-                            "knownFacts. Do not invent, alter, or substitute a "
-                            "fact reference, and never select the first fact "
-                            "merely because it was supplied. The "
-                            "allowed options are "
+                            "different findings. Every actual finding must "
+                            "select exactly one docClaimOptionId from the "
+                            "separate allowed document claim options below. "
+                            "It must identify the exact existing affected "
+                            "passage in confirmedText. For an omission, anchor "
+                            "the local passage where it matters and do not "
+                            "claim global absence. Do not author excerpts, "
+                            "hashes, offsets, revision IDs, or substitute a "
+                            "policy option ID. knownFactIds are optional "
+                            "related provenance and are never document claim "
+                            "anchors. Use only actually related supplied "
+                            "factId values; never invent or default to the "
+                            "first fact. The allowed policy options are "
                             f"{serialized_options}. "
+                            "The allowed document claim options are "
+                            f"{serialized_doc_claim_options}. "
                             "Apply all other original constraints. Return "
                             "only the new JSON."
                         ),
                     },
                 ]
             )
+            self._validate_serialized_prompt_size(payload)
             repaired_json = self._call_ollama(payload)
             try:
                 ollama_response = (
@@ -349,7 +369,7 @@ class RiskAnalysisService:
                     )
                 )
                 response = self._map_ollama_response(
-                    ollama_response, excerpt_options
+                    ollama_response, excerpt_options, doc_claim_options
                 )
                 self._validate_grounding(request, response)
             except (ValidationError, TypeError, ValueError):
@@ -378,6 +398,21 @@ class RiskAnalysisService:
         if value <= 0:
             raise ValueError(f"{name} must be a positive integer.")
         return value
+
+    @classmethod
+    def _validate_serialized_prompt_size(
+        cls,
+        payload: dict[str, Any],
+    ) -> None:
+        serialized = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(serialized.encode("utf-8")) > cls.MAX_SERIALIZED_PROMPT_BYTES:
+            raise OllamaRequestRejectedError(
+                "The serialized Ollama prompt exceeds the allowed size."
+            )
 
     def _call_ollama(self, payload: dict[str, Any]) -> str:
         try:
@@ -454,6 +489,22 @@ class RiskAnalysisService:
         return options
 
     @classmethod
+    def _document_claim_options(
+        cls,
+        request: RiskAnalysisRequest,
+    ) -> list[dict[str, str]]:
+        text = request.confirmed_text
+        return [
+            {
+                "optionId": f"doc-claim-option-{index + 1}",
+                "excerpt": text[start : start + cls.DOCUMENT_CLAIM_WINDOW_CHARS],
+            }
+            for index, start in enumerate(
+                range(0, len(text), cls.DOCUMENT_CLAIM_WINDOW_STRIDE)
+            )
+        ]
+
+    @classmethod
     def _bounded_repair_excerpts(
         cls,
         source: str,
@@ -500,9 +551,13 @@ class RiskAnalysisService:
     def _map_ollama_response(
         response: OllamaRiskAnalysisResponse,
         excerpt_options: list[dict[str, Any]],
+        doc_claim_options: list[dict[str, str]],
     ) -> RiskAnalysisResponse:
         options_by_id = {
             option["optionId"]: option for option in excerpt_options
+        }
+        doc_claim_options_by_id = {
+            option["optionId"]: option for option in doc_claim_options
         }
         mapped_findings: list[FindingPayload] = []
         for finding in response.findings:
@@ -526,12 +581,22 @@ class RiskAnalysisService:
             selected_chunk_ids = list(
                 dict.fromkeys(option["chunkId"] for option in selected_options)
             )
+            doc_claim_option = doc_claim_options_by_id.get(
+                finding.doc_claim_option_id
+            )
+            if doc_claim_option is None:
+                raise ValueError(
+                    "Finding contains an unknown document claim option id."
+                )
 
             mapped_findings.append(
                 FindingPayload(
                     statement=finding.statement,
                     severity=finding.severity,
                     policy_rule_code=finding.policy_rule_code,
+                    doc_claim=DocumentClaim(
+                        excerpt=doc_claim_option["excerpt"]
+                    ),
                     affected_persona_codes=finding.affected_persona_codes,
                     retrieved_context_chunk_ids=selected_chunk_ids,
                     evidence_spans=[
@@ -582,6 +647,18 @@ class RiskAnalysisService:
         }
 
         for finding in response.findings:
+            doc_claim_excerpt = finding.doc_claim.excerpt
+            if (
+                RiskAnalysisService._overlapping_occurrence_count(
+                    request.confirmed_text,
+                    doc_claim_excerpt,
+                )
+                != 1
+            ):
+                raise ValueError(
+                    "Document claim must be an exact unique confirmedText "
+                    "excerpt."
+                )
             if finding.policy_rule_code not in selected_rule_codes:
                 raise ValueError("Finding contains an unselected policy rule.")
             if not set(finding.affected_persona_codes) <= selected_personas:
@@ -617,6 +694,19 @@ class RiskAnalysisService:
             if spanned_chunk_ids != cited_chunk_ids:
                 raise ValueError("A cited context is missing an evidence span.")
         RiskAnalysisService._validate_fact_references(request, response)
+
+    @staticmethod
+    def _overlapping_occurrence_count(text: str, excerpt: str) -> int:
+        count = 0
+        start = 0
+        while True:
+            occurrence = text.find(excerpt, start)
+            if occurrence < 0:
+                return count
+            count += 1
+            if count > 1:
+                return count
+            start = occurrence + 1
 
     @staticmethod
     def _validate_fact_references(

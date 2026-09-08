@@ -15,7 +15,6 @@ import {
 } from './scenarios.js'
 import { orchestrateMockAnalysis } from '../../lib/analyze.js'
 import { matchesQuery } from '../../lib/hangul.js'
-import { productStatusKey } from '../../lib/format.js'
 
 const SEV_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1 }
 const clone = (v) => JSON.parse(JSON.stringify(v))
@@ -161,21 +160,39 @@ function productForReview(review) {
   return productForAnalysis(analysis)
 }
 function latestAnalysisForProduct(productId) {
+  const documentIds = new Set(
+    store.documents
+      .filter((document) => sameId(document.productId, productId))
+      .map((document) => String(document.documentId)),
+  )
   return store.analyses
-    .filter((analysis) => sameId(analysis.productId, productId))
+    .filter((analysis) => documentIds.has(String(analysis.productDocumentId)))
     .reduce((latest, analysis) => {
       if (!latest) return analysis
-      const createdAt = String(analysis.createdAt || '')
-      const latestCreatedAt = String(latest.createdAt || '')
-      if (createdAt !== latestCreatedAt) return createdAt > latestCreatedAt ? analysis : latest
       const analysisId = String(analysis.analysisId)
       const latestAnalysisId = String(latest.analysisId)
-      const bothNumeric = /^\d+$/.test(analysisId) && /^\d+$/.test(latestAnalysisId)
-      const analysisIsLater = bothNumeric
-        ? Number(analysisId) > Number(latestAnalysisId)
-        : analysisId > latestAnalysisId
+      const analysisNumeric = /^\d+$/.test(analysisId)
+      const latestNumeric = /^\d+$/.test(latestAnalysisId)
+      const analysisIsLater = analysisNumeric && latestNumeric
+        ? BigInt(analysisId) > BigInt(latestAnalysisId)
+        : analysisNumeric !== latestNumeric
+          ? analysisNumeric
+          : analysisId > latestAnalysisId
       return analysisIsLater ? analysis : latest
     }, null)
+}
+function productLifecycleStatus(productId, latestAnalysis = latestAnalysisForProduct(productId)) {
+  if (!latestAnalysis) return 'DRAFT'
+  const analysisStatus = viewAnalysis(latestAnalysis).status
+  if (['CREATED', 'RUNNING'].includes(analysisStatus)) return 'RUNNING'
+
+  const review = store.reviews.find((item) => sameId(item.analysisId, latestAnalysis.analysisId))
+  if (review?.status === 'APPROVED') return 'APPROVED'
+  if (review?.status === 'REJECTED') return 'NEEDS_FIX'
+  if (review?.status === 'PENDING' || analysisStatus === 'IN_REVIEW') return 'IN_REVIEW'
+  if (analysisStatus === 'COMPLETED') return 'ANALYZED'
+  if (analysisStatus === 'FAILED') return 'NEEDS_FIX'
+  return null
 }
 function requireLatestAnalysis(analysis) {
   const latest = analysis && latestAnalysisForProduct(analysis.productId)
@@ -512,11 +529,11 @@ function maxSeverity(findings) {
 }
 function productSummary(p) {
   const docs = store.documents.filter((d) => d.productId === p.productId)
-  const analyses = store.analyses.filter((a) => a.productId === p.productId)
   const latestDoc = docs[docs.length - 1]
-  const latestAnalysis = analyses[analyses.length - 1]
+  const latestAnalysis = latestAnalysisForProduct(p.productId)
   return {
     ...clone(p),
+    status: productLifecycleStatus(p.productId, latestAnalysis),
     latestDocument: latestDoc ? { documentId: latestDoc.documentId, status: viewDocument(latestDoc).extractStatus, confirmed: latestDoc.confirmed } : null,
     latestAnalysis: latestAnalysis ? { analysisId: latestAnalysis.analysisId, status: viewAnalysis(latestAnalysis).status } : null,
   }
@@ -613,7 +630,7 @@ export const mockServer = {
     const filtered = authorized
       .map((product, index) => {
         const summary = productSummary(product)
-        return { product: { ...summary, status: productStatusKey(summary) }, index }
+        return { product: summary, index }
       })
       .filter(({ product }) => {
         if (params.productType && product.productType !== params.productType) return false
@@ -1034,8 +1051,6 @@ export const mockServer = {
     review.decidedAt = iso()
     review.selectedFindingIds = selected
     review.riskPatternIds = riskPatternIds
-    const product = store.products.find((p) => sameId(p.productId, analysis?.productId))
-    if (product) product.status = body.status === 'APPROVED' ? 'APPROVED' : 'NEEDS_FIX'
     pushAudit('REVIEW', review.reviewId, body.status === 'APPROVED' ? 'REVIEW_APPROVED' : 'REVIEW_REJECTED', user.id)
     return { reviewId, status: review.status, reviewerId: user.id, riskPatternIds, decidedAt: review.decidedAt }
   },

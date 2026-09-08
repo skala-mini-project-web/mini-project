@@ -12,6 +12,7 @@ const PDF_PATH = fileURLToPath(new URL('../../data/demo-corpus/documents/product
 const MALFORMED_PDF_PATH = fileURLToPath(new URL('../../data/demo-corpus/documents/product/MALFORMED-SYNTHETIC.pdf', import.meta.url))
 const EXPECTED_PDF_SHA256 = 'f7d1b5887dc9e55b58ac7c244e65c23daeeac7be6d017d23e61ec0e4804be0c9'
 const CANONICAL_TEXT = '매월 수익을 보장하는 안정형 선택'
+const EXPECTED_SCORE_POLICY_VERSION = '1.1.0'
 const REQUEST_TIMEOUT_MS = 8_000
 const UI_TIMEOUT_MS = 15_000
 const EXTRACTION_TIMEOUT_MS = 120_000
@@ -369,7 +370,7 @@ try {
     scoredAnalysisResult.score.value >= 0 && scoredAnalysisResult.score.value <= 100,
     `Deterministic score value is outside 0–100: ${scoredAnalysisResult.score.value}`,
   )
-  assert.equal(scoredAnalysisResult.score.policyVersion, '1.1.0', 'Deterministic score used an unexpected policy version')
+  assert.equal(scoredAnalysisResult.score.policyVersion, EXPECTED_SCORE_POLICY_VERSION, 'Deterministic score used an unexpected policy version')
   assert(
     Array.isArray(scoredAnalysisResult.score.ledgerEntries) && scoredAnalysisResult.score.ledgerEntries.length > 0,
     'SCORED run did not include ledger entries',
@@ -380,7 +381,7 @@ try {
     'Analysis result exposed the raw provider riskScore instead of the deterministic score run',
   )
 
-  await pmPage.getByText(/^SCORED · Policy v1 \(1\.0\.0\)$/).waitFor({ state: 'visible', timeout: UI_TIMEOUT_MS })
+  await pmPage.getByText(`SCORED · Policy v1 (${EXPECTED_SCORE_POLICY_VERSION})`, { exact: true }).waitFor({ state: 'visible', timeout: UI_TIMEOUT_MS })
   await pmPage.getByRole('heading', { name: '점수 산출 원장', exact: true }).waitFor({ timeout: UI_TIMEOUT_MS })
   const scoreLedgerRows = pmPage.locator('.score-ledger .ledger-entry')
   assert.equal(
@@ -407,7 +408,10 @@ try {
   }
 
   await reviewerPage.waitForURL('**/risk-library', { timeout: UI_TIMEOUT_MS })
-  const riskRow = reviewerPage.locator('li.row').filter({ hasText: /초안|DRAFT/ }).first()
+  const riskPatternSuffix = new RegExp(` · ${String(riskPatternId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)
+  const riskRow = reviewerPage.locator('li.row')
+    .filter({ has: reviewerPage.locator('.trace').filter({ hasText: riskPatternSuffix }) })
+    .filter({ hasText: /초안|DRAFT/ })
   await riskRow.waitFor({ state: 'visible', timeout: UI_TIMEOUT_MS })
   await riskRow.click()
   const riskDialog = reviewerPage.getByRole('dialog').filter({ hasText: String(riskPatternId) })

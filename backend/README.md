@@ -33,7 +33,9 @@ node frontend/scripts/real-e2e-preflight.mjs
 - 청크 규칙은 `korean-boundary-v1-1200-200`: 최대 1,200 code point, 200 overlap입니다.
 - 청크, 원문 SHA-256, 청크 SHA-256, 청크 버전, 모델명과 vector는 `evidence_document_chunks`에 버전별로 보존됩니다.
 - 분석 질의는 확정된 상품 텍스트와 선택 persona/rule/근거 ID에서 만들며, `PgVectorEvidenceRetriever`가 코사인 거리로 최대 6개를 반환합니다.
-- AI 서비스에는 rank가 매겨진 검색 청크만 전달합니다. 모델은 Finding마다 전달받은 불변 검색 청크의 `chunkId`를 선택하며 원문 인용을 생성하거나 복사하지 않습니다. 백엔드는 선택된 각 ID가 AI 서비스로 보낸 바로 그 검색 스냅샷에 속하는지 검증하고, 해당 스냅샷의 `evidenceDocumentId`와 정확한 `chunkText`를 Finding 근거로 영속합니다. 텍스트 보정, 추측, fallback은 없습니다.
+- AI 서비스에는 rank가 매겨진 검색 청크만 전달합니다. `ollama-rag-grounded-v18` 모델은 Finding마다 정책 근거용 `evidenceSpanOptionIds`와 확정 상품 원문용 `docClaimOptionId`를 서로 다른 option 집합에서 선택합니다. AI 서비스가 신뢰된 option table로 이를 공개 `evidenceSpans`와 `docClaim: {"excerpt": "..."}`에 매핑하고 검증하며, Spring 백엔드도 다시 검증합니다. 텍스트 보정, 추측, fallback은 없습니다.
+- `docClaim` option은 검색 청크나 known fact가 아니라 `confirmedText` 전체를 최대 400 Unicode code point, stride 320의 겹치는 window로 나눈 것입니다. 각 Finding의 `docClaim.excerpt`는 nonnull/nonblank이고 400 code point 이하여야 하며, 공백까지 그대로인 exact substring이 확정 원문에 겹치는 출현 기준 정확히 한 번 있어야 합니다.
+- Spring은 분석에 고정된 상품 문서 revision 원문에서 명시적 `docClaim` 범위를 다시 찾아 `DOCUMENT_CLAIM` anchor로 저장합니다. 첫 `knownFactId` 또는 다른 known fact에서 문서 claim을 추론하지 않습니다. `knownFactIds`는 선택적 관련 provenance일 뿐이며 값이 있어도 `docClaim` 요구사항을 대신하지 못합니다.
 - 분석 시점의 질의 해시, 검색/모델 버전, 시각, rank, similarity, 청크 본문은 `analysis_rag_runs`와 `analysis_rag_retrieval_snapshots`에 불변 스냅샷으로 남습니다.
 
 분석은 비동기입니다. `POST /api/analyses`의 ID를 폴링한 뒤 완료된 `GET /api/analyses/{analysisId}/result`에서 `retrievalTrace`를 확인합니다. 응답 필드는 다음과 같습니다.
@@ -76,7 +78,7 @@ docker compose up --build -d # Flyway 및 합성 seed 재생성
 
 - PDF OCR·페이지 미리보기는 이미지 할당 전에 렌더 크기 검사. 40,000,000픽셀 초과 또는 유효하지 않은 페이지 치수 거부. 일반 A4 300DPI는 허용하며 자동 축소하지 않음
 - 배치 소속 문서는 단건 `POST /api/documents/{documentId}/retry`에서 `409 DOCUMENT_NOT_RETRYABLE` 반환. 배치의 자동 재시도·lease/fence 경로만 추출 소유권 유지
-- OCR worker는 페이지 처리 한 건만 동시 실행. 추가 요청은 대기열 누적 대신 `503 OCR_BUSY`와 `retryable: true` 반환. 실제 동기 OCR 처리는 API 이벤트 루프 밖에서 실행
+- OCR worker는 인증·요청 크기 검사 후 본문 파싱 전에 한 건만 수락. 추가 요청은 본문을 읽지 않고 `503 OCR_BUSY`와 `retryable: true` 반환. 실행 전 취소는 예약을 해제하고 늦은 worker 시작을 차단하며, 실행 후 취소는 실제 동기 OCR 종료까지 permit 유지. OCR 처리는 API 이벤트 루프 밖에서 실행
 - 5분 이상 오래된 CREATED·RUNNING 분석은 현재 token과 상태를 잠금 안에서 재검증한 뒤 재시도 가능한 FAILED로 전이. 없는 실행 기록을 만들어내거나 자동 재실행하지 않으며, 개별 복구 실패는 다음 항목 처리를 막지 않음
 - 분석 이벤트에 수락 당시 execution token 포함. 이전 요청의 지연 이벤트가 새 재시도를 이전 scenario로 실행하지 못하도록 차단
 - 단건 문서는 수락 token·5분 dispatch lease를 저장하고, 실행 시작 시 새 worker token·10분 lease로 회전. 성공·실패·추출 이력 저장 전에 token, 만료 시각, 배치 소속 여부를 잠금 안에서 재검증. 만료된 수락·실행은 재시도 가능한 FAILED로만 복구하며 수동 재시도 의미 유지
@@ -87,10 +89,12 @@ docker compose up --build -d # Flyway 및 합성 seed 재생성
 ## 분석 결과와 점수 계약
 
 - `findings`는 필수 배열이며 0~20건 허용. 누락·null·상한 초과·일부 항목의 잘못된 인용은 전체 응답 거부. 유효하지 않은 결과를 빈 결과로 대체하지 않음
-- Provider `riskScore`는 nullable 진단 이력. 빈 결과는 반드시 null이며 공개 점수나 위험 없음 판정으로 사용하지 않음. V26은 성공 실행의 nullable provenance만 허용하고 기존 불변 이력 유지
+- 각 Finding은 정책 근거 `retrievedContextChunkIds`/`evidenceSpans`와 별도로 확정 문서의 비판 대상 문구를 가리키는 필수 `docClaim`을 가짐. HTTP provider와 비동기 Job 양쪽에서 선택 rule/persona 부분집합, exact policy evidence, exact-unique document claim을 검증
+- Provider `riskScore`는 nullable 진단 이력. 빈 결과는 반드시 null이며 공개 점수나 위험 없음 판정으로 사용하지 않음. V26은 성공 실행의 nullable provenance만 허용하고 기존 불변 이력 유지. 새 CHECK를 `NOT VALID`로 추가한 V26이 커밋된 뒤 별도 V27 트랜잭션에서 기존 행 검증을 수행하여 테이블 전체 검사 중 배타 잠금 유지 방지
 - 빈 실행의 검토 승인 허용. 승인 전 `PENDING_REVIEW`, 승인 뒤 `NOT_SCORED / NO_APPROVED_FINDING`, 숫자는 null. Finding 결정·Risk Pattern·점수 원장 항목을 만들어내지 않음
 - 점수 정책 1.1.0: 동일 문서 revision·원문 범위·규칙의 중복 지적은 한 건, 서로 다른 규칙은 같은 문장에서도 별개 위험. 원본 Finding과 검토 이력 보존
 - 기존 규칙별 가중치와 noisy-OR 합산 유지. 안정성·보장 표현 규칙의 기여도 100%에 따른 종합 점수 포화도 유지하며, 이번 수정은 가중치 보정이나 실제 위험 확률의 검증이 아님
+- 이 claim root 수정은 기존 `finding_evidence_anchors` 구조를 그대로 사용하므로 새 DB migration이 없음. 기존 분석/Finding/anchor/score row를 자동 보정하거나 claim·점수를 replay하지 않으며, 새 provider 결과부터 명시적 `docClaim` 계약을 적용
 
 ## 검증 분류와 제한
 

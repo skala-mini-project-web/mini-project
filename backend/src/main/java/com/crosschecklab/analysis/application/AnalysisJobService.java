@@ -83,6 +83,7 @@ public class AnalysisJobService {
     private static final int MAX_PERSONA_CODES = 12;
     private static final int MAX_RETRIEVED_CONTEXT_CHUNK_IDS = 20;
     private static final int MAX_KNOWN_FACT_IDS = 50;
+    private static final int MAX_DOC_CLAIM_CODE_POINTS = 400;
     private static final int MAX_EVIDENCE_SPANS = 60;
 
     private final AnalysisRepository analysisRepository;
@@ -653,8 +654,20 @@ public class AnalysisJobService {
                     throw invalidProviderResponse("요청에 없는 사실 인용: " + factId);
                 }
             }
+            validateDocClaim(request.confirmedText(), finding.docClaim());
             validateEvidenceSpanReferences(finding, citedChunkIds);
         }
+    }
+
+    private void validateDocClaim(String confirmedText, FindingPayload.DocClaimPayload docClaim) {
+        if (docClaim == null || docClaim.excerpt() == null || docClaim.excerpt().isBlank()) {
+            throw invalidProviderResponse("finding 에 docClaim.excerpt 가 없음");
+        }
+        String excerpt = docClaim.excerpt();
+        if (excerpt.codePointCount(0, excerpt.length()) > MAX_DOC_CLAIM_CODE_POINTS) {
+            throw invalidProviderResponse("finding.docClaim.excerpt 길이 초과");
+        }
+        uniqueUtf8Range(confirmedText, excerpt, "confirmedText");
     }
 
     private void validateEvidenceSpanReferences(FindingPayload finding, Set<Long> citedChunkIds) {
@@ -698,10 +711,17 @@ public class AnalysisJobService {
     }
 
     private void validateAnchorPlan(AnalysisResult result, Job job) {
+        if (!Objects.equals(job.request().confirmedText(), job.documentSnapshot().text())) {
+            throw invalidProviderResponse("Provider 요청 원문이 pinned document snapshot 과 일치하지 않음");
+        }
         Map<Long, RagRetrievedChunk> contextsByChunkId = job.retrievedChunks().stream()
                 .collect(Collectors.toMap(RagRetrievedChunk::chunkId, context -> context));
 
         for (FindingPayload finding : result.findings()) {
+            uniqueUtf8Range(
+                    job.documentSnapshot().text(),
+                    finding.docClaim().excerpt(),
+                    "pinned document snapshot");
             for (FindingPayload.EvidenceSpanPayload span : finding.evidenceSpans()) {
                 RagRetrievedChunk context = contextsByChunkId.get(span.chunkId());
                 if (context == null || !finding.retrievedContextChunkIds().contains(span.chunkId())) {
@@ -833,24 +853,17 @@ public class AnalysisJobService {
             Map<Long, RagRetrievedChunk> contextsByChunkId
     ) {
         List<AnchorPersistencePlan> anchors = new ArrayList<>();
-        Map<Long, String> factsById = job.request().knownFacts().stream()
-                .collect(Collectors.toMap(
-                        AnalysisRequest.KnownFactPayload::factId,
-                        AnalysisRequest.KnownFactPayload::text));
-        for (Long factId : payload.knownFactIds()) {
-            String excerpt = factsById.get(factId);
-            Utf8Range range = uniqueUtf8RangeIfPresent(job.documentSnapshot().text(), excerpt);
-            if (range != null) {
-                anchors.add(AnchorPersistencePlan.documentClaim(
-                        finding,
-                        job.documentSnapshot().documentId(),
-                        sourceRevision.getId(),
-                        sourceRevision.getSourceHash(),
-                        TEXT_LAYER_PAGE,
-                        range,
-                        excerpt));
-            }
-        }
+        String claimExcerpt = payload.docClaim().excerpt();
+        Utf8Range claimRange = uniqueUtf8Range(
+                job.documentSnapshot().text(), claimExcerpt, "pinned document snapshot");
+        anchors.add(AnchorPersistencePlan.documentClaim(
+                finding,
+                job.documentSnapshot().documentId(),
+                sourceRevision.getId(),
+                sourceRevision.getSourceHash(),
+                TEXT_LAYER_PAGE,
+                claimRange,
+                claimExcerpt));
         for (FindingPayload.EvidenceSpanPayload span : payload.evidenceSpans()) {
             RagRetrievedChunk context = contextsByChunkId.get(span.chunkId());
             if (context == null || !payload.retrievedContextChunkIds().contains(span.chunkId())) {

@@ -165,7 +165,9 @@ docker compose ps
 
 - Compose container는 기본적으로 `http://host.docker.internal:11434`의 host Ollama에 연결
 - `.env.example`의 `AI_SERVICE_INTERNAL_TOKEN`은 로컬 합성 기본값이며 운영 secret이 아님
-- 메모리 상한: backend 2g(heap 60%)·ai-service 512m·ocr-worker 768m. 모델 context는 `OLLAMA_NUM_CTX`(기본 32768, KV cache 약 1.9GB), 모델 상주 시간은 `OLLAMA_KEEP_ALIVE`로 조정. 다른 작업과 같이 돌릴 때는 `OLLAMA_NUM_CTX=8192`, `OLLAMA_KEEP_ALIVE=1m`
+- 컨테이너 메모리 상한: backend 2g(heap 60%)·ai-service 512m·ocr-worker 768m. 이 상한은 host Ollama의 메모리를 제한하지 않음
+- 모델 context는 `OLLAMA_NUM_CTX`(기본 32768), 모델 상주 시간은 `OLLAMA_KEEP_ALIVE`로 조정. KV cache 약 1.9GB는 기본 Qwen 모델과 cache 형식에 따른 추정값이며, 모델 가중치·embedding 모델·실행 버퍼를 포함한 host 메모리 실측 필요
+- 작은 입력만 처리할 때 `OLLAMA_NUM_CTX=8192`, `OLLAMA_KEEP_ALIVE=1m`로 자원 사용을 줄일 수 있으나 최대 길이 문서 처리를 보장하지 않음. 프롬프트의 100,000 UTF-8 bytes 제한은 정확한 토큰 수나 context 적합성 보장이 아님
 
 ### 3. 접속과 상태 확인
 

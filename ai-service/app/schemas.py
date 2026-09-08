@@ -131,10 +131,9 @@ class RiskAnalysisRequest(ApiModel):
     @field_validator("confirmed_text")
     @classmethod
     def confirmed_text_must_not_be_blank(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
+        if not value.strip():
             raise ValueError("confirmedText must not be blank")
-        return stripped
+        return value
 
     @field_validator("persona_codes", "rule_codes")
     @classmethod
@@ -231,10 +230,22 @@ class EvidenceSpan(ApiModel):
         return value
 
 
+class DocumentClaim(ApiModel):
+    excerpt: str = Field(min_length=1, max_length=400)
+
+    @field_validator("excerpt")
+    @classmethod
+    def excerpt_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("document claim excerpt must not be blank")
+        return value
+
+
 class FindingPayload(ApiModel):
     statement: str = Field(min_length=1, max_length=1000)
     severity: Severity
     policy_rule_code: RedTeamRuleCode
+    doc_claim: DocumentClaim
     affected_persona_codes: list[PersonaCode] = Field(
         min_length=1, max_length=12
     )
@@ -324,6 +335,7 @@ class OllamaFindingPayload(ApiModel):
     statement: str = Field(min_length=1, max_length=1000)
     severity: Severity
     policy_rule_code: RedTeamRuleCode
+    doc_claim_option_id: str = Field(min_length=1)
     affected_persona_codes: list[PersonaCode] = Field(
         min_length=1, max_length=12
     )
@@ -340,6 +352,13 @@ class OllamaFindingPayload(ApiModel):
     def statement_must_not_be_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("finding statement must not be blank")
+        return value
+
+    @field_validator("doc_claim_option_id")
+    @classmethod
+    def doc_claim_option_id_must_be_nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("document claim option id must not be blank")
         return value
 
     @field_validator("affected_persona_codes")
