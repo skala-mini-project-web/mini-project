@@ -12,6 +12,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.crosschecklab.analysis.application.AnalysisJobService;
+import com.crosschecklab.analysis.application.AnalysisRequestedEvent;
 import com.crosschecklab.analysis.application.EvidenceRiskScorePolicyV1;
 import com.crosschecklab.analysis.application.EvidenceRiskScoreService;
 import com.crosschecklab.analysis.provider.RiskAnalysisProvider;
@@ -121,8 +123,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
         @Bean
         @Primary
-        EvidenceChunkIndexer testEvidenceChunkIndexer(JdbcTemplate jdbcTemplate) {
-            return new TestEvidenceChunkIndexer(jdbcTemplate);
+        EvidenceChunkIndexer testEvidenceChunkIndexer(JdbcTemplate jdbcTemplate,
+                org.springframework.transaction.PlatformTransactionManager transactionManager) {
+            return new TestEvidenceChunkIndexer(jdbcTemplate, transactionManager);
         }
 
         @Bean
@@ -136,13 +139,16 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
         private final JdbcTemplate jdbcTemplate;
 
-        TestEvidenceChunkIndexer(JdbcTemplate jdbcTemplate) {
-            super(jdbcTemplate, null);
+        TestEvidenceChunkIndexer(JdbcTemplate jdbcTemplate,
+                org.springframework.transaction.PlatformTransactionManager transactionManager) {
+            super(jdbcTemplate, null, transactionManager);
             this.jdbcTemplate = jdbcTemplate;
         }
 
         @Override
         public IndexingResult indexSelected(Collection<Long> selectedEvidenceDocumentIds) {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isActualTransactionActive()).isFalse();
             List<Long> selectedIds = normalizedSelectedIds(selectedEvidenceDocumentIds);
             for (Long evidenceDocumentId : selectedIds) {
                 String chunkText = testContext(evidenceDocumentId);
@@ -190,6 +196,8 @@ class AnalysisApiTest extends IntegrationTestSupport {
         @Override
         public List<RagRetrievedChunk> retrieve(
                 String query, Collection<Long> selectedEvidenceDocumentIds) {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isActualTransactionActive()).isFalse();
             List<Long> selectedIds = normalizedSelectedIds(selectedEvidenceDocumentIds);
             List<RagRetrievedChunk> contexts = new java.util.ArrayList<>();
             for (int index = 0; index < selectedIds.size() && index < TOP_K; index++) {
@@ -272,6 +280,9 @@ class AnalysisApiTest extends IntegrationTestSupport {
 
     @Autowired
     private EvidenceRiskScoreService evidenceRiskScoreService;
+
+    @Autowired
+    private AnalysisJobService analysisJobService;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -394,6 +405,26 @@ class AnalysisApiTest extends IntegrationTestSupport {
         return objectMapper.readTree(body).get("analysisId").asLong();
     }
 
+    private Long insertCreatedAnalysis(String executionToken, OffsetDateTime updatedAt) {
+        AtomicReference<Long> analysisId = new AtomicReference<>();
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            Analysis analysis = Analysis.create(
+                    confirmedDocumentId,
+                    1L,
+                    new LinkedHashSet<>(List.of(6L, 7L)),
+                    new LinkedHashSet<>(List.of(1L, 2L)),
+                    sha256("created-analysis-fixture:" + executionToken));
+            analysisRepository.saveAndFlush(analysis);
+            analysisId.set(analysis.getId());
+        });
+        jdbc.update("""
+                UPDATE analyses
+                SET execution_token = ?, updated_at = ?
+                WHERE id = ?
+                """, executionToken, updatedAt, analysisId.get());
+        return analysisId.get();
+    }
+
     private Long createReview(Long analysisId) throws Exception {
         String body = mockMvc.perform(asPm(post("/api/reviews")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -510,7 +541,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 "검증된 사실을 인용한 분석 결과입니다.",
                 Severity.HIGH,
                 RedTeamRuleCode.RETURN_FRAMING,
-                List.of(),
+                DEFAULT_PERSONA_CODES,
                 List.of(context.chunkId()),
                 List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText())),
                 List.of(factId),
@@ -523,11 +554,44 @@ class AnalysisApiTest extends IntegrationTestSupport {
                 "검색된 근거 청크를 인용한 분석 결과입니다.",
                 Severity.HIGH,
                 RedTeamRuleCode.RETURN_FRAMING,
-                List.of(),
+                DEFAULT_PERSONA_CODES,
                 chunkIds,
                 spans,
                 List.of(),
                 "검색된 근거를 기준으로 설명하세요.")));
+    }
+
+    private AnalysisResult duplicateClaimResult(
+            AnalysisRequest request,
+            Long factId,
+            boolean reverseOrder
+    ) {
+        AnalysisRequest.RetrievedContextPayload context = request.retrievedContexts().getFirst();
+        FindingPayload concise = new FindingPayload(
+                "비용이 누락되었습니다.",
+                Severity.LOW,
+                RedTeamRuleCode.COST_OMISSION,
+                List.of(PersonaCode.LIMITED_PRODUCT_FAMILIARITY),
+                List.of(context.chunkId()),
+                List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText())),
+                List.of(factId),
+                "비용을 명시하세요.");
+        FindingPayload paraphrase = new FindingPayload(
+                "동일한 문서 주장에 관한 비용 설명이 충분하지 않습니다.",
+                Severity.HIGH,
+                RedTeamRuleCode.COST_OMISSION,
+                List.of(
+                        PersonaCode.LOSS_RECOVERY_PRESSURE,
+                        PersonaCode.LIMITED_PRODUCT_FAMILIARITY),
+                List.of(context.chunkId()),
+                List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText())),
+                List.of(factId),
+                "같은 비용을 명확히 설명하세요.");
+        return new AnalysisResult(
+                99,
+                "duplicate-claim-model",
+                "duplicate-claim-prompt",
+                reverseOrder ? List.of(paraphrase, concise) : List.of(concise, paraphrase));
     }
 
     private void useAnchoredDefaultResult() {
@@ -668,6 +732,50 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("Finding이 없는 clean provider 결과는 null provenance 점수로 완료되고 검토 대기한다")
+    void zeroFindingsCompletePendingReviewWithoutFakeProviderScore() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request ->
+                        new AnalysisResult(null, "clean-model", "clean-prompt", List.of()));
+
+        Long analysisId = createAnalysis();
+        Long executionId = jdbc.queryForObject(
+                "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
+                Long.class,
+                analysisId);
+
+        assertThat(jdbc.queryForMap("""
+                SELECT status, provider_risk_score, model_version, prompt_version
+                FROM analysis_executions
+                WHERE id = ?
+                """, executionId))
+                .containsEntry("status", "SUCCEEDED")
+                .containsEntry("provider_risk_score", null)
+                .containsEntry("model_version", "clean-model")
+                .containsEntry("prompt_version", "clean-prompt");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_execution_id = ?",
+                Long.class,
+                executionId)).isZero();
+        assertThat(jdbc.queryForMap("""
+                SELECT state, policy_version, score_value, not_scored_reason
+                FROM risk_score_runs
+                WHERE analysis_execution_id = ?
+                """, executionId))
+                .containsEntry("state", "PENDING_REVIEW")
+                .containsEntry("policy_version", EvidenceRiskScorePolicyV1.VERSION)
+                .containsEntry("score_value", null)
+                .containsEntry("not_scored_reason", null);
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.riskScore").doesNotExist())
+                .andExpect(jsonPath("$.score.state").value("PENDING_REVIEW"))
+                .andExpect(jsonPath("$.score.value").isEmpty())
+                .andExpect(jsonPath("$.findings").isEmpty());
+    }
+
+    @Test
     @DisplayName("#85: 여러 policy anchor의 입력 순서와 무관하게 점수와 canonical ledger anchor를 결정한다")
     void approvedAnchoredFindingCreatesIdempotentDeterministicScore() throws Exception {
         Long factId = confirmFact("정책에 비추어 검토할 확정 문서 주장", "VERIFIED");
@@ -684,7 +792,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                                     "검증된 사실을 인용한 분석 결과입니다.",
                                     Severity.HIGH,
                                     RedTeamRuleCode.RETURN_FRAMING,
-                                    List.of(),
+                                    DEFAULT_PERSONA_CODES,
                                     List.of(second.chunkId(), first.chunkId()),
                                     List.of(
                                             new FindingPayload.EvidenceSpanPayload(
@@ -804,8 +912,146 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("같은 source claim과 rule의 중복·paraphrase는 Finding을 보존하되 한 번만 점수화한다")
+    void duplicateSameClaimAndRuleCountsOnceRegardlessOfFindingOrder() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+
+        List<Long> analysisIds = new java.util.ArrayList<>();
+        for (boolean reverseOrder : List.of(false, true)) {
+            Long documentId = insertDocument(true);
+            Long factId = confirmFact(
+                    documentId,
+                    "총비용은 상품 설명에서 명확히 고지되어야 합니다.",
+                    "VERIFIED");
+            ReflectionTestUtils.setField(fake, "behavior",
+                    (Function<AnalysisRequest, AnalysisResult>) request ->
+                            duplicateClaimResult(request, factId, reverseOrder));
+            Long analysisId = createAnalysis(
+                    documentId,
+                    List.of(1),
+                    DEFAULT_PERSONA_IDS,
+                    null);
+            List<Long> findingIds = jdbc.queryForList("""
+                    SELECT id FROM findings
+                    WHERE analysis_id = ?
+                    ORDER BY id
+                    """, Long.class, analysisId);
+            assertThat(findingIds).hasSize(2);
+            decideReview(createReview(analysisId), "APPROVED", findingIds);
+            analysisIds.add(analysisId);
+
+            Long executionId = jdbc.queryForObject(
+                    "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
+                    Long.class,
+                    analysisId);
+            Map<String, Object> run = jdbc.queryForMap("""
+                    SELECT id, score_value FROM risk_score_runs
+                    WHERE analysis_execution_id = ? AND state = 'SCORED'
+                    """, executionId);
+            assertThat(run).containsEntry("score_value", 64);
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM risk_score_ledger_entries
+                    WHERE risk_score_run_id = ?
+                    """, Long.class, run.get("id"))).isEqualTo(1L);
+            assertThat(jdbc.queryForObject("""
+                    SELECT finding_revision_id FROM risk_score_ledger_entries
+                    WHERE risk_score_run_id = ?
+                    """, Long.class, run.get("id"))).isEqualTo(findingIds.getFirst());
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM finding_review_decisions decision
+                    JOIN reviews review ON review.id = decision.review_id
+                    WHERE review.analysis_id = ?
+                      AND decision.decision = 'APPROVED'
+                    """, Long.class, analysisId)).isEqualTo(2L);
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM finding_evidence_anchors anchor
+                    JOIN findings finding ON finding.id = anchor.finding_id
+                    WHERE finding.analysis_id = ?
+                    """, Long.class, analysisId)).isEqualTo(4L);
+        }
+
+        assertThat(jdbc.queryForList("""
+                SELECT run.score_value
+                FROM risk_score_runs run
+                JOIN analysis_executions execution ON execution.id = run.analysis_execution_id
+                WHERE execution.analysis_id IN (?, ?) AND run.state = 'SCORED'
+                ORDER BY execution.analysis_id
+                """, Integer.class, analysisIds.get(0), analysisIds.get(1)))
+                .containsExactly(64, 64);
+    }
+
+    @Test
+    @DisplayName("같은 source claim이어도 서로 다른 rule은 각각 독립된 위험으로 점수화한다")
+    void differentRulesOnSameClaimCountSeparately() throws Exception {
+        Long factId = confirmFact("환매 조건과 비용을 함께 명확히 고지합니다.", "VERIFIED");
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    AnalysisRequest.RetrievedContextPayload context =
+                            request.retrievedContexts().getFirst();
+                    return new AnalysisResult(1, "different-rule-model", "different-rule-prompt", List.of(
+                            new FindingPayload(
+                                    "환매 가능성 표현을 바로잡아야 합니다.",
+                                    Severity.LOW,
+                                    RedTeamRuleCode.RETURN_FRAMING,
+                                    List.of(PersonaCode.LIMITED_PRODUCT_FAMILIARITY),
+                                    List.of(context.chunkId()),
+                                    List.of(new FindingPayload.EvidenceSpanPayload(
+                                            context.chunkId(), context.chunkText())),
+                                    List.of(factId),
+                                    "환매 조건을 명시하세요."),
+                            new FindingPayload(
+                                    "같은 문장의 비용 고지가 불충분합니다.",
+                                    Severity.HIGH,
+                                    RedTeamRuleCode.COST_OMISSION,
+                                    DEFAULT_PERSONA_CODES,
+                                    List.of(context.chunkId()),
+                                    List.of(new FindingPayload.EvidenceSpanPayload(
+                                            context.chunkId(), context.chunkText())),
+                                    List.of(factId),
+                                    "비용을 명시하세요.")));
+                });
+
+        Long analysisId = createAnalysis(
+                confirmedDocumentId,
+                List.of(1),
+                DEFAULT_PERSONA_IDS,
+                null);
+        List<Long> findingIds = jdbc.queryForList(
+                "SELECT id FROM findings WHERE analysis_id = ? ORDER BY id",
+                Long.class,
+                analysisId);
+        decideReview(createReview(analysisId), "APPROVED", findingIds);
+        Long executionId = jdbc.queryForObject(
+                "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
+                Long.class,
+                analysisId);
+        Map<String, Object> run = jdbc.queryForMap("""
+                SELECT id, score_value FROM risk_score_runs
+                WHERE analysis_execution_id = ? AND state = 'SCORED'
+                """, executionId);
+
+        assertThat(run).containsEntry("score_value", 87);
+        assertThat(jdbc.queryForList("""
+                SELECT policy_rule_id FROM risk_score_ledger_entries
+                WHERE risk_score_run_id = ?
+                ORDER BY finding_revision_id
+                """, String.class, run.get("id")))
+                .containsExactly("RETURN_FRAMING", "COST_OMISSION");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM risk_score_ledger_entries
+                WHERE risk_score_run_id = ?
+                """, Long.class, run.get("id"))).isEqualTo(2L);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?",
+                Long.class,
+                analysisId)).isEqualTo(2L);
+    }
+
+    @Test
     @DisplayName("#85: noisy-OR는 순서 불변이고 중간 반올림 없이 마지막에만 반올림한다")
     void policyNoisyOrHasStableScoreInvariants() {
+        assertThat(EvidenceRiskScorePolicyV1.VERSION).isEqualTo("1.1.0");
         assertThat(EvidenceRiskScorePolicyV1.components(RedTeamRuleCode.RETURN_FRAMING))
                 .isEqualTo(new EvidenceRiskScorePolicyV1.Components(8000, 8000));
         assertThat(EvidenceRiskScorePolicyV1.components(RedTeamRuleCode.LOSS_SOFTENING))
@@ -1015,7 +1261,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
         ReflectionTestUtils.setField(fake, "behavior",
                 (Function<AnalysisRequest, AnalysisResult>) request -> {
                     providerCalls.incrementAndGet();
-                    return new AnalysisResult(0, "idempotency-model", "idempotency-prompt", List.of());
+                    return new AnalysisResult(null, "idempotency-model", "idempotency-prompt", List.of());
                 });
         String key = "analysis-replay-key";
         String firstTraceId = "analysis-replay-first";
@@ -1091,7 +1337,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
         ReflectionTestUtils.setField(fake, "behavior",
                 (Function<AnalysisRequest, AnalysisResult>) request -> {
                     providerCalls.incrementAndGet();
-                    return new AnalysisResult(0, "concurrent-model", "concurrent-prompt", List.of());
+                    return new AnalysisResult(null, "concurrent-model", "concurrent-prompt", List.of());
                 });
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch start = new CountDownLatch(1);
@@ -1202,7 +1448,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
         FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
         Function<AnalysisRequest, AnalysisResult> behavior = request -> {
             MDC.put("traceId", "async-thread-trace");
-            return new AnalysisResult(0, "trace-test", "trace-test", List.of());
+            return new AnalysisResult(null, "trace-test", "trace-test", List.of());
         };
         ReflectionTestUtils.setField(fake, "behavior", behavior);
         String traceId = "analysis-original-request-trace";
@@ -1367,6 +1613,68 @@ class AnalysisApiTest extends IntegrationTestSupport {
                                     context.chunkId(), context.chunkText())),
                             List.of(),
                             "선택 persona 범위 안에서만 설명하세요.")));
+                });
+
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.retryable").value(false))
+                .andExpect(jsonPath("$.errorCode").value("PROVIDER_RESPONSE_INVALID"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isZero();
+    }
+
+    @Test
+    @DisplayName("Provider가 빈 persona 인용 목록을 반환하면 결과를 저장하지 않는다")
+    void emptyPersonaReferenceIsRejected() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    AnalysisRequest.RetrievedContextPayload context = request.retrievedContexts().getFirst();
+                    return new AnalysisResult(82, "mock-risk-v1", "mock-prompt-v1", List.of(new FindingPayload(
+                            "persona 인용 목록이 비어 있는 결과입니다.",
+                            Severity.HIGH,
+                            RedTeamRuleCode.STABILITY_KEYWORD,
+                            List.of(),
+                            List.of(context.chunkId()),
+                            List.of(new FindingPayload.EvidenceSpanPayload(
+                                    context.chunkId(), context.chunkText())),
+                            List.of(),
+                            "persona를 선택해 설명하세요.")));
+                });
+
+        Long analysisId = createAnalysis();
+
+        mockMvc.perform(asPm(get("/api/analyses/{id}", analysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.retryable").value(false))
+                .andExpect(jsonPath("$.errorCode").value("PROVIDER_RESPONSE_INVALID"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM findings WHERE analysis_id = ?", Long.class, analysisId)).isZero();
+    }
+
+    @Test
+    @DisplayName("Provider가 중복 persona를 인용하면 결과를 저장하지 않는다")
+    void duplicatePersonaReferenceIsRejected() throws Exception {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    AnalysisRequest.RetrievedContextPayload context = request.retrievedContexts().getFirst();
+                    return new AnalysisResult(82, "mock-risk-v1", "mock-prompt-v1", List.of(new FindingPayload(
+                            "persona를 중복 인용한 결과입니다.",
+                            Severity.HIGH,
+                            RedTeamRuleCode.STABILITY_KEYWORD,
+                            List.of(
+                                    PersonaCode.LIMITED_PRODUCT_FAMILIARITY,
+                                    PersonaCode.LIMITED_PRODUCT_FAMILIARITY),
+                            List.of(context.chunkId()),
+                            List.of(new FindingPayload.EvidenceSpanPayload(
+                                    context.chunkId(), context.chunkText())),
+                            List.of(),
+                            "중복 없는 persona 범위에서 설명하세요.")));
                 });
 
         Long analysisId = createAnalysis();
@@ -1656,6 +1964,282 @@ class AnalysisApiTest extends IntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("실행 이력이 없는 고아 token 뒤의 오래된 분석도 복구하고 terminal audit은 한 번만 남긴다")
+    void staleRecoveryContinuesAfterMissingExecution() throws Exception {
+        Long orphanAnalysisId = createAnalysis();
+        Long followingAnalysisId = createAnalysis(
+                confirmedDocumentId, List.of(1, 2), FIVE_ACTIVE_PERSONA_IDS, null);
+        String orphanToken = "00000000-0000-0000-0000-000000000001";
+        String followingToken = "00000000-0000-0000-0000-000000000002";
+        OffsetDateTime now = OffsetDateTime.now();
+
+        jdbc.update(
+                "UPDATE analyses SET current_successful_execution_id = NULL WHERE id IN (?, ?)",
+                orphanAnalysisId,
+                followingAnalysisId);
+        jdbc.update("""
+                INSERT INTO analysis_executions (
+                    analysis_id, attempt_no, execution_token, status, retryable,
+                    retrieval_version, started_at, created_at
+                ) VALUES (?, 2, ?, 'RUNNING', FALSE, 'pgvector-cosine-v1', ?, ?)
+                """, followingAnalysisId, followingToken, now.minusMinutes(11), now.minusMinutes(11));
+        jdbc.update("""
+                UPDATE analyses
+                SET status = 'RUNNING', progress = 50, execution_token = ?,
+                    error_code = NULL, retryable = FALSE, completed_at = NULL, updated_at = ?
+                WHERE id = ?
+                """, orphanToken, now.minusMinutes(12), orphanAnalysisId);
+        jdbc.update("""
+                UPDATE analyses
+                SET status = 'RUNNING', progress = 50, execution_token = ?,
+                    error_code = NULL, retryable = FALSE, completed_at = NULL, updated_at = ?
+                WHERE id = ?
+                """, followingToken, now.minusMinutes(11), followingAnalysisId);
+
+        analysisJobService.recoverStaleAnalyses();
+        analysisJobService.recoverStaleAnalyses();
+
+        assertThat(jdbc.queryForList("""
+                SELECT id, status, error_code, retryable, execution_token
+                FROM analyses
+                WHERE id IN (?, ?)
+                ORDER BY id
+                """, orphanAnalysisId, followingAnalysisId))
+                .extracting(
+                        row -> row.get("status"),
+                        row -> row.get("error_code"),
+                        row -> row.get("retryable"),
+                        row -> row.get("execution_token"))
+                .containsExactly(
+                        tuple("FAILED", "AI_SERVICE_TEMPORARY_FAILURE", true, orphanToken),
+                        tuple("FAILED", "AI_SERVICE_TEMPORARY_FAILURE", true, followingToken));
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM analysis_executions
+                WHERE analysis_id = ? AND execution_token = ?
+                """, Long.class, orphanAnalysisId, orphanToken)).isZero();
+        assertThat(jdbc.queryForMap("""
+                SELECT status, error_code, retryable
+                FROM analysis_executions
+                WHERE analysis_id = ? AND execution_token = ?
+                """, followingAnalysisId, followingToken))
+                .containsEntry("status", "FAILED")
+                .containsEntry("error_code", "AI_SERVICE_TEMPORARY_FAILURE")
+                .containsEntry("retryable", true);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM audit_events
+                WHERE action = 'ANALYSIS_FAILED'
+                  AND resource_type = 'ANALYSIS'
+                  AND resource_id IN (?, ?)
+                """, Long.class, orphanAnalysisId, followingAnalysisId)).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("유실된 오래된 CREATED 요청은 provider나 execution 없이 실패시키고 terminal audit을 한 번만 남긴다")
+    void staleCreatedRequestFailsWithoutExecutionOrProvider() {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        fake.reset();
+        String requestToken = "10000000-0000-0000-0000-000000000001";
+        Long analysisId = insertCreatedAnalysis(
+                requestToken, OffsetDateTime.now().minusMinutes(10));
+
+        analysisJobService.recoverStaleAnalyses();
+        analysisJobService.recoverStaleAnalyses();
+
+        assertThat(jdbc.queryForMap("""
+                SELECT status, error_code, retryable, execution_token
+                FROM analyses
+                WHERE id = ?
+                """, analysisId))
+                .containsEntry("status", "FAILED")
+                .containsEntry("error_code", "AI_SERVICE_TEMPORARY_FAILURE")
+                .containsEntry("retryable", true)
+                .containsEntry("execution_token", requestToken);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM analysis_executions WHERE analysis_id = ?
+                """, Long.class, analysisId)).isZero();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM analysis_rag_runs rag_run
+                JOIN analysis_executions execution
+                  ON execution.id = rag_run.analysis_execution_id
+                WHERE execution.analysis_id = ?
+                """, Long.class, analysisId)).isZero();
+        assertThat(fake.lastRequest()).isNull();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM audit_events
+                WHERE action = 'ANALYSIS_FAILED'
+                  AND resource_type = 'ANALYSIS'
+                  AND resource_id = ?
+                """, Long.class, analysisId)).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("5분이 지나지 않은 CREATED 요청은 복구 대상이 아니다")
+    void freshCreatedRequestIsUntouched() {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        fake.reset();
+        String requestToken = "10000000-0000-0000-0000-000000000002";
+        Long analysisId = insertCreatedAnalysis(
+                requestToken, OffsetDateTime.now().minusMinutes(4));
+
+        analysisJobService.recoverStaleAnalyses();
+
+        assertThat(jdbc.queryForMap("""
+                SELECT status, progress, execution_token
+                FROM analyses
+                WHERE id = ?
+                """, analysisId))
+                .containsEntry("status", "CREATED")
+                .containsEntry("progress", 0)
+                .containsEntry("execution_token", requestToken);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM analysis_executions WHERE analysis_id = ?
+                """, Long.class, analysisId)).isZero();
+        assertThat(fake.lastRequest()).isNull();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM audit_events
+                WHERE action IN ('ANALYSIS_COMPLETED', 'ANALYSIS_FAILED')
+                  AND resource_type = 'ANALYSIS'
+                  AND resource_id = ?
+                """, Long.class, analysisId)).isZero();
+    }
+
+    @Test
+    @DisplayName("재시도 B가 수락된 뒤 도착한 이전 이벤트 A는 A의 시나리오로 B를 실행하지 않는다")
+    void oldEventCannotRunAcceptedRetryWithOldScenario() {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        useAnchoredDefaultResult();
+        String oldRequestToken = "10000000-0000-0000-0000-000000000003";
+        String retryRequestToken = "20000000-0000-0000-0000-000000000003";
+        Long analysisId = insertCreatedAnalysis(oldRequestToken, OffsetDateTime.now());
+        jdbc.update("""
+                UPDATE analyses
+                SET status = 'RUNNING', progress = 50, execution_token = ?, updated_at = NOW()
+                WHERE id = ?
+                """, retryRequestToken, analysisId);
+
+        analysisJobService.handle(new AnalysisRequestedEvent(
+                analysisId,
+                oldRequestToken,
+                "STALE_EVENT_SCENARIO",
+                "analysis-old-event-after-retry"));
+
+        assertThat(jdbc.queryForMap("""
+                SELECT status, progress, execution_token
+                FROM analyses
+                WHERE id = ?
+                """, analysisId))
+                .containsEntry("status", "RUNNING")
+                .containsEntry("progress", 50)
+                .containsEntry("execution_token", retryRequestToken);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM analysis_executions WHERE analysis_id = ?
+                """, Long.class, analysisId)).isZero();
+        assertThat(fake.lastRequest()).isNull();
+        assertNoAudit("analysis-old-event-after-retry");
+
+        analysisJobService.handle(new AnalysisRequestedEvent(
+                analysisId,
+                retryRequestToken,
+                "RETRY_B_SCENARIO",
+                "analysis-current-retry-event"));
+
+        assertThat(fake.lastRequest().scenarioCode()).isEqualTo("RETRY_B_SCENARIO");
+        assertThat(jdbc.queryForObject("""
+                SELECT status FROM analyses WHERE id = ?
+                """, String.class, analysisId)).isEqualTo("COMPLETED");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM analysis_executions WHERE analysis_id = ?
+                """, Long.class, analysisId)).isEqualTo(1L);
+        assertSingleTerminalAudit(
+                "analysis-current-retry-event",
+                "ANALYSIS_COMPLETED",
+                analysisId,
+                null,
+                analysisId);
+    }
+
+    @Test
+    @DisplayName("같은 CREATED 이벤트가 중복 배달되어도 실행과 terminal audit은 한 번뿐이다")
+    void duplicateCreatedEventsExecuteOnce() {
+        FakeRiskAnalysisProvider fake = (FakeRiskAnalysisProvider) provider;
+        AtomicInteger providerCalls = new AtomicInteger();
+        ReflectionTestUtils.setField(fake, "behavior",
+                (Function<AnalysisRequest, AnalysisResult>) request -> {
+                    providerCalls.incrementAndGet();
+                    AnalysisRequest.RetrievedContextPayload context =
+                            request.retrievedContexts().getFirst();
+                    return new AnalysisResult(82, "duplicate-event-model", "duplicate-event-prompt",
+                            List.of(new FindingPayload(
+                                    "중복 이벤트 검증 결과",
+                                    Severity.HIGH,
+                                    RedTeamRuleCode.STABILITY_KEYWORD,
+                                    DEFAULT_PERSONA_CODES,
+                                    List.of(context.chunkId()),
+                                    List.of(new FindingPayload.EvidenceSpanPayload(
+                                            context.chunkId(), context.chunkText())),
+                                    List.of(),
+                                    "중복 실행하지 않습니다.")));
+                });
+        String requestToken = "10000000-0000-0000-0000-000000000004";
+        String traceId = "analysis-duplicate-created-event";
+        Long analysisId = insertCreatedAnalysis(requestToken, OffsetDateTime.now());
+        AnalysisRequestedEvent event = new AnalysisRequestedEvent(
+                analysisId, requestToken, "DUPLICATE_EVENT_SCENARIO", traceId);
+
+        analysisJobService.handle(event);
+        analysisJobService.handle(event);
+
+        assertThat(providerCalls).hasValue(1);
+        assertThat(fake.lastRequest().scenarioCode()).isEqualTo("DUPLICATE_EVENT_SCENARIO");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM analysis_executions WHERE analysis_id = ?
+                """, Long.class, analysisId)).isEqualTo(1L);
+        assertSingleTerminalAudit(traceId, "ANALYSIS_COMPLETED", analysisId, null, analysisId);
+    }
+
+    @Test
+    @DisplayName("오래된 후보 조회 뒤 token이 바뀌면 잠금 재검증이 stale snapshot을 거부한다")
+    void staleCandidateTokenSnapshotIsRejectedUnderLock() {
+        String staleRequestToken = "10000000-0000-0000-0000-000000000005";
+        String currentRequestToken = "20000000-0000-0000-0000-000000000005";
+        OffsetDateTime cutoff = OffsetDateTime.now().minusMinutes(5);
+        Long analysisId = insertCreatedAnalysis(
+                staleRequestToken, OffsetDateTime.now().minusMinutes(10));
+        AnalysisRepository.StaleAnalysisCandidate candidate =
+                analysisRepository.findStaleAnalysisCandidates(
+                                cutoff, org.springframework.data.domain.PageRequest.of(0, 25))
+                        .stream()
+                        .filter(value -> value.getId().equals(analysisId))
+                        .findFirst()
+                        .orElseThrow();
+        jdbc.update("""
+                UPDATE analyses
+                SET execution_token = ?
+                WHERE id = ?
+                """, currentRequestToken, analysisId);
+
+        Boolean admitted = new TransactionTemplate(transactionManager).execute(status ->
+                analysisRepository.findStaleAnalysisWithLock(
+                        candidate.getId(), candidate.getExecutionToken(), cutoff).isPresent());
+
+        assertThat(admitted).isFalse();
+        assertThat(jdbc.queryForMap("""
+                SELECT status, execution_token
+                FROM analyses
+                WHERE id = ?
+                """, analysisId))
+                .containsEntry("status", "CREATED")
+                .containsEntry("execution_token", currentRequestToken);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM audit_events
+                WHERE action IN ('ANALYSIS_COMPLETED', 'ANALYSIS_FAILED')
+                  AND resource_type = 'ANALYSIS'
+                  AND resource_id = ?
+                """, Long.class, analysisId)).isZero();
+    }
+
+    @Test
     @DisplayName("재시도 성공은 이전 Finding을 보존하되 결과·검토·승격은 현재 execution에 한정한다")
     void retryRetainsPriorAnchoredFindingHistory() throws Exception {
         Long analysisId = createAnalysis();
@@ -1847,7 +2431,7 @@ class AnalysisApiTest extends IntegrationTestSupport {
                     "이전 execution token의 저장되면 안 되는 Finding",
                     Severity.HIGH,
                     RedTeamRuleCode.STABILITY_KEYWORD,
-                    List.of(),
+                    DEFAULT_PERSONA_CODES,
                     List.of(context.chunkId()),
                     List.of(new FindingPayload.EvidenceSpanPayload(
                             context.chunkId(), context.chunkText())),

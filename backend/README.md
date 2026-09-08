@@ -72,6 +72,26 @@ docker compose up --build -d # Flyway 및 합성 seed 재생성
 
 완전 초기화 후 첫 새 분석 요청이 청크를 다시 임베딩합니다. `down -v`는 파괴적입니다.
 
+## 문서 처리 안전 경계
+
+- PDF OCR·페이지 미리보기는 이미지 할당 전에 렌더 크기 검사. 40,000,000픽셀 초과 또는 유효하지 않은 페이지 치수 거부. 일반 A4 300DPI는 허용하며 자동 축소하지 않음
+- 배치 소속 문서는 단건 `POST /api/documents/{documentId}/retry`에서 `409 DOCUMENT_NOT_RETRYABLE` 반환. 배치의 자동 재시도·lease/fence 경로만 추출 소유권 유지
+- OCR worker는 페이지 처리 한 건만 동시 실행. 추가 요청은 대기열 누적 대신 `503 OCR_BUSY`와 `retryable: true` 반환. 실제 동기 OCR 처리는 API 이벤트 루프 밖에서 실행
+- 5분 이상 오래된 CREATED·RUNNING 분석은 현재 token과 상태를 잠금 안에서 재검증한 뒤 재시도 가능한 FAILED로 전이. 없는 실행 기록을 만들어내거나 자동 재실행하지 않으며, 개별 복구 실패는 다음 항목 처리를 막지 않음
+- 분석 이벤트에 수락 당시 execution token 포함. 이전 요청의 지연 이벤트가 새 재시도를 이전 scenario로 실행하지 못하도록 차단
+- 단건 문서는 수락 token·5분 dispatch lease를 저장하고, 실행 시작 시 새 worker token·10분 lease로 회전. 성공·실패·추출 이력 저장 전에 token, 만료 시각, 배치 소속 여부를 잠금 안에서 재검증. 만료된 수락·실행은 재시도 가능한 FAILED로만 복구하며 수동 재시도 의미 유지
+- 단건·배치의 문서 전체 처리 예산은 `document-batch.extraction-timeout` / `DOCUMENT_BATCH_EXTRACTION_TIMEOUT`으로 공통 설정, 기본 5분. `OCR HTTP timeout < 전체 처리 timeout ≤ 10분 lease − 30초` 검증. 무제한 페이지 처리나 만료된 원격 OCR의 물리적 중단은 보장하지 않으며 늦은 결과 게시를 fence로 차단
+- V25 적용 전 모든 구버전 애플리케이션 worker 중단 필수. 기존 미완료 단건 작업은 만료 claim으로 편입하고 신규 worker가 실패 복구. 구·신 worker 혼합 rolling 배포 금지
+- RAG metadata·embedding·query HTTP는 DB 트랜잭션 밖에서 실행. 청크 게시와 분석 RAG 결과 저장은 짧은 트랜잭션에서 원문 hash·현재 token 재검증
+
+## 분석 결과와 점수 계약
+
+- `findings`는 필수 배열이며 0~20건 허용. 누락·null·상한 초과·일부 항목의 잘못된 인용은 전체 응답 거부. 유효하지 않은 결과를 빈 결과로 대체하지 않음
+- Provider `riskScore`는 nullable 진단 이력. 빈 결과는 반드시 null이며 공개 점수나 위험 없음 판정으로 사용하지 않음. V26은 성공 실행의 nullable provenance만 허용하고 기존 불변 이력 유지
+- 빈 실행의 검토 승인 허용. 승인 전 `PENDING_REVIEW`, 승인 뒤 `NOT_SCORED / NO_APPROVED_FINDING`, 숫자는 null. Finding 결정·Risk Pattern·점수 원장 항목을 만들어내지 않음
+- 점수 정책 1.1.0: 동일 문서 revision·원문 범위·규칙의 중복 지적은 한 건, 서로 다른 규칙은 같은 문장에서도 별개 위험. 원본 Finding과 검토 이력 보존
+- 기존 규칙별 가중치와 noisy-OR 합산 유지. 안정성·보장 표현 규칙의 기여도 100%에 따른 종합 점수 포화도 유지하며, 이번 수정은 가중치 보정이나 실제 위험 확률의 검증이 아님
+
 ## 검증 분류와 제한
 
 - Genuine RAG E2E는 실제 Compose에서 정본 상품 PDF를 업로드하고 분석 결과의 `retrievalTrace`와 인용을 직접 감사하는 절차입니다.

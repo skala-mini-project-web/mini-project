@@ -23,12 +23,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.transaction.TestTransaction;
 import org.springframework.transaction.annotation.Transactional;
 
 class DocumentBatchAggregateIntegrationTest extends IntegrationTestSupport {
 
-    private static final OffsetDateTime NOW =
-            OffsetDateTime.parse("2026-09-07T00:00:00Z");
+    private static final OffsetDateTime NOW = OffsetDateTime.now().plusYears(1);
     private static final String CHECKSUM = "a".repeat(64);
     private static final String WORKER = "aggregate-regression-worker";
 
@@ -51,39 +51,11 @@ class DocumentBatchAggregateIntegrationTest extends IntegrationTestSupport {
 
     @AfterEach
     void cleanUpCreatedRows() {
+        if (TestTransaction.isActive()) {
+            jdbcTemplate.execute("SET CONSTRAINTS ALL IMMEDIATE");
+        }
+        jdbcTemplate.execute("TRUNCATE document_batches, product_documents CASCADE");
         for (Long productId : createdProductIds) {
-            jdbcTemplate.update("""
-                    DELETE FROM document_batch_item_attempts
-                    WHERE item_id IN (
-                        SELECT id FROM document_batch_items WHERE product_id = ?
-                    )
-                    """, productId);
-            jdbcTemplate.update(
-                    "DELETE FROM document_batch_items WHERE product_id = ?", productId);
-            jdbcTemplate.update(
-                    "DELETE FROM document_batches WHERE product_id = ?", productId);
-            jdbcTemplate.update("""
-                    UPDATE product_documents
-                    SET current_extraction_run_id = NULL
-                    WHERE product_id = ?
-                    """, productId);
-            jdbcTemplate.update("""
-                    DELETE FROM document_extraction_pages
-                    WHERE extraction_run_id IN (
-                        SELECT r.id
-                        FROM document_extraction_runs r
-                        JOIN product_documents d ON d.id = r.product_document_id
-                        WHERE d.product_id = ?
-                    )
-                    """, productId);
-            jdbcTemplate.update("""
-                    DELETE FROM document_extraction_runs
-                    WHERE product_document_id IN (
-                        SELECT id FROM product_documents WHERE product_id = ?
-                    )
-                    """, productId);
-            jdbcTemplate.update(
-                    "DELETE FROM product_documents WHERE product_id = ?", productId);
             jdbcTemplate.update("DELETE FROM products WHERE id = ?", productId);
         }
         createdProductIds.clear();

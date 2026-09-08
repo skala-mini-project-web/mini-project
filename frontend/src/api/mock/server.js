@@ -14,6 +14,8 @@ import {
   isErrorScenario,
 } from './scenarios.js'
 import { orchestrateMockAnalysis } from '../../lib/analyze.js'
+import { matchesQuery } from '../../lib/hangul.js'
+import { productStatusKey } from '../../lib/format.js'
 
 const SEV_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1 }
 const clone = (v) => JSON.parse(JSON.stringify(v))
@@ -590,11 +592,60 @@ export const mockServer = {
     }
   },
 
-  async listProducts(auth) {
+  async listProducts(auth, params = {}) {
     const user = requireAuth(auth)
     await wait(160)
-    const list = user.role === 'PRODUCT_MANAGER' ? store.products.filter((p) => p.ownerId === user.id) : store.products
-    return { items: list.map(productSummary) }
+    const page = params.page == null || params.page === '' ? 0 : Number(params.page)
+    const size = params.size == null || params.size === '' ? 20 : Number(params.size)
+    const productTypes = ['INVESTMENT', 'LOAN', 'SAVINGS']
+    const statuses = ['DRAFT', 'RUNNING', 'ANALYZED', 'IN_REVIEW', 'APPROVED', 'NEEDS_FIX']
+    if (!Number.isInteger(page) || page < 0
+      || !Number.isInteger(size) || size < 1 || size > 100
+      || (params.productType && !productTypes.includes(params.productType))
+      || (params.status && !statuses.includes(params.status))) {
+      throw new ApiError({ status: 400, errorCode: 'VALIDATION_ERROR', message: '상품 조회 조건을 확인하세요.' })
+    }
+
+    const query = String(params.q || '').trim()
+    const authorized = user.role === 'PRODUCT_MANAGER'
+      ? store.products.filter((product) => product.ownerId === user.id)
+      : store.products
+    const filtered = authorized
+      .map((product, index) => {
+        const summary = productSummary(product)
+        return { product: { ...summary, status: productStatusKey(summary) }, index }
+      })
+      .filter(({ product }) => {
+        if (params.productType && product.productType !== params.productType) return false
+        if (params.status && product.status !== params.status) return false
+        return !query
+          || matchesQuery(product.name, query)
+          || String(product.productId).toLowerCase().includes(query.toLowerCase())
+      })
+      .sort((left, right) => {
+        const leftId = String(left.product.productId)
+        const rightId = String(right.product.productId)
+        const leftNumeric = /^\d+$/.test(leftId)
+        const rightNumeric = /^\d+$/.test(rightId)
+        if (leftNumeric && rightNumeric) {
+          const leftNumber = BigInt(leftId)
+          const rightNumber = BigInt(rightId)
+          return rightNumber > leftNumber ? 1 : rightNumber < leftNumber ? -1 : 0
+        }
+        if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1
+        return left.index - right.index
+      })
+      .map(({ product }) => product)
+    const totalElements = filtered.length
+    const totalPages = Math.ceil(totalElements / size)
+    const offset = page * size
+    return {
+      items: filtered.slice(offset, offset + size),
+      page,
+      size,
+      totalElements,
+      totalPages,
+    }
   },
 
   async createProduct(auth, body, idemKey) {

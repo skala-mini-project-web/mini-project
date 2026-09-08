@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Slf4j
@@ -34,7 +35,7 @@ public class DocumentBatchWorker {
 
     private static final int MAX_ITEMS_PER_WAKE_UP = 4;
     private static final Duration LEASE_DURATION = Duration.ofMinutes(10);
-    private static final Duration EXTRACTION_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration LEASE_CLEANUP_MARGIN = Duration.ofSeconds(30);
     private static final Duration BASE_RETRY_DELAY = Duration.ofSeconds(15);
     private static final Duration MAX_RETRY_DELAY = Duration.ofMinutes(10);
 
@@ -65,16 +66,18 @@ public class DocumentBatchWorker {
             DocumentExtractionTransitions transitions,
             TextExtractionService textExtractionService,
             @Qualifier(AsyncConfig.ANALYSIS_EXECUTOR) Executor executor,
-            Clock clock
+            Clock clock,
+            @Value("${document-batch.extraction-timeout}") Duration extractionTimeout,
+            @Value("${ocr.request-timeout}") Duration ocrRequestTimeout
     ) {
-        this(
-                claimRepository,
-                transitions,
-                textExtractionService,
-                executor,
-                clock,
-                newExtractionExecutor(),
-                EXTRACTION_TIMEOUT);
+        validateRuntimeBudgets(extractionTimeout, ocrRequestTimeout);
+        this.claimRepository = claimRepository;
+        this.transitions = transitions;
+        this.textExtractionService = textExtractionService;
+        this.executor = executor;
+        this.clock = clock;
+        this.extractionExecutor = newExtractionExecutor();
+        this.extractionTimeout = extractionTimeout;
     }
 
     public DocumentBatchWorker(
@@ -86,6 +89,7 @@ public class DocumentBatchWorker {
             ExecutorService extractionExecutor,
             Duration extractionTimeout
     ) {
+        validateExtractionTimeout(extractionTimeout);
         this.claimRepository = claimRepository;
         this.transitions = transitions;
         this.textExtractionService = textExtractionService;
@@ -93,6 +97,38 @@ public class DocumentBatchWorker {
         this.clock = clock;
         this.extractionExecutor = extractionExecutor;
         this.extractionTimeout = extractionTimeout;
+    }
+
+    private static void validateRuntimeBudgets(
+            Duration extractionTimeout,
+            Duration ocrRequestTimeout
+    ) {
+        validateExtractionTimeout(extractionTimeout);
+        if (ocrRequestTimeout == null
+                || ocrRequestTimeout.isZero()
+                || ocrRequestTimeout.isNegative()) {
+            throw new IllegalArgumentException("ocr.request-timeout must be positive");
+        }
+        if (ocrRequestTimeout.compareTo(extractionTimeout) >= 0) {
+            throw new IllegalArgumentException(
+                    "ocr.request-timeout must be shorter than "
+                            + "document-batch.extraction-timeout");
+        }
+    }
+
+    private static void validateExtractionTimeout(Duration extractionTimeout) {
+        if (extractionTimeout == null
+                || extractionTimeout.isZero()
+                || extractionTimeout.isNegative()) {
+            throw new IllegalArgumentException(
+                    "document-batch.extraction-timeout must be positive");
+        }
+        Duration maximumTimeout = LEASE_DURATION.minus(LEASE_CLEANUP_MARGIN);
+        if (extractionTimeout.compareTo(maximumTimeout) > 0) {
+            throw new IllegalArgumentException(
+                    "document-batch.extraction-timeout must not exceed "
+                            + "the lease duration minus the 30s cleanup margin");
+        }
     }
 
     /**

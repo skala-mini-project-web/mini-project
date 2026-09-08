@@ -33,13 +33,16 @@ public interface AnalysisRepository extends JpaRepository<Analysis, Long> {
     // 스케줄러는 한 번에 제한된 수의 오래된 실행만 고른다. 실제 전이는 아래 잠금 조회에서
     // 상태, cutoff, 실행 token 을 다시 확인하므로 완료/재시도와 경합해도 다른 회차를 건드리지 않는다.
     @Query("""
-            select a.id as id, a.executionToken as executionToken
+            select a.id as id, a.status as status, a.executionToken as executionToken
             from Analysis a
-            where a.status = com.crosschecklab.global.common.enums.AnalysisStatus.RUNNING
+            where a.status in (
+                com.crosschecklab.global.common.enums.AnalysisStatus.CREATED,
+                com.crosschecklab.global.common.enums.AnalysisStatus.RUNNING
+              )
               and a.updatedAt <= :cutoff
             order by a.updatedAt asc, a.id asc
             """)
-    List<StaleRunningExecution> findStaleRunningExecutions(
+    List<StaleAnalysisCandidate> findStaleAnalysisCandidates(
             @Param("cutoff") OffsetDateTime cutoff, Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
@@ -47,11 +50,14 @@ public interface AnalysisRepository extends JpaRepository<Analysis, Long> {
             select a
             from Analysis a
             where a.id = :id
-              and a.status = com.crosschecklab.global.common.enums.AnalysisStatus.RUNNING
+              and a.status in (
+                com.crosschecklab.global.common.enums.AnalysisStatus.CREATED,
+                com.crosschecklab.global.common.enums.AnalysisStatus.RUNNING
+              )
               and a.executionToken = :executionToken
               and a.updatedAt <= :cutoff
             """)
-    Optional<Analysis> findStaleRunningWithLock(
+    Optional<Analysis> findStaleAnalysisWithLock(
             @Param("id") Long id,
             @Param("executionToken") String executionToken,
             @Param("cutoff") OffsetDateTime cutoff);
@@ -70,9 +76,11 @@ public interface AnalysisRepository extends JpaRepository<Analysis, Long> {
             """)
     List<ProductLatestAnalysis> findLatestByProductIds(@Param("productIds") Collection<Long> productIds);
 
-    interface StaleRunningExecution {
+    interface StaleAnalysisCandidate {
 
         Long getId();
+
+        com.crosschecklab.global.common.enums.AnalysisStatus getStatus();
 
         String getExecutionToken();
     }

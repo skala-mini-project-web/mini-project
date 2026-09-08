@@ -369,7 +369,7 @@ try {
     scoredAnalysisResult.score.value >= 0 && scoredAnalysisResult.score.value <= 100,
     `Deterministic score value is outside 0–100: ${scoredAnalysisResult.score.value}`,
   )
-  assert.equal(scoredAnalysisResult.score.policyVersion, '1.0.0', 'Deterministic score used an unexpected policy version')
+  assert.equal(scoredAnalysisResult.score.policyVersion, '1.1.0', 'Deterministic score used an unexpected policy version')
   assert(
     Array.isArray(scoredAnalysisResult.score.ledgerEntries) && scoredAnalysisResult.score.ledgerEntries.length > 0,
     'SCORED run did not include ledger entries',

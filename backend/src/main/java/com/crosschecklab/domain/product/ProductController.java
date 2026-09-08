@@ -4,6 +4,8 @@ import com.crosschecklab.domain.product.dto.ProductCreateRequest;
 import com.crosschecklab.domain.product.dto.ProductResponse;
 import com.crosschecklab.domain.product.dto.ProductSummaryResponse;
 import com.crosschecklab.global.common.PageResponse;
+import com.crosschecklab.global.common.enums.ProductLifecycleStatus;
+import com.crosschecklab.global.common.enums.ProductType;
 import com.crosschecklab.global.security.CurrentUser;
 import com.crosschecklab.global.security.DemoUser;
 import io.swagger.v3.oas.annotations.Operation;
@@ -51,13 +53,16 @@ public class ProductController {
 
     @GetMapping
     @Operation(summary = "상품 목록",
-            description = "담당자는 본인 상품만, 검토자는 전체를 조회한다. 최신 등록 순으로 정렬한다.")
+            description = "담당자는 본인 상품만, 검토자는 전체를 조회한다. 검색어·상품유형·상태를 함께 필터링한 뒤 최신 등록 순으로 페이징한다.")
     public ResponseEntity<PageResponse<ProductSummaryResponse>> findPage(
             @RequestParam(defaultValue = "0") @Min(value = 0, message = "page 는 0 이상이어야 합니다.") int page,
             @RequestParam(defaultValue = "20")
             @Min(value = 1, message = "size 는 1 이상이어야 합니다.")
             @Max(value = 100, message = "size 는 100 을 넘을 수 없습니다.") int size,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) ProductType productType,
+            @RequestParam(required = false) ProductLifecycleStatus status,
             @CurrentUser DemoUser currentUser) {
-        return ResponseEntity.ok(productService.findPage(page, size, currentUser));
+        return ResponseEntity.ok(productService.findPage(page, size, q, productType, status, currentUser));
     }
 }

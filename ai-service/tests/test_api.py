@@ -11,7 +11,14 @@ os.environ["AI_PROVIDER"] = "fixture"
 os.environ["AI_SERVICE_INTERNAL_TOKEN"] = "ai-service-test-token"
 
 from app.main import analysis_service, app
-from app.schemas import AnalysisProvider, RiskAnalysisRequest
+from app.schemas import (
+    AnalysisProvider,
+    FindingPayload,
+    OllamaFindingPayload,
+    OllamaRiskAnalysisResponse,
+    RiskAnalysisRequest,
+    RiskAnalysisResponse,
+)
 from app.service import RiskAnalysisService
 
 
@@ -63,11 +70,145 @@ def guarantee_request() -> dict:
     }
 
 
+def ollama_finding(
+    *,
+    statement: str = "안정성 표현이 원금 손실 가능성을 가릴 수 있습니다.",
+    policy_rule_code: str = "STABILITY_KEYWORD",
+    option_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "statement": statement,
+        "severity": "HIGH",
+        "policyRuleCode": policy_rule_code,
+        "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+        "evidenceSpanOptionIds": option_ids or ["evidence-option-1"],
+        "knownFactIds": [],
+        "recommendation": "원금 손실 가능성을 함께 고지하세요.",
+    }
+
+
+def mock_ollama_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+    outputs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    provider_requests: list[dict[str, Any]] = []
+
+    def provider_response(provider_request: httpx.Request) -> httpx.Response:
+        provider_requests.append(json.loads(provider_request.content))
+        output = outputs[min(len(provider_requests) - 1, len(outputs) - 1)]
+        return httpx.Response(
+            200,
+            json={"message": {"content": json.dumps(output)}},
+        )
+
+    monkeypatch.setattr(analysis_service, "provider", AnalysisProvider.OLLAMA)
+    monkeypatch.setattr(
+        analysis_service,
+        "http_client",
+        httpx.Client(transport=httpx.MockTransport(provider_response)),
+    )
+    return provider_requests
+
+
 def test_health() -> None:
     response = call_api("GET", "/internal/v1/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "UP", "provider": "fixture"}
+
+
+def test_response_schema_exposes_required_bounds() -> None:
+    request_schema = RiskAnalysisRequest.model_json_schema(by_alias=True)
+    response_schema = RiskAnalysisResponse.model_json_schema(by_alias=True)
+    ollama_schema = OllamaRiskAnalysisResponse.model_json_schema(by_alias=True)
+    finding_schema = response_schema["$defs"]["FindingPayload"]
+    ollama_finding_schema = ollama_schema["$defs"]["OllamaFindingPayload"]
+
+    assert request_schema["properties"]["personaCodes"]["maxItems"] == 12
+    assert request_schema["properties"]["retrievedContexts"]["maxItems"] == 20
+    assert request_schema["properties"]["knownFacts"]["maxItems"] == 50
+    assert response_schema["properties"]["findings"]["maxItems"] == 20
+    assert ollama_schema["properties"]["findings"]["maxItems"] == 20
+    assert "findings" in response_schema["required"]
+    assert "findings" in ollama_schema["required"]
+    assert finding_schema["properties"]["affectedPersonaCodes"][
+        "maxItems"
+    ] == 12
+    assert finding_schema["properties"]["retrievedContextChunkIds"][
+        "maxItems"
+    ] == 20
+    assert finding_schema["properties"]["evidenceSpans"]["maxItems"] == 60
+    assert finding_schema["properties"]["knownFactIds"]["maxItems"] == 50
+    assert ollama_finding_schema["properties"]["evidenceSpanOptionIds"][
+        "maxItems"
+    ] == 60
+    assert ollama_finding_schema["properties"]["evidenceSpanOptionIds"][
+        "minItems"
+    ] == 1
+    assert response_schema["properties"]["modelVersion"]["maxLength"] == 50
+    assert response_schema["properties"]["promptVersion"]["maxLength"] == 50
+
+
+@pytest.mark.parametrize("statement", [" ", "\t", "\n"])
+def test_finding_payload_rejects_blank_statement(statement: str) -> None:
+    with pytest.raises(ValueError):
+        FindingPayload.model_validate(
+            {
+                "statement": statement,
+                "severity": "HIGH",
+                "policyRuleCode": "STABILITY_KEYWORD",
+                "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+                "retrievedContextChunkIds": [11],
+                "evidenceSpans": [
+                    {
+                        "chunkId": 11,
+                        "excerpt": "원금 손실 가능성을 함께 고지해야 합니다.",
+                    }
+                ],
+                "knownFactIds": [],
+                "recommendation": "원금 손실 가능성을 함께 고지하세요.",
+            }
+        )
+
+
+@pytest.mark.parametrize("statement", [" ", "\t", "\n"])
+def test_ollama_finding_payload_rejects_blank_statement(
+    statement: str,
+) -> None:
+    with pytest.raises(ValueError):
+        OllamaFindingPayload.model_validate(
+            ollama_finding(statement=statement)
+        )
+
+
+def test_finding_payloads_preserve_valid_statement() -> None:
+    statement = "  원문 공백을 유지합니다.  "
+    public_finding = FindingPayload.model_validate(
+        {
+            "statement": statement,
+            "severity": "HIGH",
+            "policyRuleCode": "STABILITY_KEYWORD",
+            "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
+            "retrievedContextChunkIds": [11],
+            "evidenceSpans": [
+                {
+                    "chunkId": 11,
+                    "excerpt": "  근거 원문 공백도 유지합니다.  ",
+                }
+            ],
+            "knownFactIds": [],
+            "recommendation": "원금 손실 가능성을 함께 고지하세요.",
+        }
+    )
+    ollama_finding_payload = OllamaFindingPayload.model_validate(
+        ollama_finding(statement=statement)
+    )
+
+    assert public_finding.statement == statement
+    assert public_finding.evidence_spans[0].excerpt == (
+        "  근거 원문 공백도 유지합니다.  "
+    )
+    assert ollama_finding_payload.statement == statement
 
 
 def test_rejects_unauthenticated_risk_analysis() -> None:
@@ -228,7 +369,7 @@ def test_rejects_scenario_without_required_rule() -> None:
     assert response.json()["errorCode"] == "REQUEST_VALIDATION_FAILED"
 
 
-def test_fixture_cites_first_selected_known_fact() -> None:
+def test_fixture_does_not_fabricate_known_fact_when_none_applies() -> None:
     request = guarantee_request()
     request["knownFacts"] = [
         {"factId": 101, "text": "시장 상황에 따라 원금 손실이 발생할 수 있습니다."},
@@ -239,7 +380,7 @@ def test_fixture_cites_first_selected_known_fact() -> None:
 
     assert response.status_code == 200
     finding = response.json()["findings"][0]
-    assert finding["knownFactIds"] == [101]
+    assert finding["knownFactIds"] == []
     assert finding["policyRuleCode"] == "STABILITY_KEYWORD"
     assert finding["retrievedContextChunkIds"] == [11]
     assert finding["evidenceSpans"] == [
@@ -275,7 +416,7 @@ def test_rejects_invalid_known_facts(
     assert response.json()["retryable"] is False
 
 
-def test_rejects_provider_output_citing_unknown_known_fact(
+def test_rejects_ollama_output_citing_unknown_known_fact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = guarantee_request()
@@ -292,7 +433,6 @@ def test_rejects_provider_output_citing_unknown_known_fact(
                 "severity": "HIGH",
                 "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
-                "retrievedContextChunkIds": [11],
                 "evidenceSpanOptionIds": ["evidence-option-1"],
                 "knownFactIds": [999],
                 "recommendation": "원금 손실 가능성을 함께 고지하세요.",
@@ -320,7 +460,7 @@ def test_rejects_provider_output_citing_unknown_known_fact(
     assert response.json()["retryable"] is False
 
 
-def test_ollama_repairs_missing_required_known_fact_reference(
+def test_ollama_accepts_empty_known_fact_ids_when_none_applies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = guarantee_request()
@@ -332,25 +472,16 @@ def test_ollama_repairs_missing_required_known_fact_reference(
         "severity": "HIGH",
         "policyRuleCode": "STABILITY_KEYWORD",
         "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
-        "retrievedContextChunkIds": [11],
         "evidenceSpanOptionIds": ["evidence-option-1"],
         "knownFactIds": [],
         "recommendation": "원금 손실 가능성을 함께 고지하세요.",
     }
-    provider_outputs = [
-        {
-            "riskScore": 82,
-            "modelVersion": "ignored-provider-version",
-            "promptVersion": "ignored-prompt-version",
-            "findings": [finding],
-        },
-        {
-            "riskScore": 82,
-            "modelVersion": "ignored-provider-version",
-            "promptVersion": "ignored-prompt-version",
-            "findings": [{**finding, "knownFactIds": [101]}],
-        },
-    ]
+    provider_output = {
+        "riskScore": 82,
+        "modelVersion": "ignored-provider-version",
+        "promptVersion": "ignored-prompt-version",
+        "findings": [finding],
+    }
     provider_requests: list[dict[str, Any]] = []
 
     def provider_response(provider_request: httpx.Request) -> httpx.Response:
@@ -360,7 +491,7 @@ def test_ollama_repairs_missing_required_known_fact_reference(
             json={
                 "message": {
                     "content": json.dumps(
-                        provider_outputs[len(provider_requests) - 1]
+                        provider_output
                     )
                 }
             },
@@ -376,23 +507,191 @@ def test_ollama_repairs_missing_required_known_fact_reference(
     response = call_api("POST", "/internal/v1/risk-analyses", json=request)
 
     assert response.status_code == 200
-    assert response.json()["findings"][0]["knownFactIds"] == [101]
-    assert len(provider_requests) == 2
+    assert response.json()["findings"][0]["knownFactIds"] == []
+    assert len(provider_requests) == 1
     system_prompt = provider_requests[0]["messages"][0]["content"]
-    repair_prompt = provider_requests[1]["messages"][-1]["content"]
     assert (
-        "When knownFacts is non-empty, every finding must select at least one "
-        "applicable exact factId supplied in knownFacts for knownFactIds."
+        "knownFactIds may be empty when no supplied known fact contains or "
+        "applies to the criticized claim"
         in system_prompt
     )
     assert (
-        "repair empty or unknown knownFactIds by selecting at least one "
-        "applicable exact factId from knownFacts"
-        in repair_prompt
+        "never select the first fact merely because it was supplied"
+        in system_prompt
     )
 
 
-def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
+def test_ollama_accepts_scope_bound_clean_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_requests = mock_ollama_outputs(
+        monkeypatch,
+        [
+            {
+                "modelVersion": "ignored-provider-version",
+                "promptVersion": "ignored-prompt-version",
+                "findings": [],
+            }
+        ],
+    )
+
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["riskScore"] is None
+    assert response.json()["findings"] == []
+    assert len(provider_requests) == 1
+
+
+def test_ollama_accepts_two_fully_grounded_findings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = guarantee_request()
+    request["retrievedContexts"].append(
+        {
+            **request["retrievedContexts"][0],
+            "chunkId": 12,
+            "chunkText": "손실 위험을 완화 표현 없이 명확히 표시해야 합니다.",
+            "rank": 2,
+        }
+    )
+    second_finding = ollama_finding(
+        statement="손실 완화 표현도 별도 위험을 만들 수 있습니다.",
+        policy_rule_code="LOSS_SOFTENING",
+        option_ids=["evidence-option-2"],
+    )
+    mock_ollama_outputs(
+        monkeypatch,
+        [
+            {
+                "riskScore": 82,
+                "modelVersion": "ignored-provider-version",
+                "promptVersion": "ignored-prompt-version",
+                "findings": [ollama_finding(), second_finding],
+            }
+        ],
+    )
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert response.status_code == 200
+    assert len(response.json()["findings"]) == 2
+    assert response.json()["findings"][1]["evidenceSpans"] == [
+        {
+            "chunkId": 12,
+            "excerpt": "손실 위험을 완화 표현 없이 명확히 표시해야 합니다.",
+        }
+    ]
+
+
+def test_ollama_accepts_shared_option_across_findings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_ollama_outputs(
+        monkeypatch,
+        [
+            {
+                "riskScore": None,
+                "modelVersion": "ignored-provider-version",
+                "promptVersion": "ignored-prompt-version",
+                "findings": [
+                    ollama_finding(),
+                    ollama_finding(
+                        statement="같은 근거가 별도 선택 규칙도 지원합니다.",
+                        policy_rule_code="LOSS_SOFTENING",
+                    ),
+                ],
+            }
+        ],
+    )
+
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["findings"]) == 2
+    assert (
+        response.json()["findings"][0]["evidenceSpans"]
+        == response.json()["findings"][1]["evidenceSpans"]
+    )
+
+
+@pytest.mark.parametrize("finding_count", [20, 21])
+def test_ollama_enforces_twenty_finding_bound(
+    monkeypatch: pytest.MonkeyPatch,
+    finding_count: int,
+) -> None:
+    provider_requests = mock_ollama_outputs(
+        monkeypatch,
+        [
+            {
+                "riskScore": 82,
+                "modelVersion": "ignored-provider-version",
+                "promptVersion": "ignored-prompt-version",
+                "findings": [
+                    ollama_finding(statement=f"지원되는 지적 {index}")
+                    for index in range(finding_count)
+                ],
+            }
+        ],
+    )
+
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+    )
+
+    assert response.status_code == (200 if finding_count == 20 else 500)
+    assert len(provider_requests) == (1 if finding_count == 20 else 2)
+
+
+@pytest.mark.parametrize(
+    "provider_output",
+    [
+        {
+            "modelVersion": "ignored-provider-version",
+            "promptVersion": "ignored-prompt-version",
+        },
+        {
+            "modelVersion": "ignored-provider-version",
+            "promptVersion": "ignored-prompt-version",
+            "findings": None,
+        },
+        {
+            "riskScore": 0,
+            "modelVersion": "ignored-provider-version",
+            "promptVersion": "ignored-prompt-version",
+            "findings": [],
+        },
+    ],
+    ids=["missing-findings", "null-findings", "numeric-zero-clean"],
+)
+def test_ollama_rejects_malformed_clean_outputs_after_one_repair(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_output: dict[str, Any],
+) -> None:
+    provider_requests = mock_ollama_outputs(monkeypatch, [provider_output])
+
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+    )
+
+    assert len(provider_requests) == 2
+    assert response.status_code == 500
+    assert response.json()["errorCode"] == "AI_PROVIDER_RESPONSE_INVALID"
+
+
+def test_ollama_schema_requires_only_source_option_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = guarantee_request()
@@ -406,7 +705,6 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
                 "severity": "HIGH",
                 "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
-                "retrievedContextChunkIds": [11],
                 "evidenceSpanOptionIds": ["evidence-option-1"],
                 "knownFactIds": [],
                 "recommendation": "원금 손실 가능성을 함께 고지하세요.",
@@ -419,16 +717,21 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
         finding_schema = ollama_payload["format"]["$defs"][
             "OllamaFindingPayload"
         ]
-        assert "retrievedContextChunkIds" in finding_schema["required"]
+        assert "retrievedContextChunkIds" not in finding_schema["properties"]
         assert "evidenceSpanOptionIds" in finding_schema["required"]
         assert "policyRuleCode" in finding_schema["required"]
         assert "evidenceSpans" not in finding_schema["properties"]
-        assert (
-            finding_schema["properties"]["retrievedContextChunkIds"][
-                "minItems"
-            ]
-            == 1
-        )
+        assert finding_schema["additionalProperties"] is False
+        assert finding_schema["properties"]["evidenceSpanOptionIds"][
+            "maxItems"
+        ] == 60
+        assert finding_schema["properties"]["evidenceSpanOptionIds"][
+            "minItems"
+        ] == 1
+        assert ollama_payload["format"]["properties"]["findings"][
+            "maxItems"
+        ] == 20
+        assert "findings" in ollama_payload["format"]["required"]
         user_payload = json.loads(ollama_payload["messages"][1]["content"])
         system_prompt = ollama_payload["messages"][0]["content"]
         expected_analysis_request = RiskAnalysisRequest.model_validate(
@@ -457,17 +760,16 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
             "similarity",
         }
         assert (
-            "retrievedContextChunkIds entry must be a chunkId selected exactly "
-            "from retrievedContexts"
-        ) in system_prompt
-        assert (
-            "Use only chunkId values present in retrievedContexts"
+            "Do not return retrievedContextChunkIds, evidenceSpans"
             in system_prompt
         )
         assert "citationCatalog" not in system_prompt
         assert "candidateExcerpts" not in system_prompt
         assert "evidenceReference" not in system_prompt
-        assert "Return exactly one fully grounded finding." in system_prompt
+        assert "Return 0 to 20 fully grounded findings." in system_prompt
+        assert (
+            "it does not assert safety or legal compliance" in system_prompt
+        )
         assert (
             "allowedEvidenceSpanOptions supplied in the user message"
             in system_prompt
@@ -476,9 +778,29 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
             "policyRuleCode must be one exact value selected from ruleCodes"
             in system_prompt
         )
-        assert "Do not return evidenceSpans" in system_prompt
         assert (
-            "Never quote confirmedText or any other product text as evidence."
+            "evidenceSpanOptionIds are only POLICY_REQUIREMENT citations"
+            in system_prompt
+        )
+        assert (
+            "Never put confirmedText, product text, or known facts into "
+            "evidenceSpanOptionIds."
+            in system_prompt
+        )
+        assert (
+            "knownFactIds are separate DOCUMENT_CLAIM provenance."
+            in system_prompt
+        )
+        assert (
+            "When a supplied known fact records product wording containing "
+            "the claim criticized by a finding, cite that actual applicable "
+            "factId."
+            in system_prompt
+        )
+        assert (
+            "CONFIRMED_DOCUMENT verification confirms the wording and source, "
+            "not the truth or compliance of a marketing claim; citing the "
+            "fact does not endorse the claim."
             in system_prompt
         )
         return httpx.Response(
@@ -502,6 +824,8 @@ def test_ollama_schema_requires_and_accepts_retrieved_chunk_ids(
             "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
         }
     ]
+    assert response.json()["findings"][0]["retrievedContextChunkIds"] == [11]
+    assert response.json()["promptVersion"] == "ollama-rag-grounded-v17"
 
 
 @pytest.mark.parametrize(
@@ -517,7 +841,6 @@ def test_rejects_missing_or_unselected_ollama_policy_rule_code(
         "statement": "안정성 표현이 원금 손실 가능성을 가릴 수 있습니다.",
         "severity": "HIGH",
         "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
-        "retrievedContextChunkIds": [11],
         "evidenceSpanOptionIds": ["evidence-option-1"],
         "knownFactIds": [],
         "recommendation": "원금 손실 가능성을 함께 고지하세요.",
@@ -556,34 +879,20 @@ def test_rejects_missing_or_unselected_ollama_policy_rule_code(
 
 
 @pytest.mark.parametrize(
-    ("cited_chunk_ids", "option_ids"),
+    "option_ids",
     [
-        ([11], ["unknown-option"]),
-        ([11], ["evidence-option-1", "evidence-option-1"]),
-        ([11], ["evidence-option-2"]),
-        ([11, 12], ["evidence-option-1"]),
+        ["unknown-option"],
+        ["evidence-option-1", "evidence-option-1"],
     ],
     ids=[
         "unknown-option-id",
         "duplicate-option-id",
-        "option-for-uncited-chunk",
-        "citation-without-option",
     ],
 )
-def test_rejects_invalid_ollama_evidence_option_mapping(
+def test_unknown_or_repeated_ollama_options_reject_after_repair_without_guessing(
     monkeypatch: pytest.MonkeyPatch,
-    cited_chunk_ids: list[int],
     option_ids: list[str],
 ) -> None:
-    request = guarantee_request()
-    request["retrievedContexts"].append(
-        {
-            **request["retrievedContexts"][0],
-            "chunkId": 12,
-            "chunkText": "위험 고지는 홍보 표현과 함께 명확히 표시해야 합니다.",
-            "rank": 2,
-        }
-    )
     provider_output = {
         "riskScore": 82,
         "modelVersion": "ignored-provider-version",
@@ -594,7 +903,6 @@ def test_rejects_invalid_ollama_evidence_option_mapping(
                 "severity": "HIGH",
                 "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
-                "retrievedContextChunkIds": cited_chunk_ids,
                 "evidenceSpanOptionIds": option_ids,
                 "knownFactIds": [],
                 "recommendation": "원금 손실 가능성을 함께 고지하세요.",
@@ -618,14 +926,118 @@ def test_rejects_invalid_ollama_evidence_option_mapping(
         httpx.Client(transport=httpx.MockTransport(provider_response)),
     )
 
-    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+    )
 
     assert call_count == 2
     assert response.status_code == 500
     assert response.json()["errorCode"] == "AI_PROVIDER_RESPONSE_INVALID"
 
 
-def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
+def test_ollama_internal_finding_rejects_model_authored_chunk_ids() -> None:
+    obsolete_payload = ollama_finding()
+    obsolete_payload["retrievedContextChunkIds"] = [11]
+
+    with pytest.raises(ValueError):
+        OllamaFindingPayload.model_validate(obsolete_payload)
+
+
+def test_ollama_derives_one_chunk_id_from_multiple_exact_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = guarantee_request()
+    request["retrievedContexts"][0]["chunkText"] = (
+        "원금 손실 가능성을 표시해야 합니다. "
+        "안정성 표현의 한계를 함께 알려야 합니다."
+    )
+    provider_requests = mock_ollama_outputs(
+        monkeypatch,
+        [
+            {
+                "riskScore": 82,
+                "modelVersion": "ignored-provider-version",
+                "promptVersion": "ignored-prompt-version",
+                "findings": [
+                    ollama_finding(
+                        option_ids=[
+                            "evidence-option-1",
+                            "evidence-option-2",
+                        ]
+                    )
+                ],
+            }
+        ],
+    )
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert len(provider_requests) == 1
+    assert response.status_code == 200
+    assert response.json()["findings"][0]["retrievedContextChunkIds"] == [11]
+    assert response.json()["findings"][0]["evidenceSpans"] == [
+        {"chunkId": 11, "excerpt": "원금 손실 가능성을 표시해야 합니다."},
+        {
+            "chunkId": 11,
+            "excerpt": "안정성 표현의 한계를 함께 알려야 합니다.",
+        },
+    ]
+
+
+def test_ollama_derives_chunk_ids_from_options_not_evidence_document_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = guarantee_request()
+    request["selectedEvidenceDocumentIds"] = [101, 202]
+    request["retrievedContexts"][0]["evidenceDocumentId"] = 101
+    request["retrievedContexts"].append(
+        {
+            **request["retrievedContexts"][0],
+            "chunkId": 12,
+            "evidenceDocumentId": 202,
+            "chunkText": "손실 위험을 완화 표현 없이 명확히 표시해야 합니다.",
+            "rank": 2,
+        }
+    )
+    mock_ollama_outputs(
+        monkeypatch,
+        [
+            {
+                "riskScore": 82,
+                "modelVersion": "ignored-provider-version",
+                "promptVersion": "ignored-prompt-version",
+                "findings": [
+                    ollama_finding(
+                        option_ids=[
+                            "evidence-option-2",
+                            "evidence-option-1",
+                        ]
+                    )
+                ],
+            }
+        ],
+    )
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert response.status_code == 200
+    finding = response.json()["findings"][0]
+    assert finding["retrievedContextChunkIds"] == [12, 11]
+    assert finding["evidenceSpans"] == [
+        {
+            "chunkId": 12,
+            "excerpt": "손실 위험을 완화 표현 없이 명확히 표시해야 합니다.",
+        },
+        {
+            "chunkId": 11,
+            "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
+        },
+    ]
+
+
+def test_invalid_second_finding_rejects_whole_output_after_one_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     valid_finding = {
@@ -633,7 +1045,6 @@ def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
         "severity": "HIGH",
         "policyRuleCode": "STABILITY_KEYWORD",
         "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
-        "retrievedContextChunkIds": [11],
         "evidenceSpanOptionIds": ["evidence-option-1"],
         "knownFactIds": [],
         "recommendation": "원금 손실 가능성을 함께 고지하세요.",
@@ -649,18 +1060,13 @@ def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
         "promptVersion": "ignored-prompt-version",
         "findings": [valid_finding, unsupported_finding],
     }
-    repaired_output = {
-        **first_output,
-        "findings": [valid_finding],
-    }
     provider_requests: list[dict[str, Any]] = []
 
     def provider_response(provider_request: httpx.Request) -> httpx.Response:
         provider_requests.append(json.loads(provider_request.content))
-        output = first_output if len(provider_requests) == 1 else repaired_output
         return httpx.Response(
             200,
-            json={"message": {"content": json.dumps(output)}},
+            json={"message": {"content": json.dumps(first_output)}},
         )
 
     monkeypatch.setattr(analysis_service, "provider", AnalysisProvider.OLLAMA)
@@ -676,27 +1082,8 @@ def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
         json=guarantee_request(),
     )
 
-    assert response.status_code == 200
-    assert response.json()["findings"] == [
-        {
-            "statement": valid_finding["statement"],
-            "severity": "HIGH",
-            "policyRuleCode": "STABILITY_KEYWORD",
-            "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
-            "retrievedContextChunkIds": [11],
-            "evidenceSpans": [
-                {
-                    "chunkId": 11,
-                    "excerpt": (
-                        "원금손실 가능성은 안정성 표현과 인접하여 "
-                        "표시해야 합니다."
-                    ),
-                }
-            ],
-            "knownFactIds": [],
-            "recommendation": "원금 손실 가능성을 함께 고지하세요.",
-        }
-    ]
+    assert response.status_code == 500
+    assert response.json()["errorCode"] == "AI_PROVIDER_RESPONSE_INVALID"
     assert len(provider_requests) == 2
     repair_messages = provider_requests[1]["messages"]
     assert repair_messages[-2] == {
@@ -704,13 +1091,103 @@ def test_ollama_repairs_mixed_grounded_and_ungrounded_findings_once(
         "content": json.dumps(first_output),
     }
     repair_prompt = repair_messages[-1]["content"]
-    assert "Return exactly one finding" in repair_prompt
+    assert "Return 0 to 20 fully grounded findings." in repair_prompt
+    assert "retaining the best" not in repair_prompt
+    assert "removing all others" not in repair_prompt
+    assert "exactly one" not in repair_prompt
     assert (
         '"optionId":"evidence-option-1","chunkId":11,'
         '"excerpt":"원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다."'
     ) in repair_prompt
-    assert "Do not return evidenceSpans" in repair_prompt
-    assert "Do not invent, alter, or duplicate option IDs." in repair_prompt
+    assert (
+        "Do not return retrievedContextChunkIds, evidenceSpans"
+        in repair_prompt
+    )
+    assert (
+        "Do not invent, alter, or duplicate option IDs within a finding"
+        in repair_prompt
+    )
+    assert (
+        "only POLICY_REQUIREMENT citations to retrieved normative or "
+        "source-policy text"
+        in repair_prompt
+    )
+    assert (
+        "Never put confirmedText, product text, or known facts into "
+        "evidenceSpanOptionIds."
+        in repair_prompt
+    )
+    assert (
+        "knownFactIds are separate DOCUMENT_CLAIM provenance."
+        in repair_prompt
+    )
+    assert (
+        "When a supplied known fact records product wording containing the "
+        "claim criticized by a finding, cite that actual applicable factId."
+        in repair_prompt
+    )
+    assert (
+        "CONFIRMED_DOCUMENT verification confirms the wording and source, "
+        "not the truth or compliance of a marketing claim; citing the fact "
+        "does not endorse the claim."
+        in repair_prompt
+    )
+    assert (
+        "knownFactIds may be empty when no supplied known fact contains or "
+        "applies to the criticized claim"
+        in repair_prompt
+    )
+    assert (
+        "never select the first fact merely because it was supplied"
+        in repair_prompt
+    )
+
+
+def test_blank_second_finding_repairs_whole_output_without_dropping_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    valid_finding = ollama_finding()
+    blank_second_finding = ollama_finding(
+        statement="\t\n",
+        policy_rule_code="LOSS_SOFTENING",
+    )
+    repaired_second_finding = ollama_finding(
+        statement="손실 완화 표현도 별도 위험을 만들 수 있습니다.",
+        policy_rule_code="LOSS_SOFTENING",
+    )
+    first_output = {
+        "riskScore": 82,
+        "modelVersion": "ignored-provider-version",
+        "promptVersion": "ignored-prompt-version",
+        "findings": [valid_finding, blank_second_finding],
+    }
+    provider_requests = mock_ollama_outputs(
+        monkeypatch,
+        [
+            first_output,
+            {
+                **first_output,
+                "findings": [valid_finding, repaired_second_finding],
+            },
+        ],
+    )
+
+    response = call_api(
+        "POST",
+        "/internal/v1/risk-analyses",
+        json=guarantee_request(),
+    )
+
+    assert response.status_code == 200
+    assert len(provider_requests) == 2
+    assert len(response.json()["findings"]) == 2
+    assert response.json()["findings"][1]["statement"] == (
+        repaired_second_finding["statement"]
+    )
+    assert provider_requests[1]["messages"][-2] == {
+        "role": "assistant",
+        "content": json.dumps(first_output),
+    }
 
 
 def test_rejects_ollama_output_that_remains_invalid_after_one_repair(
@@ -726,7 +1203,6 @@ def test_rejects_ollama_output_that_remains_invalid_after_one_repair(
                 "severity": "HIGH",
                 "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
-                "retrievedContextChunkIds": [11],
                 "evidenceSpanOptionIds": ["unknown-option"],
                 "knownFactIds": [],
                 "recommendation": "원금 손실 가능성을 함께 고지하세요.",
@@ -737,7 +1213,7 @@ def test_rejects_ollama_output_that_remains_invalid_after_one_repair(
     grounded_finding["evidenceSpanOptionIds"] = ["evidence-option-1"]
     invalid_repair_output = {
         **invalid_output,
-        "findings": [grounded_finding, deepcopy(grounded_finding)],
+        "findings": [grounded_finding, invalid_output["findings"][0]],
     }
     call_count = 0
 
@@ -779,7 +1255,6 @@ def test_ollama_repair_excerpt_options_are_bounded_and_exact(
         "문서번호 SYN-DISC-2026-1 · 버전 2026.1\n"
         "완전 합성 내부 표시기준 — 실제 법령이나 업계 표준이 아닙니다.\n"
         "2. 동일 화면 원칙\n"
-        f"{'가' * 401}.\n"
         "“안정”, “보장” 표현이 있으면 원금손실 가능성을 같은 화면에 "
         "표시한다. 각 고지는 홍보 문구보다 늦게 나타나면 안 된다.\n"
         "제13조(강조 표현의 정정)\n"
@@ -798,7 +1273,6 @@ def test_ollama_repair_excerpt_options_are_bounded_and_exact(
                 "severity": "HIGH",
                 "policyRuleCode": "STABILITY_KEYWORD",
                 "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
-                "retrievedContextChunkIds": [11],
                 "evidenceSpanOptionIds": ["unknown-option"],
                 "knownFactIds": [],
                 "recommendation": "근거를 수정하세요.",
@@ -878,13 +1352,132 @@ def test_ollama_repair_excerpt_options_are_bounded_and_exact(
     assert "2. 동일 화면 원칙" not in repair_prompt
     assert "제13조(강조 표현의 정정)" not in repair_prompt
     assert "비권위 선언" not in repair_prompt
-    assert ("가" * 401) not in repair_prompt
     assert "네 번째 정책 문장은 선택 한도를 넘어 제외된다." not in repair_prompt
     assert "완전 합성 데모 문서" not in repair_prompt
     assert request["confirmedText"] not in repair_prompt
 
 
-def test_rejects_ollama_output_omitting_retrieved_chunk_ids(
+def test_ollama_excerpt_options_accept_bullets_tables_and_no_period_lines(
+) -> None:
+    request_payload = guarantee_request()
+    request_payload["retrievedContexts"][0]["chunkText"] = (
+        "- 원금 손실 가능성을 안정성 표현과 함께 표시\n"
+        "항목 | 표시 기준 | 동일 화면에 인접하여 표시"
+    )
+    request = RiskAnalysisRequest.model_validate(request_payload)
+
+    options = RiskAnalysisService._repair_excerpt_options(request)
+
+    assert [option["excerpt"] for option in options] == [
+        "- 원금 손실 가능성을 안정성 표현과 함께 표시",
+        "항목 | 표시 기준 | 동일 화면에 인접하여 표시",
+    ]
+    assert all(
+        option["excerpt"]
+        in request_payload["retrievedContexts"][0]["chunkText"]
+        for option in options
+    )
+
+
+def test_ollama_excerpt_options_bound_long_sentence_exactly(
+) -> None:
+    request_payload = guarantee_request()
+    long_line = ("원금 손실 위험과 중도 해지 비용을 함께 안내 " * 60) + "합니다."
+    request_payload["retrievedContexts"][0]["chunkText"] = long_line
+    request = RiskAnalysisRequest.model_validate(request_payload)
+
+    options = RiskAnalysisService._repair_excerpt_options(request)
+
+    assert len(options) == RiskAnalysisService.MAX_REPAIR_EXCERPTS_PER_CHUNK
+    assert all(
+        0 < len(option["excerpt"])
+        <= RiskAnalysisService.MAX_REPAIR_EXCERPT_CHARS
+        for option in options
+    )
+    assert all(option["excerpt"] in long_line for option in options)
+    assert [option["optionId"] for option in options] == [
+        "evidence-option-1",
+        "evidence-option-2",
+        "evidence-option-3",
+    ]
+
+
+def test_ollama_excerpt_options_preserve_chunk_coverage_and_byte_bound(
+) -> None:
+    request_payload = guarantee_request()
+    request_payload["retrievedContexts"] = [
+        {
+            **request_payload["retrievedContexts"][0],
+            "chunkId": chunk_id,
+            "rank": chunk_id,
+            "chunkText": "원금손실위험고지" * 100,
+        }
+        for chunk_id in range(1, 21)
+    ]
+    request = RiskAnalysisRequest.model_validate(request_payload)
+
+    options = RiskAnalysisService._repair_excerpt_options(request)
+
+    assert {option["chunkId"] for option in options} == set(range(1, 21))
+    assert (
+        sum(len(option["excerpt"].encode("utf-8")) for option in options)
+        <= RiskAnalysisService.MAX_REPAIR_EXCERPT_BYTES
+    )
+    contexts_by_id = {
+        context["chunkId"]: context["chunkText"]
+        for context in request_payload["retrievedContexts"]
+    }
+    assert all(
+        option["excerpt"] in contexts_by_id[option["chunkId"]]
+        for option in options
+    )
+
+
+@pytest.mark.parametrize(
+    "metadata_text",
+    [
+        (
+            "ARGUS | SYNTHETIC DEMO CORPUS POLICY-v1\n"
+            "문서번호 SYN-DISC-2026-1 · 버전 2026.1\n"
+            "완전 합성 데모 문서 · 실제 상품이나 법령을 나타내지 않음\n"
+            "2. 동일 화면 원칙"
+        ),
+        "합성 조문 해설\n발췌 범위\n출처",
+        "합성 금융소비자 설명의무 규정 발췌\n데모 적용 예\n비권위 선언",
+    ],
+)
+def test_ollama_rejects_metadata_only_context_before_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+    metadata_text: str,
+) -> None:
+    request = guarantee_request()
+    request["retrievedContexts"][0]["chunkText"] = metadata_text
+    provider_call_count = 0
+
+    def provider_response(_request: httpx.Request) -> httpx.Response:
+        nonlocal provider_call_count
+        provider_call_count += 1
+        raise AssertionError("metadata-only evidence must not call Ollama")
+
+    monkeypatch.setattr(analysis_service, "provider", AnalysisProvider.OLLAMA)
+    monkeypatch.setattr(
+        analysis_service,
+        "http_client",
+        httpx.Client(transport=httpx.MockTransport(provider_response)),
+    )
+
+    response = call_api("POST", "/internal/v1/risk-analyses", json=request)
+
+    assert provider_call_count == 0
+    assert response.status_code == 422
+    assert response.json() == {
+        "errorCode": "AI_PROVIDER_REQUEST_REJECTED",
+        "message": "The request contains no usable source evidence excerpts.",
+        "retryable": False,
+    }
+
+
+def test_accepts_ollama_output_without_model_authored_chunk_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider_output = {
@@ -923,9 +1516,14 @@ def test_rejects_ollama_output_omitting_retrieved_chunk_ids(
         json=guarantee_request(),
     )
 
-    assert response.status_code == 500
-    assert response.json()["errorCode"] == "AI_PROVIDER_RESPONSE_INVALID"
-    assert response.json()["retryable"] is False
+    assert response.status_code == 200
+    assert response.json()["findings"][0]["retrievedContextChunkIds"] == [11]
+    assert response.json()["findings"][0]["evidenceSpans"] == [
+        {
+            "chunkId": 11,
+            "excerpt": "원금손실 가능성은 안정성 표현과 인접하여 표시해야 합니다.",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -933,7 +1531,7 @@ def test_rejects_ollama_output_omitting_retrieved_chunk_ids(
     [[], [0], [11, 11], [99]],
     ids=["empty", "non-positive", "duplicate", "unretrieved"],
 )
-def test_rejects_invalid_ollama_retrieved_chunk_ids(
+def test_strict_ollama_contract_rejects_obsolete_chunk_id_field(
     monkeypatch: pytest.MonkeyPatch,
     chunk_ids: list[int],
 ) -> None:
@@ -1128,7 +1726,6 @@ def test_ollama_context_and_keep_alive_follow_environment(
                                     "severity": "HIGH",
                                     "policyRuleCode": "STABILITY_KEYWORD",
                                     "affectedPersonaCodes": ["FINANCIAL_BEGINNER"],
-                                    "retrievedContextChunkIds": [11],
                                     "evidenceSpanOptionIds": ["evidence-option-1"],
                                     "knownFactIds": [],
                                     "recommendation": "손실 가능성을 같은 화면에 표시하세요.",

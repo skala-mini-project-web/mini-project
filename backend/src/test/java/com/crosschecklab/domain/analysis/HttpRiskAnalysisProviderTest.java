@@ -3,6 +3,8 @@ package com.crosschecklab.domain.analysis;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.crosschecklab.analysis.provider.ProviderException;
 import com.crosschecklab.analysis.provider.dto.AnalysisRequest;
@@ -17,15 +19,20 @@ import com.crosschecklab.global.error.ErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
 
 // ai-service HTTP 어댑터 검증. 실제 ai-service 대신 JDK 내장 HTTP 서버로 응답을 흉내낸다.
 // 검증 대상은 요청 직렬화, 응답 역직렬화, 그리고 오류 → errorCode/retryable 매핑이다.
@@ -34,6 +41,7 @@ class HttpRiskAnalysisProviderTest {
     private static final String SUCCESS_BODY = """
             {"riskScore":82,"modelVersion":"mock-risk-v1","promptVersion":"mock-prompt-v1",
              "findings":[{"statement":"안정성 표현이 원금보장으로 오인될 가능성이 있습니다.","severity":"HIGH",
+             "policyRuleCode":"STABILITY_KEYWORD",
              "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
              "retrievedContextChunkIds":[11],
              "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
@@ -96,6 +104,41 @@ class HttpRiskAnalysisProviderTest {
                 List.of(new AnalysisRequest.KnownFactPayload(7L, "확정된 공식 사실")));
     }
 
+    private AnalysisResult analyzeWithMockServer(String body) {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost");
+        MockRestServiceServer mockServer = MockRestServiceServer.bindTo(builder).build();
+        mockServer.expect(requestTo("http://localhost/internal/v1/risk-analyses"))
+                .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+        HttpRiskAnalysisProvider provider = provider();
+        try {
+            Field restClient = HttpRiskAnalysisProvider.class.getDeclaredField("restClient");
+            restClient.setAccessible(true);
+            restClient.set(provider, builder.build());
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("테스트용 RestClient 주입 실패", e);
+        }
+        try {
+            return provider.analyze(request());
+        } finally {
+            mockServer.verify();
+        }
+    }
+
+    private static String validFindingJson() {
+        return """
+                {"statement":"진단","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
+                 "retrievedContextChunkIds":[11],
+                 "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
+                 "knownFactIds":[],"recommendation":null}""";
+    }
+
+    private static String resultJson(String riskScore, List<String> findings) {
+        return """
+                {"riskScore":%s,"modelVersion":"m","promptVersion":"p","findings":[%s]}"""
+                .formatted(riskScore, String.join(",", findings));
+    }
+
     @Test
     @DisplayName("application/json 정상 응답을 AnalysisResult 로 읽고, 요청은 ai-service 계약 필드로 직렬화된다")
     void applicationJsonResponseIsParsed() {
@@ -105,6 +148,7 @@ class HttpRiskAnalysisProviderTest {
         assertThat(result.modelVersion()).isEqualTo("mock-risk-v1");
         assertThat(result.findings()).singleElement().satisfies(finding -> {
             assertThat(finding.severity()).isEqualTo(Severity.HIGH);
+            assertThat(finding.policyRuleCode()).isEqualTo(RedTeamRuleCode.STABILITY_KEYWORD);
             assertThat(finding.affectedPersonaCodes()).containsExactly(PersonaCode.FINANCIAL_BEGINNER);
             assertThat(finding.retrievedContextChunkIds()).containsExactly(11L);
             assertThat(finding.evidenceSpans()).singleElement().satisfies(span -> {
@@ -142,6 +186,75 @@ class HttpRiskAnalysisProviderTest {
     }
 
     @Test
+    @DisplayName("findings 필드가 null이거나 없으면 빠른 계약 검증에서 거부한다")
+    void requiredFindingsAreRejectedWhenNullOrAbsent() {
+        List<String> invalidBodies = List.of(
+                """
+                        {"riskScore":null,"modelVersion":"m","promptVersion":"p","findings":null}""",
+                """
+                        {"riskScore":null,"modelVersion":"m","promptVersion":"p"}""");
+
+        for (String invalidBody : invalidBodies) {
+            assertThatThrownBy(() -> analyzeWithMockServer(invalidBody))
+                    .isInstanceOfSatisfying(ProviderException.class, e ->
+                            assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID));
+        }
+    }
+
+    @Test
+    @DisplayName("finding 없는 clean 응답은 null 점수만 허용한다")
+    void cleanResponseRequiresNullScore() {
+        AnalysisResult clean = analyzeWithMockServer(resultJson("null", List.of()));
+
+        assertThat(clean.riskScore()).isNull();
+        assertThat(clean.findings()).isEmpty();
+        assertThatThrownBy(() -> analyzeWithMockServer(resultJson("0", List.of())))
+                .isInstanceOfSatisfying(ProviderException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID));
+    }
+
+    @Test
+    @DisplayName("유효한 finding 2개와 최대 20개를 허용하고 21개는 거부한다")
+    void findingCountBoundaryIsEnforced() {
+        List<String> twoFindings = IntStream.range(0, 2)
+                .mapToObj(index -> validFindingJson())
+                .toList();
+        List<String> twentyFindings = IntStream.range(0, AnalysisResult.MAX_FINDINGS)
+                .mapToObj(index -> validFindingJson())
+                .toList();
+        List<String> twentyOneFindings = IntStream.rangeClosed(0, AnalysisResult.MAX_FINDINGS)
+                .mapToObj(index -> validFindingJson())
+                .toList();
+
+        assertThat(analyzeWithMockServer(resultJson("40", twoFindings)).findings()).hasSize(2);
+        assertThat(analyzeWithMockServer(resultJson("40", twentyFindings)).findings())
+                .hasSize(AnalysisResult.MAX_FINDINGS);
+        assertThatThrownBy(() -> analyzeWithMockServer(resultJson("40", twentyOneFindings)))
+                .isInstanceOfSatisfying(ProviderException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID));
+    }
+
+    @Test
+    @DisplayName("두 번째 finding이 잘못되면 응답 전체를 거부한다")
+    void invalidSecondFindingRejectsWholeResponse() {
+        String invalidSecond = validFindingJson().replace("\"statement\":\"진단\"", "\"statement\":\" \"");
+
+        assertThatThrownBy(() -> analyzeWithMockServer(
+                resultJson("40", List.of(validFindingJson(), invalidSecond))))
+                .isInstanceOfSatisfying(ProviderException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.PROVIDER_RESPONSE_INVALID));
+    }
+
+    @Test
+    @DisplayName("finding이 있는 진단 응답도 riskScore null을 보존한다")
+    void nonEmptyDiagnosticMayHaveNullScore() {
+        AnalysisResult result = analyzeWithMockServer(resultJson("null", List.of(validFindingJson())));
+
+        assertThat(result.riskScore()).isNull();
+        assertThat(result.findings()).hasSize(1);
+    }
+
+    @Test
     @DisplayName("503 + retryable=true → AI_SERVICE_TEMPORARY_FAILURE, 재시도 가능")
     void temporaryFailure() {
         status = 503;
@@ -174,7 +287,8 @@ class HttpRiskAnalysisProviderTest {
     void highFindingWithoutEvidence() {
         responseBody = """
                 {"riskScore":82,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"HIGH","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"HIGH","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[],"recommendation":null}]}""";
 
         assertThatThrownBy(() -> provider().analyze(request()))
@@ -211,7 +325,8 @@ class HttpRiskAnalysisProviderTest {
         // 요청이 검색 근거 청크 11번만 보냈는데 응답이 목록 밖의 99번을 인용한다.
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[99],
                  "recommendation":null}]}""";
 
@@ -223,7 +338,8 @@ class HttpRiskAnalysisProviderTest {
     void nullContextChunkReferenceIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[null],"recommendation":null}]}""";
 
         assertInvalidProviderResponse();
@@ -234,7 +350,8 @@ class HttpRiskAnalysisProviderTest {
     void duplicateContextChunkReferenceIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11,11],"recommendation":null}]}""";
 
         assertInvalidProviderResponse();
@@ -245,7 +362,8 @@ class HttpRiskAnalysisProviderTest {
     void citationWithoutEvidenceSpanIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],"evidenceSpans":[],"recommendation":null}]}""";
 
         assertInvalidProviderResponse();
@@ -256,7 +374,8 @@ class HttpRiskAnalysisProviderTest {
     void citedChunkWithoutMatchingEvidenceSpanIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11,12],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
                  "recommendation":null}]}""";
@@ -269,7 +388,8 @@ class HttpRiskAnalysisProviderTest {
     void blankEvidenceSpanIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"   "}],
                  "recommendation":null}]}""";
@@ -282,7 +402,8 @@ class HttpRiskAnalysisProviderTest {
     void inexactEvidenceSpanIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"원금 손실 가능성"}],
                  "recommendation":null}]}""";
@@ -295,7 +416,8 @@ class HttpRiskAnalysisProviderTest {
     void evidenceSpanForUncitedChunkIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":12,"excerpt":"중도해지 비용"}],
                  "recommendation":null}]}""";
@@ -308,7 +430,8 @@ class HttpRiskAnalysisProviderTest {
     void duplicateEvidenceSpanIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[
                    {"chunkId":11,"excerpt":"원금손실 가능성"},
@@ -323,7 +446,8 @@ class HttpRiskAnalysisProviderTest {
     void unknownFactReferenceIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
                  "knownFactIds":[99],"recommendation":null}]}""";
@@ -336,7 +460,8 @@ class HttpRiskAnalysisProviderTest {
     void nullFactReferenceIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
                  "knownFactIds":[null],"recommendation":null}]}""";
@@ -349,7 +474,8 @@ class HttpRiskAnalysisProviderTest {
     void duplicateFactReferenceIsRejected() {
         responseBody = """
                 {"riskScore":50,"modelVersion":"m","promptVersion":"p",
-                 "findings":[{"statement":"s","severity":"LOW","affectedPersonaCodes":["SENIOR"],
+                 "findings":[{"statement":"s","severity":"LOW","policyRuleCode":"STABILITY_KEYWORD",
+                 "affectedPersonaCodes":["FINANCIAL_BEGINNER"],
                  "retrievedContextChunkIds":[11],
                  "evidenceSpans":[{"chunkId":11,"excerpt":"원금손실 가능성"}],
                  "knownFactIds":[7,7],"recommendation":null}]}""";

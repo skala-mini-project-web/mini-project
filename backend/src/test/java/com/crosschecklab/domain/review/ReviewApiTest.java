@@ -9,6 +9,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.crosschecklab.global.error.ErrorCode;
 import com.crosschecklab.support.IntegrationTestSupport;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -72,6 +76,10 @@ class ReviewApiTest extends IntegrationTestSupport {
         jdbc.update("DELETE FROM analyses");
         jdbc.update("DELETE FROM product_documents");
         jdbc.update("DELETE FROM products");
+        jdbc.update("""
+                DELETE FROM evidence_document_chunks
+                WHERE chunking_version = 'review-api-test'
+                  AND embedding_model = 'review-api-test-embedding'""");
     }
 
     private void insertTestUser(long id, String username, String name, String role) {
@@ -111,6 +119,114 @@ class ReviewApiTest extends IntegrationTestSupport {
                 executionId,
                 analysisId);
         return analysisId;
+    }
+
+    private Long insertCleanCompletedAnalysis(long ownerId, String productName, String inputHash) {
+        Long productId = jdbc.queryForObject("""
+                INSERT INTO products (owner_id, name, product_type, created_at, updated_at)
+                VALUES (?, ?, 'INVESTMENT', NOW(), NOW())
+                RETURNING id""", Long.class, ownerId, productName);
+        Long documentId = jdbc.queryForObject("""
+                INSERT INTO product_documents
+                    (product_id, file_name, media_type, storage_key, extract_status, extracted_text,
+                     confirmed, created_at, updated_at)
+                VALUES (?, '상품설명서.pdf', 'application/pdf', 'mock://documents/clean',
+                        'READY', '현재 분석 범위에서 지원되는 지적이 없는 문서입니다.', TRUE, NOW(), NOW())
+                RETURNING id""", Long.class, productId);
+        Long analysisId = jdbc.queryForObject("""
+                INSERT INTO analyses
+                    (product_document_id, red_team_pack_id, status, progress, risk_score,
+                     requires_human_approval, retryable, input_hash, completed_at, created_at, updated_at)
+                VALUES (?, 1, 'COMPLETED', 100, NULL, TRUE, FALSE, ?, NOW(), NOW(), NOW())
+                RETURNING id""", Long.class, documentId, inputHash);
+        Long executionId = jdbc.queryForObject("""
+                INSERT INTO analysis_executions
+                    (analysis_id, attempt_no, execution_token, status, retryable, retrieval_version,
+                     provider_risk_score, model_version, prompt_version, started_at, finished_at, created_at)
+                VALUES (?, 1, ?, 'SUCCEEDED', FALSE, 'review-api-test',
+                        NULL, 'review-api-test', 'review-api-test', NOW(), NOW(), NOW())
+                RETURNING id""", Long.class, analysisId, UUID.randomUUID().toString());
+        insertCleanRagFixture(analysisId, executionId);
+        jdbc.update(
+                "UPDATE analyses SET current_successful_execution_id = ? WHERE id = ?",
+                executionId,
+                analysisId);
+        return analysisId;
+    }
+
+    private void insertCleanRagFixture(Long analysisId, Long executionId) {
+        long evidenceDocumentId = 1L;
+        String chunkText = jdbc.queryForObject(
+                "SELECT content FROM evidence_documents WHERE id = ? AND active = TRUE",
+                String.class,
+                evidenceDocumentId).strip();
+        String sourceHash = sha256(chunkText);
+        String chunkHash = sha256(chunkText);
+        String embeddingModel = "review-api-test-embedding";
+        String chunkingVersion = "review-api-test";
+
+        jdbc.update("""
+                INSERT INTO analysis_evidence_documents (analysis_id, evidence_document_id)
+                VALUES (?, ?)
+                ON CONFLICT DO NOTHING""", analysisId, evidenceDocumentId);
+        jdbc.update("""
+                INSERT INTO evidence_document_chunks
+                    (evidence_document_id, source_hash, chunk_ordinal, chunking_version,
+                     chunk_hash, chunk_text, embedding_model, embedding)
+                VALUES (?, ?, 0, ?, ?, ?, ?,
+                        (ARRAY[1.0::real] || array_fill(0.0::real, ARRAY[1023]))::vector)
+                ON CONFLICT
+                    (evidence_document_id, source_hash, chunking_version, embedding_model, chunk_ordinal)
+                DO NOTHING""",
+                evidenceDocumentId,
+                sourceHash,
+                chunkingVersion,
+                chunkHash,
+                chunkText,
+                embeddingModel);
+        Long chunkId = jdbc.queryForObject("""
+                SELECT id
+                FROM evidence_document_chunks
+                WHERE evidence_document_id = ?
+                  AND source_hash = ?
+                  AND chunking_version = ?
+                  AND embedding_model = ?
+                  AND chunk_ordinal = 0""",
+                Long.class,
+                evidenceDocumentId,
+                sourceHash,
+                chunkingVersion,
+                embeddingModel);
+        Long ragRunId = jdbc.queryForObject("""
+                INSERT INTO analysis_rag_runs
+                    (analysis_execution_id, query_hash, embedding_model, retrieval_version,
+                     requested_result_count, retrieved_at)
+                VALUES (?, ?, ?, 'review-api-test', 6, NOW())
+                RETURNING id""",
+                Long.class,
+                executionId,
+                sha256("현재 분석 범위에서 지원되는 지적이 없는 문서입니다."),
+                embeddingModel);
+        jdbc.update("""
+                INSERT INTO analysis_rag_retrieval_snapshots
+                    (rag_run_id, rank, evidence_document_id, evidence_document_chunk_id,
+                     source_hash, chunk_hash, chunk_text, similarity)
+                VALUES (?, 1, ?, ?, ?, ?, ?, 1.0)""",
+                ragRunId,
+                evidenceDocumentId,
+                chunkId,
+                sourceHash,
+                chunkHash,
+                chunkText);
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
     }
 
     private Long insertFinding(Long analysisId, String statement, String severity) {
@@ -432,6 +548,67 @@ class ReviewApiTest extends IntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("REV-003: Finding이 없는 실제 실행은 빈 선택으로 승인되고 숫자 점수나 부작용을 만들지 않는다")
+    void cleanExecutionApprovesWithoutSelectionOrSideEffects() throws Exception {
+        Long cleanAnalysisId = insertCleanCompletedAnalysis(PM_ID, "클린 분석 상품", "hash-clean");
+        Long executionId = jdbc.queryForObject(
+                "SELECT current_successful_execution_id FROM analyses WHERE id = ?",
+                Long.class,
+                cleanAnalysisId);
+        Long reviewId = createReview(cleanAnalysisId);
+        String traceId = "review-clean-approve";
+
+        mockMvc.perform(asReviewer(decision(reviewId, Map.of(
+                        "status", "APPROVED",
+                        "selectedFindingIds", List.of()))
+                        .header(TRACE_ID_HEADER, traceId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.riskPatternIds").isEmpty());
+
+        assertThat(jdbc.queryForMap("""
+                SELECT provider_risk_score, model_version, prompt_version
+                FROM analysis_executions
+                WHERE id = ?""", executionId))
+                .containsEntry("provider_risk_score", null)
+                .containsEntry("model_version", "review-api-test")
+                .containsEntry("prompt_version", "review-api-test");
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM finding_review_decisions WHERE review_id = ?",
+                Integer.class,
+                reviewId)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM risk_patterns WHERE review_id = ?",
+                Integer.class,
+                reviewId)).isZero();
+        assertAuditEvent(traceId, "REVIEW_APPROVED", "REVIEW", reviewId, REVIEWER_ID, cleanAnalysisId);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM audit_events WHERE trace_id = ?",
+                Integer.class,
+                traceId)).isEqualTo(1);
+
+        assertThat(jdbc.queryForMap("""
+                SELECT state, score_value, not_scored_reason
+                FROM risk_score_runs
+                WHERE analysis_execution_id = ?""", executionId))
+                .containsEntry("state", "NOT_SCORED")
+                .containsEntry("score_value", null)
+                .containsEntry("not_scored_reason", "NO_APPROVED_FINDING");
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*)
+                FROM risk_score_ledger_entries ledger
+                JOIN risk_score_runs run ON run.id = ledger.risk_score_run_id
+                WHERE run.analysis_execution_id = ?""", Integer.class, executionId)).isZero();
+        mockMvc.perform(asPm(get("/api/analyses/{id}/result", cleanAnalysisId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.findings").isEmpty())
+                .andExpect(jsonPath("$.score.state").value("NOT_SCORED"))
+                .andExpect(jsonPath("$.score.value").value(nullValue()))
+                .andExpect(jsonPath("$.score.notScoredReason").value("NO_APPROVED_FINDING"))
+                .andExpect(jsonPath("$.score.ledgerEntries").isEmpty());
+    }
+
+    @Test
     @DisplayName("REV-003: 반려는 사유만 남기고 승격하지 않는다")
     void rejectRecordsCommentWithoutPromotion() throws Exception {
         Long reviewId = createReview(analysisId);
@@ -483,7 +660,9 @@ class ReviewApiTest extends IntegrationTestSupport {
         Long reviewId = createReview(analysisId);
         String traceId = "review-decision-validation-failure";
 
-        mockMvc.perform(asReviewer(decision(reviewId, Map.of("status", "APPROVED"))
+        mockMvc.perform(asReviewer(decision(reviewId, Map.of(
+                        "status", "APPROVED",
+                        "selectedFindingIds", List.of()))
                         .header(TRACE_ID_HEADER, traceId)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value(ErrorCode.INVALID_FINDING_SELECTION.name()));

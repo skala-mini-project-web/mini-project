@@ -27,6 +27,8 @@ public interface DocumentBatchItemRepository extends Repository<DocumentBatchIte
 
     long countByBatch_Id(Long batchId);
 
+    boolean existsByProductDocument_Id(Long documentId);
+
     long countByBatch_IdAndStatus(Long batchId, DocumentBatchItemStatus status);
 
     @Query("""

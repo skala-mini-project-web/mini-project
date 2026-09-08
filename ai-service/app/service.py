@@ -32,10 +32,13 @@ class OllamaUnavailableError(AiServiceError):
 
 
 class OllamaRequestRejectedError(AiServiceError):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        message: str = "The configured Ollama provider rejected the request.",
+    ) -> None:
         super().__init__(
             error_code="AI_PROVIDER_REQUEST_REJECTED",
-            message="The configured Ollama provider rejected the request.",
+            message=message,
             retryable=False,
             status_code=422,
         )
@@ -52,7 +55,7 @@ class ProviderResponseInvalidError(AiServiceError):
 
 
 class RiskAnalysisService:
-    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v13"
+    OLLAMA_PROMPT_VERSION = "ollama-rag-grounded-v17"
     # 100,000 UTF-8 bytes 한글 prompt ≈ 25k token. qwen2.5 7B KV cache 약 1.9GB.
     DEFAULT_OLLAMA_NUM_CTX = 32768
     FIXTURE_POLICY_RULE_CODES = {
@@ -74,6 +77,11 @@ class RiskAnalysisService:
         ),
         re.compile(r"^\d+\.\s*[^.!?。！？]+$"),
         re.compile(r"^제\d+조(?:의\d+)?\s*\([^)]*\)\s*$"),
+        re.compile(r"^(?:.+\s)?(?:내부\s*정책|내부정책|비권위 선언)$"),
+        re.compile(
+            r"^(?:합성 조문 해설|발췌 범위|출처|데모 적용 예|"
+            r"합성 금융소비자 설명의무 규정 발췌)$"
+        ),
     )
     REPAIR_METADATA_MARKERS = (
         "완전 합성",
@@ -158,9 +166,6 @@ class RiskAnalysisService:
 
         attempt_number = self._next_attempt(request)
         payload = self.fixture_loader.load(request.scenario_code, attempt_number)
-        selected_known_fact_id = (
-            request.known_facts[0].fact_id if request.known_facts else None
-        )
         try:
             payload = {
                 **payload,
@@ -172,15 +177,6 @@ class RiskAnalysisService:
                             self.FIXTURE_POLICY_RULE_CODES[
                                 request.scenario_code
                             ].value,
-                        ),
-                        "knownFactIds": (
-                            finding.get("knownFactIds")
-                            if finding.get("knownFactIds")
-                            else (
-                                [selected_known_fact_id]
-                                if selected_known_fact_id is not None
-                                else []
-                            )
                         ),
                     }
                     for finding in payload["findings"]
@@ -204,24 +200,38 @@ class RiskAnalysisService:
             "that conforms exactly to the supplied JSON schema. Analyze only "
             "the confirmedText, selected personas and rules, and evidence "
             "contexts retrieved in the user message. Never infer or request "
-            "the full evidence documents. Do not use unstated facts. Every "
-            "retrievedContextChunkIds entry must be a chunkId selected exactly "
-            "from retrievedContexts. Use only chunkId values present in "
-            "retrievedContexts; never invent, alter, or substitute an ID. "
-            "Return exactly one fully grounded finding. For every cited "
-            "chunkId, select at least one evidenceSpanOptionIds value whose "
-            "option has that chunkId. Select only exact optionId values from "
+            "the full evidence documents. Do not use unstated facts. "
+            "Return 0 to 20 fully grounded findings. Return an empty findings "
+            "array only when there is no supported finding in the selected "
+            "scope; it does not assert safety or legal compliance. When "
+            "findings is empty, omit riskScore or set it to null, never zero "
+            "or another number. A non-empty findings array may have a null "
+            "or omitted diagnostic riskScore. Findings under distinct selected "
+            "rules are distinct risks. Do not repeat the same rule and source "
+            "claim as multiple findings. Treat the two citation roles as "
+            "separate. evidenceSpanOptionIds are only POLICY_REQUIREMENT "
+            "citations to retrieved normative or source-policy text. Return "
+            "only exact evidenceSpanOptionIds values from "
             "allowedEvidenceSpanOptions supplied in the user message. Never "
-            "invent, alter, or duplicate an option ID, and never select an "
-            "option for an uncited chunk. Do not return evidenceSpans or any "
-            "free-text evidence excerpt; the server maps selected opaque "
-            "option IDs to exact source excerpts. "
-            "Never quote confirmedText or any other product text as evidence. "
-            "Do not cite unknown or unretrieved contexts. When knownFacts is "
-            "non-empty, every finding must select at least one applicable "
-            "exact factId supplied in knownFacts for knownFactIds. When "
-            "knownFacts is empty, knownFactIds must be empty. Never invent, "
-            "alter, or substitute a fact reference. "
+            "invent, alter, or duplicate an option ID within a finding, and "
+            "select at least one option for every finding. The same option ID "
+            "may ground different findings. Do not return "
+            "retrievedContextChunkIds, evidenceSpans, or any free-text "
+            "evidence excerpt; the server derives citation chunk IDs and maps "
+            "selected opaque option IDs to exact source excerpts. "
+            "Never put confirmedText, product text, or known facts into "
+            "evidenceSpanOptionIds. Do not cite unknown or unretrieved "
+            "contexts. knownFactIds are separate DOCUMENT_CLAIM provenance. "
+            "When a supplied known fact records product wording containing "
+            "the claim criticized by a finding, cite that actual applicable "
+            "factId. CONFIRMED_DOCUMENT verification confirms the wording and "
+            "source, not the truth or compliance of a marketing claim; citing "
+            "the fact does not endorse the claim. knownFactIds may be empty "
+            "when no supplied known fact contains or applies to the criticized "
+            "claim, even when knownFacts is non-empty. Any selected "
+            "knownFactIds must be exact applicable factId values supplied in "
+            "knownFacts. Never invent, alter, or substitute a fact reference, "
+            "and never select the first fact merely because it was supplied. "
             "affectedPersonaCodes may "
             "contain only selected personaCodes. policyRuleCode must be one "
             "exact value selected from ruleCodes; never derive it from "
@@ -232,6 +242,10 @@ class RiskAnalysisService:
         )
         user_payload = request.model_dump(mode="json", by_alias=True)
         excerpt_options = self._repair_excerpt_options(request)
+        if not excerpt_options:
+            raise OllamaRequestRejectedError(
+                "The request contains no usable source evidence excerpts."
+            )
         user_payload["allowedEvidenceSpanOptions"] = excerpt_options
         serialized_options = json.dumps(
             excerpt_options,
@@ -281,21 +295,44 @@ class RiskAnalysisService:
                             "The prior JSON failed the required schema or "
                             "grounding validation. Return a new complete JSON "
                             "response matching the same supplied schema. "
-                            "Return exactly one finding, retaining the best "
-                            "fully grounded finding from the prior response "
-                            "and removing all others. Select only exact "
+                            "Return 0 to 20 fully grounded findings. Return an "
+                            "empty findings array only when there is no "
+                            "supported finding in the selected scope; it does "
+                            "not assert safety or legal compliance. For an "
+                            "empty findings array, omit riskScore or set it to "
+                            "null. A non-empty findings array may have a null "
+                            "or omitted diagnostic riskScore. Findings under "
+                            "distinct selected rules are distinct risks; do "
+                            "not repeat the same rule and source claim. Select "
+                            "only exact "
                             "evidenceSpanOptionIds from the allowed "
                             "source-only options below, with at least one "
-                            "selected option for every cited chunk and no "
-                            "option for an uncited chunk. Do not return "
-                            "evidenceSpans or any free-text evidence excerpt. "
-                            "Do not invent, alter, or duplicate option IDs. "
-                            "When knownFacts is non-empty, repair empty or "
-                            "unknown knownFactIds by selecting at least one "
-                            "applicable exact factId from knownFacts. When "
-                            "knownFacts is empty, keep knownFactIds empty. Do "
-                            "not invent, alter, or substitute a fact "
-                            "reference. The "
+                            "selected option for every finding. These options "
+                            "are only POLICY_REQUIREMENT citations to "
+                            "retrieved normative or source-policy text. Never "
+                            "put confirmedText, product text, or known facts "
+                            "into evidenceSpanOptionIds. Do not return "
+                            "retrievedContextChunkIds, evidenceSpans, or any "
+                            "free-text evidence excerpt. The server derives "
+                            "citation chunk IDs and exact evidence spans from "
+                            "the selected options. "
+                            "Do not invent, alter, or duplicate option IDs "
+                            "within a finding; the same option may be used by "
+                            "different findings. knownFactIds are separate "
+                            "DOCUMENT_CLAIM provenance. When a supplied known "
+                            "fact records product wording containing the claim "
+                            "criticized by a finding, cite that actual "
+                            "applicable factId. CONFIRMED_DOCUMENT verification "
+                            "confirms the wording and source, not the truth or "
+                            "compliance of a marketing claim; citing the fact "
+                            "does not endorse the claim. knownFactIds may be "
+                            "empty when no supplied known fact contains or "
+                            "applies to the criticized claim, even when "
+                            "knownFacts is non-empty. Any selected knownFactIds "
+                            "must be exact applicable factId values from "
+                            "knownFacts. Do not invent, alter, or substitute a "
+                            "fact reference, and never select the first fact "
+                            "merely because it was supplied. The "
                             "allowed options are "
                             f"{serialized_options}. "
                             "Apply all other original constraints. Return "
@@ -318,12 +355,16 @@ class RiskAnalysisService:
             except (ValidationError, TypeError, ValueError):
                 raise ProviderResponseInvalidError() from None
 
-        return response.model_copy(
-            update={
-                "model_version": self.ollama_model,
-                "prompt_version": self.OLLAMA_PROMPT_VERSION,
-            }
-        )
+        try:
+            return RiskAnalysisResponse.model_validate(
+                {
+                    **response.model_dump(),
+                    "model_version": self.ollama_model,
+                    "prompt_version": self.OLLAMA_PROMPT_VERSION,
+                }
+            )
+        except ValidationError:
+            raise ProviderResponseInvalidError() from None
 
     @staticmethod
     def _read_positive_int_env(name: str, default: int) -> int:
@@ -377,21 +418,24 @@ class RiskAnalysisService:
                 if cls._is_repair_metadata_line(line):
                     continue
                 candidates = re.findall(
-                    r".+?[.!?。！？]+(?:[\"'”’」』]+)?(?=\s|$)",
+                    r".+?(?:(?<!\d)[.!?。！？]+(?:[\"'”’」』]+)?"
+                    r"(?=\s|$)|$)",
                     line,
                 )
                 for candidate in candidates:
-                    excerpt = candidate.strip()
-                    encoded_size = len(excerpt.encode("utf-8"))
-                    if (
-                        not excerpt
-                        or len(excerpt) > cls.MAX_REPAIR_EXCERPT_CHARS
-                        or encoded_size > context_budget
+                    for excerpt in cls._bounded_repair_excerpts(
+                        candidate,
+                        context_budget,
                     ):
-                        continue
-                    excerpts.append(excerpt)
-                    context_budget -= encoded_size
-                    remaining_bytes -= encoded_size
+                        encoded_size = len(excerpt.encode("utf-8"))
+                        excerpts.append(excerpt)
+                        context_budget -= encoded_size
+                        remaining_bytes -= encoded_size
+                        if (
+                            len(excerpts)
+                            == cls.MAX_REPAIR_EXCERPTS_PER_CHUNK
+                        ):
+                            break
                     if len(excerpts) == cls.MAX_REPAIR_EXCERPTS_PER_CHUNK:
                         break
                 if len(excerpts) == cls.MAX_REPAIR_EXCERPTS_PER_CHUNK:
@@ -409,64 +453,103 @@ class RiskAnalysisService:
                     )
         return options
 
+    @classmethod
+    def _bounded_repair_excerpts(
+        cls,
+        source: str,
+        byte_budget: int,
+    ) -> list[str]:
+        excerpts: list[str] = []
+        cursor = 0
+        while (
+            cursor < len(source)
+            and byte_budget > 0
+            and len(excerpts) < cls.MAX_REPAIR_EXCERPTS_PER_CHUNK
+        ):
+            while cursor < len(source) and source[cursor].isspace():
+                cursor += 1
+            if cursor == len(source):
+                break
+
+            end = min(cursor + cls.MAX_REPAIR_EXCERPT_CHARS, len(source))
+            while (
+                end > cursor
+                and len(source[cursor:end].encode("utf-8")) > byte_budget
+            ):
+                end -= 1
+            if end == cursor:
+                break
+
+            if end < len(source):
+                boundary = max(
+                    source.rfind(" ", cursor, end),
+                    source.rfind("\t", cursor, end),
+                )
+                if boundary > cursor:
+                    end = boundary
+
+            excerpt = source[cursor:end].strip()
+            if not excerpt:
+                break
+            excerpts.append(excerpt)
+            byte_budget -= len(excerpt.encode("utf-8"))
+            cursor = end
+        return excerpts
+
     @staticmethod
     def _map_ollama_response(
         response: OllamaRiskAnalysisResponse,
         excerpt_options: list[dict[str, Any]],
     ) -> RiskAnalysisResponse:
-        if len(response.findings) != 1:
-            raise ValueError(
-                "An Ollama response must contain exactly one finding."
-            )
         options_by_id = {
             option["optionId"]: option for option in excerpt_options
         }
-        finding = response.findings[0]
-        selected_option_ids = finding.evidence_span_option_ids
-        if len(selected_option_ids) != len(set(selected_option_ids)):
-            raise ValueError("Finding contains duplicate evidence option ids.")
+        mapped_findings: list[FindingPayload] = []
+        for finding in response.findings:
+            selected_options: list[dict[str, Any]] = []
+            selected_option_ids: set[str] = set()
+            for option_id in finding.evidence_span_option_ids:
+                if option_id in selected_option_ids:
+                    raise ValueError(
+                        "Finding contains a duplicate evidence option id."
+                    )
+                selected_option_ids.add(option_id)
+                option = options_by_id.get(option_id)
+                if option is None:
+                    raise ValueError(
+                        "Finding contains an unknown evidence option id."
+                    )
+                selected_options.append(option)
+            if not selected_options:
+                raise ValueError("Finding is missing a source evidence option.")
 
-        cited_chunk_ids = set(finding.retrieved_context_chunk_ids)
-        selected_options: list[dict[str, Any]] = []
-        for option_id in selected_option_ids:
-            option = options_by_id.get(option_id)
-            if option is None:
-                raise ValueError(
-                    "Finding contains an unknown evidence option id."
-                )
-            if option["chunkId"] not in cited_chunk_ids:
-                raise ValueError(
-                    "Evidence option refers to an uncited context."
-                )
-            selected_options.append(option)
+            selected_chunk_ids = list(
+                dict.fromkeys(option["chunkId"] for option in selected_options)
+            )
 
-        selected_chunk_ids = {
-            option["chunkId"] for option in selected_options
-        }
-        if selected_chunk_ids != cited_chunk_ids:
-            raise ValueError("A cited context is missing an evidence option.")
-
-        mapped_finding = FindingPayload(
-            statement=finding.statement,
-            severity=finding.severity,
-            policy_rule_code=finding.policy_rule_code,
-            affected_persona_codes=finding.affected_persona_codes,
-            retrieved_context_chunk_ids=finding.retrieved_context_chunk_ids,
-            evidence_spans=[
-                EvidenceSpan(
-                    chunk_id=option["chunkId"],
-                    excerpt=option["excerpt"],
+            mapped_findings.append(
+                FindingPayload(
+                    statement=finding.statement,
+                    severity=finding.severity,
+                    policy_rule_code=finding.policy_rule_code,
+                    affected_persona_codes=finding.affected_persona_codes,
+                    retrieved_context_chunk_ids=selected_chunk_ids,
+                    evidence_spans=[
+                        EvidenceSpan(
+                            chunk_id=option["chunkId"],
+                            excerpt=option["excerpt"],
+                        )
+                        for option in selected_options
+                    ],
+                    known_fact_ids=finding.known_fact_ids,
+                    recommendation=finding.recommendation,
                 )
-                for option in selected_options
-            ],
-            known_fact_ids=finding.known_fact_ids,
-            recommendation=finding.recommendation,
-        )
+            )
         return RiskAnalysisResponse(
             risk_score=response.risk_score,
             model_version=response.model_version,
             prompt_version=response.prompt_version,
-            findings=[mapped_finding],
+            findings=mapped_findings,
         )
 
     @classmethod
@@ -484,7 +567,7 @@ class RiskAnalysisService:
             for pattern in cls.REPAIR_METADATA_LINE_PATTERNS
         ):
             return True
-        return not re.search(r"[.!?。！？]", line)
+        return False
 
     @staticmethod
     def _validate_grounding(
@@ -542,8 +625,6 @@ class RiskAnalysisService:
     ) -> None:
         known_fact_ids = {fact.fact_id for fact in request.known_facts}
         for finding in response.findings:
-            if known_fact_ids and not finding.known_fact_ids:
-                raise ValueError("Finding is missing a known fact reference.")
             if not set(finding.known_fact_ids) <= known_fact_ids:
                 raise ValueError("Finding cites an unknown fact.")
 

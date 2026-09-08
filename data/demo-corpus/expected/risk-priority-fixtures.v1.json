@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "scorePolicyVersion": "1.0.0",
+  "scorePolicyVersion": "1.1.0",
   "taxonomyVersion": "1.0.0",
   "synthetic": true,
   "demoOnly": true,

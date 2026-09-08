@@ -16,7 +16,10 @@ import java.util.Optional;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 @Component
@@ -28,14 +31,20 @@ public class EvidenceChunkIndexer {
 
     private final JdbcTemplate jdbcTemplate;
     private final OllamaEmbeddingClient embeddingClient;
+    private final TransactionTemplate transactionTemplate;
 
-    public EvidenceChunkIndexer(JdbcTemplate jdbcTemplate, OllamaEmbeddingClient embeddingClient) {
+    public EvidenceChunkIndexer(JdbcTemplate jdbcTemplate, OllamaEmbeddingClient embeddingClient,
+                                PlatformTransactionManager transactionManager) {
         this.jdbcTemplate = jdbcTemplate;
         this.embeddingClient = embeddingClient;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
-    @Transactional
     public IndexingResult indexSelected(Collection<Long> selectedEvidenceDocumentIds) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("Evidence embedding must run outside a database transaction");
+        }
         List<Long> selectedIds = normalizeIds(selectedEvidenceDocumentIds);
         if (selectedIds.isEmpty()) {
             return new IndexingResult(0, 0, 0);
@@ -48,7 +57,6 @@ public class EvidenceChunkIndexer {
                         from evidence_documents
                         where active = true and id in (%s)
                         order by id asc
-                        for update
                         """.formatted(placeholders),
                 (resultSet, rowNumber) -> new EvidenceSource(
                         resultSet.getLong("id"), resultSet.getString("content")),
@@ -60,39 +68,57 @@ public class EvidenceChunkIndexer {
         for (EvidenceSource source : sources) {
             List<ChunkDraft> chunks = chunk(source.content());
             String sourceHash = sha256(normalizeContent(source.content()));
-            Optional<String> latestSource = latestIndexedSource(source.id(), embeddingModel);
             List<String> desiredHashes = chunks.stream().map(ChunkDraft::chunkHash).toList();
-
-            if (latestSource.filter(sourceHash::equals).isPresent()) {
-                requireCompleteChunkSet(source.id(), sourceHash, desiredHashes, embeddingModel);
-                unchangedDocuments++;
-                continue;
-            }
-
             List<String> historicalHashes = existingHashes(source.id(), sourceHash, embeddingModel);
-            if (historicalHashes.equals(desiredHashes)) {
-                jdbcTemplate.update("""
-                                update evidence_document_chunks
-                                set created_at = current_timestamp
-                                where evidence_document_id = ? and source_hash = ?
-                                  and chunking_version = ? and embedding_model = ?
-                                """,
-                        source.id(), sourceHash, CHUNK_VERSION, embeddingModel);
-            } else {
-                if (!historicalHashes.isEmpty()) {
-                    throw new IllegalStateException("Indexed evidence chunk set is incomplete for document "
-                            + source.id());
-                }
-                List<double[]> embeddings = embeddingClient.embedAll(
-                        chunks.stream().map(ChunkDraft::chunkText).toList());
-                requireUnchangedModel(embeddingModel);
-                insertChunks(source.id(), sourceHash, chunks, embeddings, embeddingModel);
-                indexedChunks += chunks.size();
+            if (!historicalHashes.isEmpty() && !historicalHashes.equals(desiredHashes)) {
+                throw new IllegalStateException("Indexed evidence chunk set is incomplete for document "
+                        + source.id());
             }
-            indexedDocuments++;
+            List<double[]> embeddings = historicalHashes.isEmpty()
+                    ? embeddingClient.embedAll(chunks.stream().map(ChunkDraft::chunkText).toList())
+                    : List.of();
+            requireUnchangedModel(embeddingModel);
+            IndexingResult result = Objects.requireNonNull(transactionTemplate.execute(status ->
+                    persistSource(source, sourceHash, chunks, embeddings, embeddingModel)));
+            indexedDocuments += result.indexedDocumentCount();
+            unchangedDocuments += result.unchangedDocumentCount();
+            indexedChunks += result.indexedChunkCount();
         }
         requireUnchangedModel(embeddingModel);
         return new IndexingResult(indexedDocuments, unchangedDocuments, indexedChunks);
+    }
+
+    private IndexingResult persistSource(EvidenceSource source, String sourceHash, List<ChunkDraft> chunks,
+                                         List<double[]> embeddings, String embeddingModel) {
+        List<String> current = jdbcTemplate.query("""
+                        select content from evidence_documents
+                        where id = ? and active = true
+                        for update
+                        """, (resultSet, rowNumber) -> resultSet.getString("content"), source.id());
+        if (current.size() != 1 || !sourceHash.equals(sha256(normalizeContent(current.getFirst())))) {
+            throw new IllegalStateException("Evidence source changed during embedding: " + source.id());
+        }
+        List<String> desiredHashes = chunks.stream().map(ChunkDraft::chunkHash).toList();
+        Optional<String> latestSource = latestIndexedSource(source.id(), embeddingModel);
+        if (latestSource.filter(sourceHash::equals).isPresent()) {
+            requireCompleteChunkSet(source.id(), sourceHash, desiredHashes, embeddingModel);
+            return new IndexingResult(0, 1, 0);
+        }
+        List<String> historicalHashes = existingHashes(source.id(), sourceHash, embeddingModel);
+        if (historicalHashes.equals(desiredHashes)) {
+            jdbcTemplate.update("""
+                            update evidence_document_chunks
+                            set created_at = current_timestamp
+                            where evidence_document_id = ? and source_hash = ?
+                              and chunking_version = ? and embedding_model = ?
+                            """, source.id(), sourceHash, CHUNK_VERSION, embeddingModel);
+            return new IndexingResult(1, 0, 0);
+        }
+        if (!historicalHashes.isEmpty() || embeddings.size() != chunks.size()) {
+            throw new IllegalStateException("Indexed evidence chunk set changed during preparation: " + source.id());
+        }
+        insertChunks(source.id(), sourceHash, chunks, embeddings, embeddingModel);
+        return new IndexingResult(1, 0, chunks.size());
     }
 
     public List<ChunkDraft> chunk(String content) {

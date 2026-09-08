@@ -36,6 +36,7 @@ const showReviewRequest = ref(false)
 const submissionComment = ref('')
 const canManage = ref(false)
 let reviewRefreshTimer = null
+let reviewRefreshRunning = false
 const STAGE_LABEL = {
   PREPARING: '분석 준비 중',
   PERSONA_SIMULATION: 'Persona 반복 실험 중',
@@ -54,7 +55,7 @@ const band = computed(() => {
   if (s >= 70) return { tone: 'high', label: '고위험' }
   if (s >= 40) return { tone: 'med', label: '중위험' }
   if (s > 0) return { tone: 'low', label: '저위험' }
-  return { tone: 'ok', label: '위험 없음' }
+  return { tone: 'ok', label: '0점' }
 })
 
 const { polling, timedOut, start } = usePolling(() => api.getAnalysis(props.analysisId), {
@@ -64,7 +65,7 @@ const { polling, timedOut, start } = usePolling(() => api.getAnalysis(props.anal
       return toast.fromError(err)
     }
     status.value = res
-    if (res.status === 'COMPLETED') {
+    if (['COMPLETED', 'IN_REVIEW'].includes(res.status)) {
       try {
         await loadResult()
         loadError.value = null
@@ -87,16 +88,24 @@ function scheduleReviewRefresh() {
   reviewRefreshTimer = setInterval(refreshReview, 2000)
 }
 async function refreshReview() {
+  if (reviewRefreshRunning) return
+  reviewRefreshRunning = true
   try {
     const nextReview = await api.getReviewByAnalysis(props.analysisId)
+    const isDecision = nextReview?.status !== 'PENDING'
+    let nextResult
+    if (isDecision) {
+      nextResult = await api.getAnalysisResult(props.analysisId)
+    }
     reviewInfo.value = nextReview
     reviewRequested.value = false
-    if (nextReview?.status !== 'PENDING') {
-      stopReviewRefresh()
-      result.value = await api.getAnalysisResult(props.analysisId)
-    }
+    if (isDecision) result.value = nextResult
+    loadError.value = null
+    if (isDecision) stopReviewRefresh()
   } catch (e) {
-    if (e?.status !== 404) stopReviewRefresh()
+    loadError.value = e
+  } finally {
+    reviewRefreshRunning = false
   }
 }
 
@@ -108,7 +117,7 @@ async function load() {
     const nextStatus = await api.getAnalysis(props.analysisId)
     status.value = nextStatus
     canManage.value = session.isPM
-    if (isRunning.value) start((r) => ['COMPLETED', 'FAILED'].includes(r.status))
+    if (isRunning.value) start((r) => ['COMPLETED', 'IN_REVIEW', 'FAILED'].includes(r.status))
     else if (isDone.value) await loadResult()
     loadError.value = null
   } catch (e) {
@@ -134,7 +143,7 @@ async function loadResult() {
 }
 async function retry() {
   retrying.value = true
-  try { await api.retryAnalysis(props.analysisId); toast.info('분석 재시도'); status.value = await api.getAnalysis(props.analysisId); start((r) => ['COMPLETED', 'FAILED'].includes(r.status)) }
+  try { await api.retryAnalysis(props.analysisId); toast.info('분석 재시도'); status.value = await api.getAnalysis(props.analysisId); start((r) => ['COMPLETED', 'IN_REVIEW', 'FAILED'].includes(r.status)) }
   catch (e) { toast.fromError(e) } finally { retrying.value = false }
 }
 function openReviewRequest() {
@@ -210,7 +219,7 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
       </div>
       <GProgress :value="status.progress ?? 0" tone="neutral" />
       <p class="t-sm mute run-note">{{ timedOut ? '자동 확인을 멈췄습니다.' : polling ? '상태를 1초 간격으로 확인합니다.' : '' }}</p>
-      <GButton v-if="timedOut" variant="secondary" size="sm" @click="start((r) => ['COMPLETED','FAILED'].includes(r.status))">상태 다시 확인</GButton>
+      <GButton v-if="timedOut" variant="secondary" size="sm" @click="start((r) => ['COMPLETED','IN_REVIEW','FAILED'].includes(r.status))">상태 다시 확인</GButton>
     </div>
 
     <!-- Failed -->
@@ -374,7 +383,10 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
         <span class="mono mute">{{ result.findings.length }} 건 탐지</span>
       </div>
 
-      <div v-if="!result.findings.length" class="nofind"><PhCheckCircle :size="18" weight="fill" /> 탐지된 위험 표현이 없습니다.</div>
+      <div v-if="!result.findings.length" class="nofind">
+        <PhClipboardText :size="18" />
+        <span>현재 분석 범위에서 지원되는 Finding이 없습니다. 이는 상품의 안전성 또는 법률·규제 준수를 확인하거나 결론 내린 것이 아닙니다.</span>
+      </div>
 
       <ol v-else class="finds">
         <li v-for="(f, i) in result.findings" :key="f.findingId" class="find">
@@ -496,7 +508,7 @@ const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')
 .requested { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); font-weight: var(--fw-semibold); font-size: var(--text-sm); }
 
 .fh { display: flex; align-items: baseline; justify-content: space-between; margin-top: var(--s-48); padding-bottom: var(--s-16); border-bottom: 1px solid var(--line-strong); }
-.nofind { margin-top: var(--s-24); display: inline-flex; align-items: center; gap: 8px; color: var(--ok); }
+.nofind { margin-top: var(--s-24); display: inline-flex; align-items: center; gap: 8px; color: var(--ink-mute); }
 
 .finds { list-style: none; }
 .find { display: grid; grid-template-columns: 64px 1fr; gap: var(--s-20); padding: var(--s-28) 0; border-bottom: 1px solid var(--line); }

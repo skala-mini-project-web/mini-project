@@ -123,7 +123,10 @@ public class AnalysisService {
         auditService.append(
                 currentUser, AuditAction.ANALYSIS_CREATED, analysis.getId(), null, analysis.getId());
         eventPublisher.publishEvent(new AnalysisRequestedEvent(
-                analysis.getId(), resolvedScenario, currentRequestTraceId()));
+                analysis.getId(),
+                analysis.getExecutionToken(),
+                resolvedScenario,
+                currentRequestTraceId()));
         return AnalysisAcceptedResponse.created(analysis.getId());
     }
 
@@ -158,7 +161,10 @@ public class AnalysisService {
         auditService.append(
                 currentUser, AuditAction.ANALYSIS_RETRIED, analysis.getId(), null, analysis.getId());
         eventPublisher.publishEvent(new AnalysisRequestedEvent(
-                analysisId, resolveScenario(scenarioCode), currentRequestTraceId()));
+                analysisId,
+                analysis.getExecutionToken(),
+                resolveScenario(scenarioCode),
+                currentRequestTraceId()));
         return AnalysisAcceptedResponse.from(analysis);
     }
 

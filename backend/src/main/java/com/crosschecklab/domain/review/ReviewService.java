@@ -185,7 +185,7 @@ public class ReviewService {
                 .stream()
                 .map(FindingReviewDecision::getFindingRevisionId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-        List<Long> riskPatternIds = decision == ReviewStatus.APPROVED
+        List<Long> riskPatternIds = decision == ReviewStatus.APPROVED && !approvedFindingIds.isEmpty()
                 ? riskPatternService.promote(
                         review.getId(),
                         findingRepository.findAllByAnalysisExecutionIdAndIdInOrderByIdAsc(
@@ -209,7 +209,7 @@ public class ReviewService {
         return ReviewDecisionResponse.of(review, riskPatternIds);
     }
 
-    // 결정 조합 검증. 승인은 Finding 선택이, 반려는 사유가 필수다.
+    // 결정 조합 검증. Finding 이 있는 승인은 선택이, 반려는 사유가 필수다.
     private Set<Long> validateSelection(
             ReviewStatus decision, ReviewDecisionRequest request, List<Finding> currentFindings) {
         if (decision == ReviewStatus.REJECTED) {
@@ -221,6 +221,9 @@ public class ReviewService {
 
         Set<Long> selected = new LinkedHashSet<>(request.selectedFindingIdsOrEmpty());
         if (selected.isEmpty()) {
+            if (currentFindings.isEmpty()) {
+                return Set.of();
+            }
             throw new BusinessException(ErrorCode.INVALID_FINDING_SELECTION);
         }
         // 다른 분석뿐 아니라 같은 분석의 이전 execution Finding 도 승격시키지 못하게 한다.

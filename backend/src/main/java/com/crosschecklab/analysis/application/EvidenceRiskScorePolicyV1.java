@@ -10,7 +10,7 @@ import java.util.Objects;
 /** Deterministic policy inputs and aggregation for document disclosure risk priority policy v1. */
 public final class EvidenceRiskScorePolicyV1 {
 
-    public static final String VERSION = "1.0.0";
+    public static final String VERSION = "1.1.0";
 
     private static final BigDecimal BASIS_POINTS = BigDecimal.valueOf(10_000);
     private static final Map<RedTeamRuleCode, Components> COMPONENTS = Map.of(

@@ -60,6 +60,34 @@ uvicorn app.main:app --reload
 - `OLLAMA_NUM_CTX`(기본 32768): 모델 context 크기. Ollama 기본 4096은 confirmedText 상한 20,000자와 retrieved context를 담지 못하고 초과분을 앞에서 조용히 잘라 system prompt를 잃는다. 짧은 데모 문서만 쓰는 로컬에서는 8192로 낮춰 KV cache 메모리를 줄일 수 있다.
 - `OLLAMA_KEEP_ALIVE`(기본 미설정 = Ollama 서버 기본 5m): 응답 후 모델을 메모리에 유지하는 시간. 다른 작업과 메모리를 나눠 쓰려면 `1m` 또는 `0`으로 지정한다. 다음 분석 시 모델 재로드 시간이 늘어난다.
 
+Ollama에는 검색 chunk의 문장, 글머리표, 표 행을 원문 그대로 최대 400자씩
+잘라 opaque option ID와 함께 전달합니다. 합성 데이터 고지와 문서 메타데이터는
+근거 option에서 제외하며 전체 option 원문은 UTF-8 12,000 bytes를 넘지 않습니다.
+사용 가능한 원문 근거가 하나도 없으면 provider를 호출하지 않고
+`AI_PROVIDER_REQUEST_REJECTED`(422)를 반환합니다.
+
+분석 응답의 `findings`는 선택된 persona·rule·검색 chunk 범위에서 원문 근거로
+지원되는 지적 0~20개입니다. 빈 배열은 이 선택 범위에서 지원되는 지적이 없다는
+뜻일 뿐 상품의 안전성이나 법률·준법 적합성을 보장하지 않습니다. 이때
+`riskScore`는 생략하거나 `null`이어야 하며 숫자 `0`을 사용하지 않습니다.
+지적이 있더라도 진단용 `riskScore`는 `null`일 수 있습니다. 각 지적의 근거는
+내부 Ollama contract `ollama-rag-grounded-v17`은 인용을 두 역할로 구분합니다.
+`evidenceSpanOptionIds`는 검색된 규범·원천 정책 원문을 가리키는
+`POLICY_REQUIREMENT` 인용 전용이며, 상품 문구나 known fact를 넣지 않습니다.
+서버가 신뢰된 option table을 사용해 공개 응답의 `retrievedContextChunkIds`와
+정확한 원문 `evidenceSpans`를 결정적으로 생성합니다. 모델은 chunk ID나 span을
+작성하지 않습니다. 한 지적 안에서 같은 option을 중복할 수 없지만 서로 다른
+지적은 같은 option을 공유할 수 있습니다.
+서로 다른 선택 rule의 지적은 별도 위험이며, 같은 rule과 같은 원문 claim의
+중복은 downstream 집계에서 한 번만 계산합니다.
+`knownFactIds`는 이와 별개인 `DOCUMENT_CLAIM` 출처입니다. supplied fact가
+지적 대상인 실제 상품 문구를 담고 있을 때 그 fact ID를 연결합니다.
+`CONFIRMED_DOCUMENT` 검증은 문구와 출처가 확인되었다는 뜻이며 마케팅 주장의
+진실성이나 준법성을 보증하지 않고, 이를 인용해도 주장을 승인하는 것이 아닙니다.
+`knownFacts`가 전달되어도 해당 지적의 claim을 담거나 적용되는 fact가 없으면
+`knownFactIds`는 빈 배열일 수 있으며, 첫 fact를 임의로 연결하거나 ID를 만들지
+않습니다. 모델·프롬프트 버전은 DB 컬럼 계약에 맞춰 공백이 아닌 최대 50자입니다.
+
 선택한 provider와 모델의 접근 가능 여부는 다음 명령으로 검증합니다.
 성공 응답은 `{"status":"UP","provider":"ollama"}`입니다.
 

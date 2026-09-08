@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
@@ -15,6 +16,7 @@ from fastapi import FastAPI, File, Form, Header, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from PIL import Image, UnidentifiedImageError
+from starlette.concurrency import run_in_threadpool
 
 MAX_REQUEST_BYTES = int(os.getenv("OCR_MAX_REQUEST_BYTES", "10485760"))
 MAX_IMAGE_BYTES = min(int(os.getenv("OCR_MAX_IMAGE_BYTES", "9437184")), MAX_REQUEST_BYTES)
@@ -31,6 +33,7 @@ IMAGE_FORMAT_MEDIA_TYPES = {
 }
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+OCR_PERMIT = threading.BoundedSemaphore(value=1)
 
 app = FastAPI(title="Private Korean page OCR worker", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -215,6 +218,26 @@ def run_tesseract(image_path: Path, output_base: Path) -> tuple[str, str]:
         raise OcrFailure(500, "OCR_OUTPUT_MISSING", "OCR engine output is unavailable", True) from exception
 
 
+def process_ocr(image_bytes: bytes, media_type: str) -> tuple[int, int, str, str, float, str]:
+    if not OCR_PERMIT.acquire(blocking=False):
+        raise OcrFailure(503, "OCR_BUSY", "OCR worker is already processing a page", True)
+    try:
+        with tempfile.TemporaryDirectory(prefix="ocr-page-") as directory:
+            directory_path = Path(directory)
+            image_path = directory_path / "page.png"
+            output_base = directory_path / "result"
+            width, height = prepare_image(image_bytes, media_type, image_path)
+            text, raw_tsv = run_tesseract(image_path, output_base)
+
+        if not text.strip():
+            raise OcrFailure(422, "OCR_NO_TEXT", "No text was recognized on the page")
+        confidence = page_confidence(raw_tsv)
+        version = engine_version()
+        return width, height, text, raw_tsv, confidence, version
+    finally:
+        OCR_PERMIT.release()
+
+
 @app.post("/internal/v1/ocr/pages")
 async def recognize_page(
     image: Annotated[UploadFile, File()],
@@ -242,16 +265,9 @@ async def recognize_page(
     if not hmac.compare_digest(calculated_hash, artifact_hash):
         raise OcrFailure(400, "ARTIFACT_HASH_MISMATCH", "Image does not match artifactHash")
 
-    with tempfile.TemporaryDirectory(prefix="ocr-page-") as directory:
-        directory_path = Path(directory)
-        image_path = directory_path / "page.png"
-        output_base = directory_path / "result"
-        width, height = prepare_image(image_bytes, media_type, image_path)
-        text, raw_tsv = run_tesseract(image_path, output_base)
-
-    if not text.strip():
-        raise OcrFailure(422, "OCR_NO_TEXT", "No text was recognized on the page")
-    confidence = page_confidence(raw_tsv)
+    width, height, text, raw_tsv, confidence, version = await run_in_threadpool(
+        process_ocr, image_bytes, media_type
+    )
     return {
         "pageNumber": page_number,
         "sourceHash": source_hash,
@@ -265,7 +281,7 @@ async def recognize_page(
         "confidence": confidence,
         "engine": {
             "name": "tesseract",
-            "version": engine_version(),
+            "version": version,
             "tessdataVersion": os.getenv("OCR_TESSDATA_VERSION", "unknown"),
             "language": LANGUAGE,
             "languages": ["kor", "eng"],

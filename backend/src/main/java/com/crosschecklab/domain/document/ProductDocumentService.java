@@ -1,11 +1,13 @@
 package com.crosschecklab.domain.document;
 
 import com.crosschecklab.domain.analysis.AnalysisRepository;
+import com.crosschecklab.domain.document.batch.DocumentBatchItemRepository;
 import com.crosschecklab.domain.document.dto.DocumentAcceptedResponse;
 import com.crosschecklab.domain.document.dto.DocumentResponse;
 import com.crosschecklab.domain.document.dto.DocumentTextUpdateRequest;
 import com.crosschecklab.domain.document.extraction.DocumentExtractionPage;
 import com.crosschecklab.domain.document.extraction.ExtractionScenarioResolver;
+import com.crosschecklab.domain.document.extraction.PdfRenderLimits;
 import com.crosschecklab.domain.document.storage.FileStorage;
 import com.crosschecklab.domain.document.storage.StoredFile;
 import com.crosschecklab.domain.groundtruth.GroundTruthFactService;
@@ -57,6 +59,7 @@ public class ProductDocumentService {
 
     private final ProductRepository productRepository;
     private final ProductDocumentRepository productDocumentRepository;
+    private final DocumentBatchItemRepository documentBatchItemRepository;
     private final DocumentSourceRevisionRepository documentSourceRevisionRepository;
     private final AnalysisRepository analysisRepository;
     private final GroundTruthFactService groundTruthFactService;
@@ -81,12 +84,15 @@ public class ProductDocumentService {
 
         StoredFile stored = fileStorage.store(file, upload.scenarioCode());
 
-        ProductDocument document = productDocumentRepository.save(ProductDocument.upload(
+        ProductDocument document = ProductDocument.upload(
                 product, upload.fileName(), upload.mediaType().contentType(),
-                stored.size(), stored.checksum(), stored.storageKey()));
+                stored.size(), stored.checksum(), stored.storageKey());
+        String extractionToken = document.reserveExtraction(databaseNow().plusMinutes(5));
+        productDocumentRepository.saveAndFlush(document);
         documentSourceRevisionRepository.save(DocumentSourceRevision.initial(document));
 
-        eventPublisher.publishEvent(new DocumentExtractionRequestedEvent(document.getId()));
+        eventPublisher.publishEvent(
+                new DocumentExtractionRequestedEvent(document.getId(), extractionToken));
 
         return DocumentAcceptedResponse.from(document);
     }
@@ -167,12 +173,17 @@ public class ProductDocumentService {
         ownershipChecker.requireOwner(document.getOwnerId(), currentUser);
 
         // 먼저 통과한 요청이 이미 EXTRACTING 으로 옮겨 두었으므로 뒤이은 요청은 여기서 409 가 된다.
-        if (!document.isRetryableFailure()) {
+        // 배치 문서는 배치의 lease/fence 경로만 소유한다. 단건 실행으로 우회하지 않는다.
+        if (!document.isRetryableFailure()
+                || documentBatchItemRepository.existsByProductDocument_Id(documentId)) {
             throw new BusinessException(ErrorCode.DOCUMENT_NOT_RETRYABLE);
         }
 
+        OffsetDateTime extractionDeadline = databaseNow().plusMinutes(5);
         document.markExtracting();
-        eventPublisher.publishEvent(new DocumentExtractionRequestedEvent(documentId));
+        String extractionToken = document.reserveExtraction(extractionDeadline);
+        eventPublisher.publishEvent(
+                new DocumentExtractionRequestedEvent(documentId, extractionToken));
 
         return DocumentAcceptedResponse.from(document);
     }
@@ -188,6 +199,12 @@ public class ProductDocumentService {
     private User loadCurrentUser(DemoUser currentUser) {
         return userRepository.findById(currentUser.id())
                 .orElseThrow(() -> new BusinessException(ErrorCode.DEMO_USER_NOT_FOUND));
+    }
+
+    private OffsetDateTime databaseNow() {
+        return (OffsetDateTime) entityManager
+                .createNativeQuery("select clock_timestamp()", OffsetDateTime.class)
+                .getSingleResult();
     }
 
     private DocumentResponse response(ProductDocument document) {
@@ -243,12 +260,15 @@ public class ProductDocumentService {
         int dpi = configuredDpi instanceof Number value ? value.intValue() : 300;
         try (PDDocument pdf = Loader.loadPDF(source);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            PdfRenderLimits.validate(pdf.getPage(pageNumber - 1), dpi);
             BufferedImage image = new PDFRenderer(pdf)
                     .renderImageWithDPI(pageNumber - 1, dpi, ImageType.RGB);
             if (!ImageIO.write(image, "png", output)) {
                 throw new IOException("PNG writer is unavailable");
             }
             return output.toByteArray();
+        } catch (PdfRenderLimits.PdfRenderLimitException exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR);
         } catch (IOException exception) {
             throw new UncheckedIOException("OCR 페이지 렌더를 읽지 못했습니다.", exception);
         }
