@@ -281,9 +281,10 @@ ollama list
 - 구현 계획: [`docs/plans/ARGUS-위험우선순위-배치-OCR-구현계획.md`](docs/plans/ARGUS-위험우선순위-배치-OCR-구현계획.md)
 - 상태 표기: `[완료]` 검증·`develop` 반영 완료 / `[진행 중]` feature branch에서 구현·검증 중 / `[예정]` 설계는 확정됐지만 미구현
 - 근거 기반 문서 위험 우선순위·상황 기반 Persona
-  - `[완료]` 정책 v1·synthetic TEVV fixture, 불변 source revision, execution-bound Finding, exact evidence anchor, Finding별 reviewer decision 이력
+  - `[완료]` 정책 1.1.0·synthetic TEVV fixture, 불변 source revision, execution-bound Finding, exact evidence anchor, Finding별 reviewer decision 이력
   - `[완료]` 실제 Docker/browser RAG E2E에서 immutable anchor·review decision 저장 확인
   - `[완료]` 결정론 Policy v1 score engine·score ledger·state-first score UI, reviewer 승인 뒤 actual `SCORED` browser E2E
+  - `[완료]` v18 문서 주장·정책 근거 분리 검증, Finding 0~20건·빈 검토 승인, 동일 원문·규칙 중복 집계 제거. 근거 부족·빈 결과에 가짜 anchor나 0점 생성 금지
   - `[예정]` held-out TEVV calibration·artifact-pinned model comparison과 score band 재보정
 - 대량 파일 자동 처리
   - `[완료]` PostgreSQL durable batch queue, `SKIP LOCKED` lease/fence, item별 retry·cancel·quarantine·attempt audit
@@ -291,20 +292,16 @@ ollama list
 - PDF 한글 OCR
   - `[완료]` PDFBox-first page routing, isolated `kor+eng` OCR worker, page artifact/hash·confidence·engine provenance
   - `[완료]` PM current run/text-hash confirmation, reviewer read-only, blank·corrupt·LOW confidence·stale confirmation synthetic fixture, actual Compose/browser E2E
+  - `[완료]` PDF 렌더 자원 제한·공통 추출 시간 예산, 본문 수신 전 OCR admission·취소 안전 permit. 대량 스캔은 배치 큐 사용, 동시 단건 요청은 수동 재시도가 필요할 수 있음
+- 상품 조회·비동기 작업
+  - `[완료]` 상품 전체 검색·필터·페이지/count와 mock lifecycle 일치, polling 직렬화·세션 변경 후 오래된 응답 차단
+  - `[완료]` 수락 token·lease 기반 유실 작업 실패 복구, RAG 외부 호출과 DB 잠금 분리
 - 실서비스 검증·합성 corpus
   - `[완료]` 실제 browser E2E: PM 수정·확정, 분석 후 수정 409, reviewer read-only, malformed PDF 실패 화면, RAG→review→Risk Pattern→GuardFit
   - `[완료]` 실제 browser E2E: PM/reviewer 서버 권한 거부 403, desktop·390px overflow/focus/action visibility
   - `[완료]` 6개 합성 상품군·30개 PDF·102페이지 corpus의 PDFBox extraction·SHA-256·source revision 검증
-
-### 최근 추가 보강 — [PR #110](https://github.com/skala-mini-project-web/mini-project/pull/110)
-
-- **근거·점수:** v18 명시적 문서 주장 선택·검증, Finding 0~20건·빈 검토 승인 지원, 정책 1.1.0의 동일 원문·규칙 중복 집계 제거. 근거 부족·빈 결과에 가짜 anchor나 0점 생성 금지
-- **복구·성능:** 수락 token·lease 기반 유실 작업 실패 복구, RAG 외부 호출과 DB 잠금 분리, PDF 렌더 자원 제한·공통 추출 시간 예산
-- **화면·조회:** 상품 전체 검색·필터·페이지/count, mock lifecycle 일치, polling 직렬화와 세션 변경 후 오래된 응답 차단
-- **OCR:** 본문 수신 전 admission 제한·취소 안전 permit. 대량 스캔은 durable batch queue 사용; 동시 단건 요청은 실패 후 수동 재시도가 필요할 수 있음
-- **검증:** backend 461·AI 90·OCR 7·frontend smoke 113개 및 실제 RAG·한국어 OCR browser E2E 통과
-- **제한 부하:** 조회 6,440건 오류 0, 실제 RAG 2동시 성공, 스캔 배치 8/8 성공(14.16초), 컨테이너 OOM·비정상 재시작 0. 장시간 soak·강제 OOM·최대 처리량은 미검증 — [측정 범위와 결과](https://github.com/skala-mini-project-web/mini-project/pull/110#issuecomment-5581397161)
-- **배포 주의:** V25 적용 전 구버전 worker 전체 중단, 구·신 worker 혼합 rolling 배포 금지. V26/V27은 제약 추가와 기존 행 검증을 별도 트랜잭션으로 분리
+  - `[완료]` backend 461·AI 90·OCR 7·frontend smoke 113개 및 실제 RAG·한국어 OCR browser E2E 통과
+  - `[완료]` 제한 부하: 조회 6,440건 오류 0, 실제 RAG 2동시 성공, 스캔 배치 8/8 성공(14.16초), 컨테이너 OOM·비정상 재시작 0. 장시간 연속 부하·강제 OOM·최대 처리량은 미검증 — [측정 범위와 결과](https://github.com/skala-mini-project-web/mini-project/pull/110#issuecomment-5581397161)
 
 ## 팀 구성
 
