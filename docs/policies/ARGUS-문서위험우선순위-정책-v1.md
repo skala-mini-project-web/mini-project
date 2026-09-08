@@ -26,8 +26,9 @@
 ## 점수 단위
 
 - 단위: 고정 문서 revision의 중복 제거된 harm event
-- 중복 키: `sourceSnapshotId + policyRuleId + normalizedDocumentSpanAnchor`
-- 동일 문장을 여러 Red Team rule·모델 문장이 반복해도 하나의 harm event로 처리
+- 중복 키: `sourceDocumentId + sourceRevisionId + sourceHash + policyRuleCode + pageNumber + utf8StartOffset + utf8EndOffset + excerptHash`
+- 동일 규칙이 동일 원문 범위를 반복 지적하거나 표현만 바꾼 경우 하나의 harm event로 처리. 서로 다른 규칙의 문제는 같은 문장에서도 별개 harm event로 계산
+- 점수 엔진 1.1.0에서 이 중복 기준 적용. 기존 가중치·합산식과 불변 점수 이력은 유지하고 원본 Finding·검토 결정은 삭제하지 않음
 - Persona 수·선택 순서·model confidence·retrieval similarity·Finding 개수는 점수 입력이 아님
 
 ## 평가 차원

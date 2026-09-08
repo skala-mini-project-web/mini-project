@@ -1,6 +1,11 @@
 package com.crosschecklab.domain.document;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static com.crosschecklab.global.security.DemoAuthenticationFilter.ROLE_HEADER;
+import static com.crosschecklab.global.security.DemoAuthenticationFilter.USER_ID_HEADER;
 
 import com.crosschecklab.domain.document.batch.DocumentBatchClaimRepository;
 import com.crosschecklab.domain.document.batch.DocumentBatchItem;
@@ -16,7 +21,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 class DocumentBatchLifecycleIntegrationTest extends IntegrationTestSupport {
 
-    private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-09-07T01:00:00Z");
+    private static final OffsetDateTime NOW = OffsetDateTime.now().plusYears(1);
     private static final String CHECKSUM = "b".repeat(64);
     private static final String OWNER_USERNAME = "pm_park";
 
@@ -93,6 +98,44 @@ class DocumentBatchLifecycleIntegrationTest extends IntegrationTestSupport {
                 .containsEntry("extracted_text", "recovered text");
         assertThat(attemptOutcomes(fixture.itemId()))
                 .containsExactly("RETRY_WAIT", "SUCCEEDED");
+    }
+
+    @Test
+    void singleDocumentRetryCannotBypassBatchRetryOwnership() throws Exception {
+        Fixture fixture = insertPendingFixture("single-retry-rejected", 2);
+        DocumentBatchItem claim = onlyClaim("batch-retry-owner", NOW);
+        OffsetDateTime nextDueAt = NOW.plusDays(1);
+        assertThat(claims.failClaim(
+                claim.getId(), "batch-retry-owner", claim.getLeaseFence(), NOW.plusMinutes(1),
+                nextDueAt, true, "TEMPORARY_OCR_FAILURE", "Temporary OCR failure.",
+                "Attempts exhausted.", "single-retry-rejected")).isEqualTo(1);
+        Map<String, Object> before = jdbcTemplate.queryForMap("""
+                SELECT i.status, i.attempt_count, i.lease_fence, i.due_at,
+                       d.extract_status, d.extraction_error_retryable, d.updated_at
+                FROM document_batch_items i
+                JOIN product_documents d ON d.id = i.product_document_id
+                WHERE i.id = ?
+                """, fixture.itemId());
+        assertThat(before).containsEntry("status", "RETRY_WAIT")
+                .containsEntry("extract_status", "FAILED")
+                .containsEntry("extraction_error_retryable", true);
+
+        mockMvc.perform(post("/api/documents/{documentId}/retry", claim.getProductDocumentId())
+                        .header(USER_ID_HEADER, claim.getOwnerId().toString())
+                        .header(ROLE_HEADER, "PRODUCT_MANAGER"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("DOCUMENT_NOT_RETRYABLE"));
+
+        assertThat(jdbcTemplate.queryForMap("""
+                SELECT i.status, i.attempt_count, i.lease_fence, i.due_at,
+                       d.extract_status, d.extraction_error_retryable, d.updated_at
+                FROM document_batch_items i
+                JOIN product_documents d ON d.id = i.product_document_id
+                WHERE i.id = ?
+                """, fixture.itemId())).isEqualTo(before);
+        DocumentBatchItem retried = onlyClaim("batch-retry-owner", nextDueAt);
+        assertThat(retried.getId()).isEqualTo(fixture.itemId());
+        assertThat(retried.getLeaseFence()).isEqualTo(claim.getLeaseFence() + 1);
     }
 
     @Test

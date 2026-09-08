@@ -22,6 +22,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
 import java.util.Objects;
+import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -82,6 +83,12 @@ public class ProductDocument extends BaseTimeEntity {
     @Column(name = "extraction_error_retryable", nullable = false)
     private boolean extractionErrorRetryable;
 
+    @Column(name = "extraction_token", length = 36)
+    private String extractionToken;
+
+    @Column(name = "extraction_lease_until")
+    private OffsetDateTime extractionLeaseUntil;
+
     @Column(nullable = false)
     private boolean confirmed;
 
@@ -123,12 +130,31 @@ public class ProductDocument extends BaseTimeEntity {
         clearExtractionError();
     }
 
+    public String reserveExtraction(OffsetDateTime deadline) {
+        if (!isExtractionActive()) {
+            throw new IllegalStateException("extraction must be UPLOADED or EXTRACTING");
+        }
+        this.extractionLeaseUntil = Objects.requireNonNull(deadline, "deadline must not be null");
+        this.extractionToken = UUID.randomUUID().toString();
+        return extractionToken;
+    }
+
+    public boolean ownsExtraction(String expectedToken, OffsetDateTime now) {
+        return isExtractionActive()
+                && expectedToken != null
+                && now != null
+                && expectedToken.equals(extractionToken)
+                && extractionLeaseUntil != null
+                && extractionLeaseUntil.isAfter(now);
+    }
+
     // 재추출로 텍스트가 덮어써지면 이전에 확인한 내용이 아니므로 확인 상태를 되돌린다.
     public void markReady(String extractedText) {
         this.extractedText = extractedText;
         this.currentExtractionRun = null;
         this.extractedTextHash = hashText(extractedText);
         this.extractStatus = ExtractStatus.READY;
+        this.extractionLeaseUntil = null;
         clearConfirmation();
         clearExtractionError();
     }
@@ -153,12 +179,14 @@ public class ProductDocument extends BaseTimeEntity {
         this.currentExtractionRun = extractionRun;
         this.extractedTextHash = textHash;
         this.extractStatus = ExtractStatus.READY;
+        this.extractionLeaseUntil = null;
         clearConfirmation();
         clearExtractionError();
     }
 
     public void markFailed(String errorCode, String publicMessage, boolean retryable) {
         this.extractStatus = ExtractStatus.FAILED;
+        this.extractionLeaseUntil = null;
         this.extractionErrorCode = errorCode;
         this.extractionErrorMessage = publicMessage;
         this.extractionErrorRetryable = retryable;
@@ -190,6 +218,11 @@ public class ProductDocument extends BaseTimeEntity {
 
     public boolean isRetryableFailure() {
         return isFailed() && extractionErrorRetryable;
+    }
+
+    private boolean isExtractionActive() {
+        return extractStatus == ExtractStatus.UPLOADED
+                || extractStatus == ExtractStatus.EXTRACTING;
     }
 
     public Long getProductId() {

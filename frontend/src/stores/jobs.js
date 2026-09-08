@@ -13,7 +13,7 @@ const LS = 'guardlab.jobs.v1'
 let nid = 0
 
 export const useJobsStore = defineStore('jobs', {
-  state: () => ({ tracked: [], notifications: [], timer: null }),
+  state: () => ({ tracked: [], notifications: [], timer: null, tickRunning: false, trackingVersion: 0 }),
   getters: {
     unread: (s) => s.notifications.filter((n) => !n.read).length,
     unreadForProduct: (s) => (pid) => s.notifications.filter((n) => !n.read && String(n.productId) === String(pid)).length,
@@ -39,11 +39,13 @@ export const useJobsStore = defineStore('jobs', {
     track(job) {
       if (this.tracked.some((j) => j.kind === job.kind && j.id === job.id)) return
       this.tracked.push({ ...job })
+      this.trackingVersion += 1
       this.save()
       this.start()
     },
     untrack(kind, id) {
       this.tracked = this.tracked.filter((j) => !(j.kind === kind && j.id === id))
+      this.trackingVersion += 1
       this.save()
       if (!this.tracked.length) this.stop()
     },
@@ -73,44 +75,68 @@ export const useJobsStore = defineStore('jobs', {
     },
     async tick() {
       const session = useSessionStore()
-      if (!session.isAuthed || !this.tracked.length) return
+      if (this.tickRunning || !session.isAuthed || !this.tracked.length) return
+      this.tickRunning = true
+      const sessionUser = session.user
+      const userId = session.user?.userId
       const toast = useToastStore()
-      for (const job of [...this.tracked]) {
-        try {
-          if (job.kind === 'document') {
-            const d = await api.getDocument(job.id)
-            if (d.extractStatus === 'READY') {
-              toast.success('추출 완료', `${job.name} 텍스트 추출이 끝났습니다`)
-              this.addNote('document', job.productId || d.productId, `추출 완료 · ${job.name}`)
-              this.untrack('document', job.id)
-            } else if (d.extractStatus === 'FAILED') {
-              toast.push({ type: 'error', title: '추출 실패', message: `${job.name} · ${d.error?.errorCode || ''}` })
-              this.addNote('document', job.productId || d.productId, `추출 실패 · ${job.name}`)
-              this.untrack('document', job.id)
-            }
-          } else if (job.kind === 'analysis') {
-            const a = await api.getAnalysis(job.id)
-            if (a.status === 'COMPLETED') {
-              toast.success('분석 완료', `${job.name} 리스크 분석이 끝났습니다`)
-              this.addNote('analysis', job.productId, `분석 완료 · ${job.name}`)
-              this.untrack('analysis', job.id)
-            } else if (a.status === 'FAILED') {
-              toast.push({ type: 'error', title: '분석 실패', message: `${job.name} · ${a.error?.errorCode || ''}` })
-              this.addNote('analysis', job.productId, `분석 실패 · ${job.name}`)
-              this.untrack('analysis', job.id)
-            }
-          } else if (job.kind === 'review') {
-            const r = await api.getReview(job.id)
-            if (r && r.status !== 'PENDING' && r.submittedBy === session.user?.userId) {
-              const ok = r.status === 'APPROVED'
+      try {
+        for (const job of [...this.tracked]) {
+          const version = this.trackingVersion
+          try {
+            let response
+            if (job.kind === 'document') response = await api.getDocument(job.id)
+            else if (job.kind === 'analysis') response = await api.getAnalysis(job.id)
+            else if (job.kind === 'review') response = await api.getReview(job.id)
+            else continue
+
+            const isCurrent = this.trackingVersion === version
+              && session.isAuthed
+              && session.user === sessionUser
+              && String(session.user?.userId) === String(userId)
+              && this.tracked.some((item) => item.kind === job.kind && item.id === job.id)
+            if (!isCurrent) continue
+
+            if (job.kind === 'document') {
+              if (response.extractStatus === 'READY') {
+                toast.success('추출 완료', `${job.name} 텍스트 추출이 끝났습니다`)
+                this.addNote('document', job.productId || response.productId, `추출 완료 · ${job.name}`)
+                this.untrack('document', job.id)
+              } else if (response.extractStatus === 'FAILED') {
+                toast.push({ type: 'error', title: '추출 실패', message: `${job.name} · ${response.error?.errorCode || ''}` })
+                this.addNote('document', job.productId || response.productId, `추출 실패 · ${job.name}`)
+                this.untrack('document', job.id)
+              }
+            } else if (job.kind === 'analysis') {
+              if (['COMPLETED', 'IN_REVIEW'].includes(response.status)) {
+                toast.success('분석 완료', `${job.name} 리스크 분석이 끝났습니다`)
+                this.addNote('analysis', job.productId, `분석 완료 · ${job.name}`)
+                this.untrack('analysis', job.id)
+              } else if (response.status === 'FAILED') {
+                toast.push({ type: 'error', title: '분석 실패', message: `${job.name} · ${response.error?.errorCode || ''}` })
+                this.addNote('analysis', job.productId, `분석 실패 · ${job.name}`)
+                this.untrack('analysis', job.id)
+              }
+            } else if (response && response.status !== 'PENDING'
+              && response.ownerId != null && userId != null
+              && String(response.ownerId) === String(userId)) {
+              const ok = response.status === 'APPROVED'
               toast.push({ type: ok ? 'success' : 'error', title: '검토 완료', message: `${job.name} · ${ok ? '승인되었습니다' : '반려되었습니다'}` })
-              this.addNote('review', r.productId, `검토 ${ok ? '승인' : '반려'} · ${job.name}`)
+              this.addNote('review', response.productId, `검토 ${ok ? '승인' : '반려'} · ${job.name}`)
               this.untrack('review', job.id)
             }
+          } catch (e) {
+            if (e?.status === 404
+              && this.trackingVersion === version
+              && session.isAuthed
+              && session.user === sessionUser
+              && this.tracked.some((item) => item.kind === job.kind && item.id === job.id)) {
+              this.untrack(job.kind, job.id)
+            }
           }
-        } catch (e) {
-          if (e?.status === 404) this.untrack(job.kind, job.id)
         }
+      } finally {
+        this.tickRunning = false
       }
     },
   },

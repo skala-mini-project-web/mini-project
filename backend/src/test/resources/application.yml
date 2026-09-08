@@ -19,6 +19,9 @@ document:
   storage:
     root: ${DOCUMENT_STORAGE_ROOT:/tmp/argus-test-documents}
 
+document-batch:
+  extraction-timeout: 5m
+
 # 테스트는 외부 ai-service를 호출하지 않는다(FakeRiskAnalysisProvider). 기본 시나리오만 고정한다.
 ai-service:
   base-url: http://localhost:8000

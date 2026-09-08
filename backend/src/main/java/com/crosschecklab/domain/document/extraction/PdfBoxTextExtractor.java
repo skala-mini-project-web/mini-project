@@ -11,6 +11,7 @@ import java.util.Map;
 import javax.imageio.ImageIO;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -77,7 +78,12 @@ public class PdfBoxTextExtractor implements BinaryTextExtractor {
                     pages.add(PageExtractionResult.pdfBox(pageNumber, candidateText, candidateHash));
                 } else {
                     pages.add(extractWithOcr(
-                            renderer, pageNumber, sourceHash, candidateText, candidateHash));
+                            renderer,
+                            document.getPage(pageNumber - 1),
+                            pageNumber,
+                            sourceHash,
+                            candidateText,
+                            candidateHash));
                 }
             }
             return DocumentExtractionResult.ofPages(sourceHash, pages);
@@ -96,10 +102,18 @@ public class PdfBoxTextExtractor implements BinaryTextExtractor {
 
     private PageExtractionResult extractWithOcr(
             PDFRenderer renderer,
+            PDPage page,
             int pageNumber,
             String sourceHash,
             String candidateText,
             String candidateHash) throws IOException {
+        try {
+            PdfRenderLimits.validate(page, OCR_RENDER_DPI);
+        } catch (PdfRenderLimits.PdfRenderLimitException exception) {
+            throw new TextExtractionException(
+                    "PDF 페이지 " + pageNumber + "를 안전하게 렌더할 수 없습니다: "
+                            + exception.getMessage());
+        }
         if (ocrClient == null) {
             throw new TextExtractionException(
                     "PDF 페이지 " + pageNumber + "에 OCR이 필요하지만 OCR client가 등록되어 있지 않습니다.");

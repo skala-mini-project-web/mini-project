@@ -96,6 +96,11 @@ const normalizeProduct = (product) => ({
   ...product,
   latestDocument: product.latestDocument ? normalizeDocument(product.latestDocument) : null,
 })
+const normalizeMockReview = (review) => {
+  if (review == null) return review
+  const { submittedBy, ...rest } = review
+  return { ...rest, ownerId: submittedBy }
+}
 
 export const api = {
   // ---- session / users ----
@@ -133,13 +138,15 @@ export const api = {
     USE_MOCK ? mockServer.getDashboardCompliance(auth()) : http.get('/dashboard/compliance'),
 
   // ---- products ----
-  listProducts: () =>
-    USE_MOCK
-      ? mockServer.listProducts(auth())
-      : http.get('/products').then((response) => ({
-          ...response,
-          items: (response.items ?? []).map(normalizeProduct),
-        })),
+  listProducts: async (params = {}) => {
+    const response = USE_MOCK
+      ? await mockServer.listProducts(auth(), params)
+      : await http.get(`/products${qs(params)}`)
+    return {
+      ...response,
+      items: (response.items ?? []).map(normalizeProduct),
+    }
+  },
   createProduct: (body) =>
     USE_MOCK
       ? mockServer.createProduct(auth(), body, uuid())
@@ -259,9 +266,13 @@ export const api = {
   listReviews: (params) => (USE_MOCK ? mockServer.listReviews(auth(), params) : http.get(`/reviews${qs(params)}`)),
   getReview: (id) =>
     USE_MOCK
-      ? mockServer.getReview(auth(), id)
+      ? mockServer.getReview(auth(), id).then(normalizeMockReview)
       : http.get(`/reviews/${id}`).then((review) => ({ ...review, id: review.reviewId })),
-  getReviewByAnalysis: (analysisId) => (USE_MOCK ? mockServer.getReviewByAnalysis(auth(), analysisId) : http.get(`/analyses/${analysisId}/review`)),
+  getReviewByAnalysis: (analysisId) => (
+    USE_MOCK
+      ? mockServer.getReviewByAnalysis(auth(), analysisId).then(normalizeMockReview)
+      : http.get(`/analyses/${analysisId}/review`)
+  ),
   decideReview: (id, body) =>
     USE_MOCK ? mockServer.decideReview(auth(), id, body) : http.post(`/reviews/${id}/decision`, body),
 

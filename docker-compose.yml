@@ -30,6 +30,9 @@ services:
       AI_SERVICE_INTERNAL_TOKEN: ${AI_SERVICE_INTERNAL_TOKEN:-crosschecklab-local-internal-token}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-32768}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-}
+    mem_limit: ${AI_SERVICE_MEM_LIMIT:-512m}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -108,6 +111,7 @@ services:
       OCR_WORKER_TOKEN: ${OCR_WORKER_TOKEN:-crosschecklab-local-ocr-token}
       OCR_WORKER_CONNECT_TIMEOUT: ${OCR_WORKER_CONNECT_TIMEOUT:-2s}
       OCR_WORKER_REQUEST_TIMEOUT: ${OCR_WORKER_REQUEST_TIMEOUT:-45s}
+      DOCUMENT_BATCH_EXTRACTION_TIMEOUT: ${DOCUMENT_BATCH_EXTRACTION_TIMEOUT:-5m}
       SPRING_PROFILES_ACTIVE: real-extraction
       SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE: 1024MB
       SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE: 1024MB
@@ -118,6 +122,9 @@ services:
       DOCUMENT_BATCH_WORKER_FIXED_DELAY: ${DOCUMENT_BATCH_WORKER_FIXED_DELAY:-PT5S}
       RAG_OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       RAG_OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-bge-m3:latest}
+      # 컨테이너 메모리 상한 안에서 heap을 잡고, OOM이면 프로세스를 끝내 restart와 batch lease/fence 회수에 맡긴다.
+      JAVA_TOOL_OPTIONS: ${BACKEND_JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=60.0 -XX:+ExitOnOutOfMemoryError}
+    mem_limit: ${BACKEND_MEM_LIMIT:-2g}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

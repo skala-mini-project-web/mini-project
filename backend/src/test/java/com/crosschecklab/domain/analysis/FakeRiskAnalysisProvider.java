@@ -5,7 +5,7 @@ import com.crosschecklab.analysis.provider.RiskAnalysisProvider;
 import com.crosschecklab.analysis.provider.dto.AnalysisRequest;
 import com.crosschecklab.analysis.provider.dto.AnalysisResult;
 import com.crosschecklab.analysis.provider.dto.FindingPayload;
-import com.crosschecklab.global.common.enums.PersonaCode;
+import com.crosschecklab.global.common.enums.RedTeamRuleCode;
 import com.crosschecklab.global.common.enums.Severity;
 import com.crosschecklab.global.error.ErrorCode;
 import java.util.List;
@@ -44,8 +44,12 @@ class FakeRiskAnalysisProvider implements RiskAnalysisProvider {
         return new AnalysisResult(82, "mock-risk-v1", "mock-prompt-v1", List.of(new FindingPayload(
                 "안정성 표현이 원금보장으로 오인될 가능성이 있습니다.",
                 Severity.HIGH,
-                List.of(PersonaCode.FINANCIAL_BEGINNER, PersonaCode.SENIOR),
+                RedTeamRuleCode.STABILITY_KEYWORD,
+                List.copyOf(request.personaCodes()),
                 List.of(context.chunkId()),
+                List.of(new FindingPayload.EvidenceSpanPayload(context.chunkId(), context.chunkText())),
+                List.of(),
+                new FindingPayload.DocClaimPayload("안정적인 수익률"),
                 "안정성 표현과 같은 영역에 원금 손실 가능성을 명시하세요.")));
     }
 }

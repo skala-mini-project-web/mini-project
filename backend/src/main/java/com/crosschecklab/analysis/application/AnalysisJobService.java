@@ -75,8 +75,16 @@ public class AnalysisJobService {
     private static final String RETRIEVAL_VERSION = "pgvector-cosine-v1";
     private static final String FINDING_LINEAGE_NAMESPACE = "com.crosschecklab.finding-lineage:v1";
     private static final int TEXT_LAYER_PAGE = 1;
-    private static final Duration STALE_RUNNING_AFTER = Duration.ofMinutes(5);
+    private static final Duration STALE_ANALYSIS_AFTER = Duration.ofMinutes(5);
     private static final int RECOVERY_BATCH_SIZE = 25;
+    private static final int MAX_VERSION_LENGTH = 50;
+    private static final int MAX_STATEMENT_LENGTH = 1_000;
+    private static final int MAX_RECOMMENDATION_LENGTH = 1_000;
+    private static final int MAX_PERSONA_CODES = 12;
+    private static final int MAX_RETRIEVED_CONTEXT_CHUNK_IDS = 20;
+    private static final int MAX_KNOWN_FACT_IDS = 50;
+    private static final int MAX_DOC_CLAIM_CODE_POINTS = 400;
+    private static final int MAX_EVIDENCE_SPANS = 60;
 
     private final AnalysisRepository analysisRepository;
     private final AnalysisExecutionRepository analysisExecutionRepository;
@@ -95,6 +103,7 @@ public class AnalysisJobService {
     private final EvidenceRiskScoreService evidenceRiskScoreService;
     private final AuditEventRepository auditEventRepository;
     private final TransactionTemplate transactionTemplate;
+    private final TransactionTemplate withoutTransaction;
     private final Clock clock;
 
     public AnalysisJobService(AnalysisRepository analysisRepository,
@@ -134,52 +143,105 @@ public class AnalysisJobService {
         // (AFTER_COMMIT 콜백 안에서는 이미 완료된 트랜잭션에 합류해 커밋이 유실될 수 있다)
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.withoutTransaction = new TransactionTemplate(transactionManager);
+        this.withoutTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_NOT_SUPPORTED);
     }
 
     // CREATED/RUNNING 행이 커밋된 뒤에 시작해야 작업 스레드가 해당 행을 읽을 수 있다.
     @Async(AsyncConfig.ANALYSIS_EXECUTOR)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void handle(AnalysisRequestedEvent event) {
-        run(event.analysisId(), event.scenarioCode(), event.traceId());
+        run(
+                event.analysisId(),
+                event.expectedExecutionToken(),
+                event.scenarioCode(),
+                event.traceId());
     }
 
-    // 프로세스가 RUNNING 커밋 뒤 종료되면 in-memory executor 에 작업이 남지 않는다.
+    // 프로세스가 CREATED/RUNNING 커밋 뒤 종료되면 in-memory executor 에 작업이 남지 않는다.
     // 작은 batch 를 주기적으로 복구하고, 각 행은 별도 잠금 트랜잭션에서 다시 검증한다.
     @Scheduled(initialDelayString = "PT30S", fixedDelayString = "PT30S")
-    public void recoverStaleRunningAnalyses() {
-        OffsetDateTime cutoff = OffsetDateTime.now(clock).minus(STALE_RUNNING_AFTER);
-        List<AnalysisRepository.StaleRunningExecution> staleExecutions =
-                analysisRepository.findStaleRunningExecutions(
+    public void recoverStaleAnalyses() {
+        OffsetDateTime cutoff = OffsetDateTime.now(clock).minus(STALE_ANALYSIS_AFTER);
+        List<AnalysisRepository.StaleAnalysisCandidate> staleCandidates =
+                analysisRepository.findStaleAnalysisCandidates(
                         cutoff, PageRequest.of(0, RECOVERY_BATCH_SIZE));
-        for (AnalysisRepository.StaleRunningExecution staleExecution : staleExecutions) {
-            transactionTemplate.execute(status -> {
-                Analysis analysis = analysisRepository.findStaleRunningWithLock(
-                                staleExecution.getId(), staleExecution.getExecutionToken(), cutoff)
-                        .orElse(null);
-                if (analysis == null) {
-                    return false;
-                }
-                failAndAudit(
-                        analysis,
-                        findRunningExecution(analysis.getId(), staleExecution.getExecutionToken()),
-                        ErrorCode.AI_SERVICE_TEMPORARY_FAILURE,
-                        true,
-                        "analysis-recovery-" + UUID.randomUUID());
-                analysisRepository.flush();
-                log.warn("오래된 RUNNING 분석 {} 을 FAILED 로 복구", analysis.getId());
-                return true;
-            });
+        for (AnalysisRepository.StaleAnalysisCandidate staleCandidate : staleCandidates) {
+            try {
+                transactionTemplate.execute(status -> recoverStaleAnalysis(staleCandidate, cutoff));
+            } catch (RuntimeException e) {
+                log.error(
+                        "오래된 {} 분석 {} 복구 실패 executionToken={}",
+                        staleCandidate.getStatus(),
+                        staleCandidate.getId(),
+                        staleCandidate.getExecutionToken(),
+                        e);
+            }
         }
     }
 
-    private void run(Long analysisId, String scenarioCode, String traceId) {
-        String fence = transactionTemplate.execute(status -> beginExecution(analysisId));
+    private boolean recoverStaleAnalysis(
+            AnalysisRepository.StaleAnalysisCandidate staleCandidate,
+            OffsetDateTime cutoff
+    ) {
+        Analysis analysis = analysisRepository.findStaleAnalysisWithLock(
+                        staleCandidate.getId(), staleCandidate.getExecutionToken(), cutoff)
+                .orElse(null);
+        if (analysis == null) {
+            return false;
+        }
+        if (analysis.getStatus() == AnalysisStatus.CREATED) {
+            analysis.fail(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true);
+            appendTerminalAudit(
+                    "analysis-recovery-" + UUID.randomUUID(),
+                    AuditAction.ANALYSIS_FAILED,
+                    analysis.getId());
+            analysisRepository.flush();
+            log.warn("오래된 CREATED 분석 {} 을 FAILED 로 복구", analysis.getId());
+            return true;
+        }
+        AnalysisExecution execution = analysisExecutionRepository
+                .findByAnalysisIdAndExecutionToken(
+                        analysis.getId(), staleCandidate.getExecutionToken())
+                .orElse(null);
+        if (execution != null && !execution.isRunning()) {
+            throw new IllegalStateException(
+                    "분석 %d 실행 %s 이 RUNNING 상태가 아닙니다."
+                            .formatted(analysis.getId(), staleCandidate.getExecutionToken()));
+        }
+        if (execution != null) {
+            execution.fail(
+                    ErrorCode.AI_SERVICE_TEMPORARY_FAILURE.name(),
+                    true,
+                    OffsetDateTime.now(clock));
+        }
+        analysis.fail(ErrorCode.AI_SERVICE_TEMPORARY_FAILURE, true);
+        appendTerminalAudit(
+                "analysis-recovery-" + UUID.randomUUID(),
+                AuditAction.ANALYSIS_FAILED,
+                analysis.getId());
+        analysisRepository.flush();
+        log.warn(
+                "오래된 RUNNING 분석 {} 을 FAILED 로 복구 executionPresent={}",
+                analysis.getId(),
+                execution != null);
+        return true;
+    }
+
+    private void run(
+            Long analysisId,
+            String expectedExecutionToken,
+            String scenarioCode,
+            String traceId
+    ) {
+        String fence = transactionTemplate.execute(
+                status -> beginExecution(analysisId, expectedExecutionToken));
         if (fence == null) {
             return;
         }
         Job job;
         try {
-            job = transactionTemplate.execute(status -> prepareJob(analysisId, scenarioCode, fence));
+            job = withoutTransaction.execute(status -> prepareJob(analysisId, scenarioCode, fence));
             if (job == null) {
                 return;
             }
@@ -381,8 +443,11 @@ public class AnalysisJobService {
         }
     }
 
-    private String beginExecution(Long analysisId) {
+    private String beginExecution(Long analysisId, String expectedExecutionToken) {
         Analysis analysis = findWithLock(analysisId);
+        if (!Objects.equals(expectedExecutionToken, analysis.getExecutionToken())) {
+            return null;
+        }
         if (analysis.getStatus() == AnalysisStatus.CREATED) {
             analysis.markRunning();
         } else if (analysis.getStatus() != AnalysisStatus.RUNNING) {
@@ -410,11 +475,13 @@ public class AnalysisJobService {
     }
 
     private Job prepareJob(Long analysisId, String scenarioCode, String fence) {
-        Analysis analysis = find(analysisId);
-        if (!isCurrent(analysis, fence)) {
+        AnalysisInput input = transactionTemplate.execute(status -> {
+            Analysis analysis = find(analysisId);
+            return isCurrent(analysis, fence) ? inputLoader.load(analysis) : null;
+        });
+        if (input == null) {
             return null;
         }
-        AnalysisInput input = inputLoader.load(analysis);
         List<RagRetrievedChunk> retrievedChunks;
         try {
             evidenceChunkIndexer.indexSelected(input.evidenceDocumentIds());
@@ -444,14 +511,16 @@ public class AnalysisJobService {
                             String text = normalizeEvidenceContent(evidence.getContent());
                             return new EvidenceSourceSnapshot(evidence.getId(), sha256(text), text);
                         })));
-        Analysis currentAnalysis = findWithLock(analysisId);
-        entityManager.refresh(currentAnalysis);
-        if (!isCurrent(currentAnalysis, fence)) {
-            return null;
-        }
-        AnalysisExecution execution = findRunningExecution(analysisId, fence);
-        saveRagRun(execution, job);
-        return job;
+        return transactionTemplate.execute(status -> {
+            Analysis currentAnalysis = findWithLock(analysisId);
+            if (!isCurrent(currentAnalysis, fence)) {
+                return null;
+            }
+            requirePinnedConfirmedSource(currentAnalysis, job.documentSnapshot());
+            AnalysisExecution execution = findRunningExecution(analysisId, fence);
+            saveRagRun(execution, job);
+            return job;
+        });
     }
 
     private void requireConsistentRetrieval(List<RagRetrievedChunk> retrievedChunks) {
@@ -472,9 +541,30 @@ public class AnalysisJobService {
     }
 
     private void validateProviderReferences(AnalysisRequest request, AnalysisResult result) {
+        if (result == null) {
+            throw invalidProviderResponse("응답이 비어 있음");
+        }
+        if (result.findings() == null) {
+            throw invalidProviderResponse("findings 가 없음");
+        }
+        if (result.findings().size() > AnalysisResult.MAX_FINDINGS) {
+            throw invalidProviderResponse("findings 개수 초과: " + result.findings().size());
+        }
+        if (result.findings().isEmpty() && result.riskScore() != null) {
+            throw invalidProviderResponse("findings 가 비어 있으면 riskScore 는 null 이어야 함");
+        }
+        if (result.riskScore() != null && (result.riskScore() < 0 || result.riskScore() > 100)) {
+            throw invalidProviderResponse("riskScore 범위 초과: " + result.riskScore());
+        }
+        requireProviderNonBlank(result.modelVersion(), "modelVersion", MAX_VERSION_LENGTH);
+        requireProviderNonBlank(result.promptVersion(), "promptVersion", MAX_VERSION_LENGTH);
+
         Set<RedTeamRuleCode> selectedRuleCodes = request.ruleCodes() == null
                 ? Set.of()
                 : Set.copyOf(request.ruleCodes());
+        Set<PersonaCode> selectedPersonaCodes = request.personaCodes() == null
+                ? Set.of()
+                : Set.copyOf(request.personaCodes());
         Set<Long> acceptedChunkIds = request.retrievedContexts() == null ? Set.of()
                 : request.retrievedContexts().stream()
                         .map(AnalysisRequest.RetrievedContextPayload::chunkId)
@@ -484,6 +574,17 @@ public class AnalysisJobService {
                 .collect(Collectors.toSet());
 
         for (FindingPayload finding : result.findings()) {
+            if (finding == null) {
+                throw invalidProviderResponse("finding 이 비어 있음");
+            }
+            requireProviderNonBlank(finding.statement(), "finding.statement", MAX_STATEMENT_LENGTH);
+            if (finding.severity() == null) {
+                throw invalidProviderResponse("finding 에 severity 가 없음");
+            }
+            if (finding.recommendation() != null
+                    && finding.recommendation().length() > MAX_RECOMMENDATION_LENGTH) {
+                throw invalidProviderResponse("finding.recommendation 길이 초과");
+            }
             if (finding.policyRuleCode() == null) {
                 throw invalidProviderResponse("finding 에 policyRuleCode 가 없음");
             }
@@ -491,8 +592,36 @@ public class AnalysisJobService {
                 throw invalidProviderResponse(
                         "요청에서 선택하지 않은 policyRuleCode: " + finding.policyRuleCode());
             }
-            if (finding.retrievedContextChunkIds() == null) {
+            // FastAPI 검증과 별개로 Spring이 다시 확인한다. 선택하지 않은 persona는 현재 execution에 저장하지 않는다.
+            if (finding.affectedPersonaCodes() == null) {
+                throw invalidProviderResponse("finding 에 affectedPersonaCodes 가 없음");
+            }
+            if (finding.affectedPersonaCodes().isEmpty()) {
+                throw invalidProviderResponse("finding 에 affectedPersonaCodes 가 비어 있음");
+            }
+            if (finding.affectedPersonaCodes().size() > MAX_PERSONA_CODES) {
+                throw invalidProviderResponse(
+                        "affectedPersonaCodes 개수 초과: " + finding.affectedPersonaCodes().size());
+            }
+            Set<PersonaCode> citedPersonaCodes = new LinkedHashSet<>();
+            for (PersonaCode personaCode : finding.affectedPersonaCodes()) {
+                if (personaCode == null) {
+                    throw invalidProviderResponse("persona 인용에 code 가 없음");
+                }
+                if (!citedPersonaCodes.add(personaCode)) {
+                    throw invalidProviderResponse("중복된 persona 인용: " + personaCode);
+                }
+                if (!selectedPersonaCodes.contains(personaCode)) {
+                    throw invalidProviderResponse("요청에서 선택하지 않은 persona: " + personaCode);
+                }
+            }
+            if (finding.retrievedContextChunkIds() == null
+                    || finding.retrievedContextChunkIds().isEmpty()) {
                 throw invalidProviderResponse("finding 에 retrievedContextChunkIds 가 없음");
+            }
+            if (finding.retrievedContextChunkIds().size() > MAX_RETRIEVED_CONTEXT_CHUNK_IDS) {
+                throw invalidProviderResponse("retrievedContextChunkIds 개수 초과: "
+                        + finding.retrievedContextChunkIds().size());
             }
             Set<Long> citedChunkIds = new LinkedHashSet<>();
             for (Long chunkId : finding.retrievedContextChunkIds()) {
@@ -506,6 +635,13 @@ public class AnalysisJobService {
                     throw invalidProviderResponse("요청에서 검색되지 않은 근거 청크 인용: " + chunkId);
                 }
             }
+            if (finding.knownFactIds() == null) {
+                throw invalidProviderResponse("finding 에 knownFactIds 가 없음");
+            }
+            if (finding.knownFactIds().size() > MAX_KNOWN_FACT_IDS) {
+                throw invalidProviderResponse(
+                        "knownFactIds 개수 초과: " + finding.knownFactIds().size());
+            }
             Set<Long> citedFactIds = new LinkedHashSet<>();
             for (Long factId : finding.knownFactIds()) {
                 if (factId == null) {
@@ -518,13 +654,28 @@ public class AnalysisJobService {
                     throw invalidProviderResponse("요청에 없는 사실 인용: " + factId);
                 }
             }
+            validateDocClaim(request.confirmedText(), finding.docClaim());
             validateEvidenceSpanReferences(finding, citedChunkIds);
         }
+    }
+
+    private void validateDocClaim(String confirmedText, FindingPayload.DocClaimPayload docClaim) {
+        if (docClaim == null || docClaim.excerpt() == null || docClaim.excerpt().isBlank()) {
+            throw invalidProviderResponse("finding 에 docClaim.excerpt 가 없음");
+        }
+        String excerpt = docClaim.excerpt();
+        if (excerpt.codePointCount(0, excerpt.length()) > MAX_DOC_CLAIM_CODE_POINTS) {
+            throw invalidProviderResponse("finding.docClaim.excerpt 길이 초과");
+        }
+        uniqueUtf8Range(confirmedText, excerpt, "confirmedText");
     }
 
     private void validateEvidenceSpanReferences(FindingPayload finding, Set<Long> citedChunkIds) {
         if (finding.evidenceSpans() == null || finding.evidenceSpans().isEmpty()) {
             throw invalidProviderResponse("finding 에 evidenceSpans 가 없음");
+        }
+        if (finding.evidenceSpans().size() > MAX_EVIDENCE_SPANS) {
+            throw invalidProviderResponse("evidenceSpans 개수 초과: " + finding.evidenceSpans().size());
         }
         Set<Long> spannedChunkIds = new LinkedHashSet<>();
         Set<String> uniqueSpans = new LinkedHashSet<>();
@@ -550,11 +701,27 @@ public class AnalysisJobService {
         return new ProviderException(ErrorCode.PROVIDER_RESPONSE_INVALID, false, detail);
     }
 
+    private void requireProviderNonBlank(String value, String fieldName, int maximumLength) {
+        if (value == null || value.isBlank()) {
+            throw invalidProviderResponse(fieldName + " 이 비어 있음");
+        }
+        if (value.length() > maximumLength) {
+            throw invalidProviderResponse(fieldName + " 길이 초과");
+        }
+    }
+
     private void validateAnchorPlan(AnalysisResult result, Job job) {
+        if (!Objects.equals(job.request().confirmedText(), job.documentSnapshot().text())) {
+            throw invalidProviderResponse("Provider 요청 원문이 pinned document snapshot 과 일치하지 않음");
+        }
         Map<Long, RagRetrievedChunk> contextsByChunkId = job.retrievedChunks().stream()
                 .collect(Collectors.toMap(RagRetrievedChunk::chunkId, context -> context));
 
         for (FindingPayload finding : result.findings()) {
+            uniqueUtf8Range(
+                    job.documentSnapshot().text(),
+                    finding.docClaim().excerpt(),
+                    "pinned document snapshot");
             for (FindingPayload.EvidenceSpanPayload span : finding.evidenceSpans()) {
                 RagRetrievedChunk context = contextsByChunkId.get(span.chunkId());
                 if (context == null || !finding.retrievedContextChunkIds().contains(span.chunkId())) {
@@ -617,18 +784,12 @@ public class AnalysisJobService {
         execution.succeed(
                 result.riskScore(), result.modelVersion(), result.promptVersion(), finishedAt);
         entityManager.flush();
-        analysis.complete(result.riskScore(), result.modelVersion(), result.promptVersion(), finishedAt);
+        analysis.complete(result.modelVersion(), result.promptVersion(), finishedAt);
         analysis.markCurrentSuccessfulExecution(execution);
         entityManager.flush();
         evidenceRiskScoreService.createPendingReview(execution);
         appendTerminalAudit(traceId, AuditAction.ANALYSIS_COMPLETED, analysisId);
         analysisRepository.flush();
-        // The provider value remains execution provenance only. Until a reviewer decision creates
-        // a deterministic Policy v1 run, the legacy display column must not expose it as authority.
-        entityManager.createQuery(
-                        "update Analysis analysis set analysis.riskScore = null where analysis.id = :id")
-                .setParameter("id", analysisId)
-                .executeUpdate();
         return true;
     }
 
@@ -692,24 +853,17 @@ public class AnalysisJobService {
             Map<Long, RagRetrievedChunk> contextsByChunkId
     ) {
         List<AnchorPersistencePlan> anchors = new ArrayList<>();
-        Map<Long, String> factsById = job.request().knownFacts().stream()
-                .collect(Collectors.toMap(
-                        AnalysisRequest.KnownFactPayload::factId,
-                        AnalysisRequest.KnownFactPayload::text));
-        for (Long factId : payload.knownFactIds()) {
-            String excerpt = factsById.get(factId);
-            Utf8Range range = uniqueUtf8RangeIfPresent(job.documentSnapshot().text(), excerpt);
-            if (range != null) {
-                anchors.add(AnchorPersistencePlan.documentClaim(
-                        finding,
-                        job.documentSnapshot().documentId(),
-                        sourceRevision.getId(),
-                        sourceRevision.getSourceHash(),
-                        TEXT_LAYER_PAGE,
-                        range,
-                        excerpt));
-            }
-        }
+        String claimExcerpt = payload.docClaim().excerpt();
+        Utf8Range claimRange = uniqueUtf8Range(
+                job.documentSnapshot().text(), claimExcerpt, "pinned document snapshot");
+        anchors.add(AnchorPersistencePlan.documentClaim(
+                finding,
+                job.documentSnapshot().documentId(),
+                sourceRevision.getId(),
+                sourceRevision.getSourceHash(),
+                TEXT_LAYER_PAGE,
+                claimRange,
+                claimExcerpt));
         for (FindingPayload.EvidenceSpanPayload span : payload.evidenceSpans()) {
             RagRetrievedChunk context = contextsByChunkId.get(span.chunkId());
             if (context == null || !payload.retrievedContextChunkIds().contains(span.chunkId())) {

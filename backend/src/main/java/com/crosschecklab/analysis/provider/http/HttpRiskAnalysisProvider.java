@@ -5,6 +5,8 @@ import com.crosschecklab.analysis.provider.RiskAnalysisProvider;
 import com.crosschecklab.analysis.provider.dto.AnalysisRequest;
 import com.crosschecklab.analysis.provider.dto.AnalysisResult;
 import com.crosschecklab.analysis.provider.dto.FindingPayload;
+import com.crosschecklab.global.common.enums.PersonaCode;
+import com.crosschecklab.global.common.enums.RedTeamRuleCode;
 import com.crosschecklab.global.common.enums.Severity;
 import com.crosschecklab.global.error.ErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,6 +36,15 @@ import org.springframework.web.client.RestClient;
 public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
 
     private static final String ANALYZE_PATH = "/internal/v1/risk-analyses";
+    private static final int MAX_VERSION_LENGTH = 50;
+    private static final int MAX_STATEMENT_LENGTH = 1_000;
+    private static final int MAX_RECOMMENDATION_LENGTH = 1_000;
+    private static final int MAX_PERSONA_CODES = 12;
+    private static final int MAX_RETRIEVED_CONTEXT_CHUNK_IDS = 20;
+    private static final int MAX_KNOWN_FACT_IDS = 50;
+    private static final int MAX_EVIDENCE_SPANS = 60;
+    private static final int MAX_EVIDENCE_EXCERPT_LENGTH = 8_000;
+    private static final int MAX_DOC_CLAIM_CODE_POINTS = 400;
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
@@ -126,12 +137,24 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
 
     // 계약 위반은 재시도해도 같은 결과이므로 retryable=false 로 끊는다.
     private AnalysisResult validate(AnalysisRequest request, AnalysisResult result) {
-        if (result == null || result.findings() == null || result.findings().isEmpty()) {
-            throw invalid("findings 가 비어 있음");
+        if (result == null) {
+            throw invalid("응답이 비어 있음");
         }
-        if (result.riskScore() < 0 || result.riskScore() > 100) {
+        if (result.findings() == null) {
+            throw invalid("findings 가 없음");
+        }
+        if (result.findings().size() > AnalysisResult.MAX_FINDINGS) {
+            throw invalid("findings 개수 초과: " + result.findings().size());
+        }
+        if (result.findings().isEmpty() && result.riskScore() != null) {
+            throw invalid("findings 가 비어 있으면 riskScore 는 null 이어야 함");
+        }
+        if (result.riskScore() != null && (result.riskScore() < 0 || result.riskScore() > 100)) {
             throw invalid("riskScore 범위 초과: " + result.riskScore());
         }
+        requireNonBlank(result.modelVersion(), "modelVersion", MAX_VERSION_LENGTH);
+        requireNonBlank(result.promptVersion(), "promptVersion", MAX_VERSION_LENGTH);
+
         List<AnalysisRequest.RetrievedContextPayload> contexts = request.retrievedContexts() == null
                 ? List.of() : request.retrievedContexts();
         Map<Long, AnalysisRequest.RetrievedContextPayload> contextsByChunkId = new HashMap<>();
@@ -142,15 +165,44 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
         }
         Set<Long> knownFacts = request.knownFacts() == null ? Set.of() : request.knownFacts().stream()
                 .map(AnalysisRequest.KnownFactPayload::factId).collect(Collectors.toSet());
+        Set<RedTeamRuleCode> selectedRules = request.ruleCodes() == null
+                ? Set.of() : new HashSet<>(request.ruleCodes());
+        Set<PersonaCode> selectedPersonas = request.personaCodes() == null
+                ? Set.of() : new HashSet<>(request.personaCodes());
 
         for (FindingPayload finding : result.findings()) {
             if (finding == null || finding.severity() == null) {
                 throw invalid("finding 또는 severity 가 비어 있음");
             }
-            if (finding.retrievedContextChunkIds() == null) {
+            requireNonBlank(finding.statement(), "finding.statement", MAX_STATEMENT_LENGTH);
+            if (finding.policyRuleCode() == null || !selectedRules.contains(finding.policyRuleCode())) {
+                throw invalid("요청에서 선택되지 않은 policyRuleCode: " + finding.policyRuleCode());
+            }
+            if (finding.affectedPersonaCodes() == null || finding.affectedPersonaCodes().isEmpty()) {
+                throw invalid("finding 에 affectedPersonaCodes 가 없음");
+            }
+            if (finding.affectedPersonaCodes().size() > MAX_PERSONA_CODES) {
+                throw invalid("affectedPersonaCodes 개수 초과: " + finding.affectedPersonaCodes().size());
+            }
+            Set<PersonaCode> uniquePersonaCodes = new HashSet<>();
+            for (PersonaCode personaCode : finding.affectedPersonaCodes()) {
+                if (personaCode == null) {
+                    throw invalid("affectedPersonaCodes 에 null 이 있음");
+                }
+                if (!uniquePersonaCodes.add(personaCode)) {
+                    throw invalid("중복된 affectedPersonaCode: " + personaCode);
+                }
+                if (!selectedPersonas.contains(personaCode)) {
+                    throw invalid("요청에서 선택되지 않은 affectedPersonaCode: " + personaCode);
+                }
+            }
+            if (finding.retrievedContextChunkIds() == null || finding.retrievedContextChunkIds().isEmpty()) {
                 throw invalid("finding 에 retrievedContextChunkIds 가 없음");
             }
             List<Long> citedChunkIds = finding.retrievedContextChunkIds();
+            if (citedChunkIds.size() > MAX_RETRIEVED_CONTEXT_CHUNK_IDS) {
+                throw invalid("retrievedContextChunkIds 개수 초과: " + citedChunkIds.size());
+            }
             if (finding.severity() == Severity.HIGH && citedChunkIds.isEmpty()) {
                 throw invalid("HIGH Finding 에 근거 인용이 없음");
             }
@@ -169,6 +221,9 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
             if (finding.evidenceSpans() == null || finding.evidenceSpans().isEmpty()) {
                 throw invalid("finding 에 evidenceSpans 가 없음");
             }
+            if (finding.evidenceSpans().size() > MAX_EVIDENCE_SPANS) {
+                throw invalid("evidenceSpans 개수 초과: " + finding.evidenceSpans().size());
+            }
             Set<String> uniqueSpans = new HashSet<>();
             Set<Long> spannedChunkIds = new HashSet<>();
             for (FindingPayload.EvidenceSpanPayload span : finding.evidenceSpans()) {
@@ -177,6 +232,9 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
                 }
                 if (span.excerpt() == null || span.excerpt().isBlank()) {
                     throw invalid("근거 범위의 excerpt 가 비어 있음");
+                }
+                if (span.excerpt().length() > MAX_EVIDENCE_EXCERPT_LENGTH) {
+                    throw invalid("근거 범위의 excerpt 길이 초과: " + span.chunkId());
                 }
                 if (!uniqueCitedChunkIds.contains(span.chunkId())) {
                     throw invalid("인용되지 않은 청크의 근거 범위: " + span.chunkId());
@@ -194,6 +252,12 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
             if (!spannedChunkIds.equals(uniqueCitedChunkIds)) {
                 throw invalid("인용된 모든 검색 근거 청크에 evidenceSpan 이 필요함");
             }
+            if (finding.knownFactIds() == null) {
+                throw invalid("finding 에 knownFactIds 가 없음");
+            }
+            if (finding.knownFactIds().size() > MAX_KNOWN_FACT_IDS) {
+                throw invalid("knownFactIds 개수 초과: " + finding.knownFactIds().size());
+            }
             Set<Long> citedFacts = new HashSet<>();
             for (Long factId : finding.knownFactIds()) {
                 if (factId == null) {
@@ -206,8 +270,39 @@ public class HttpRiskAnalysisProvider implements RiskAnalysisProvider {
                     throw invalid("요청에 없는 사실 인용: " + factId);
                 }
             }
+            validateDocClaim(request.confirmedText(), finding.docClaim());
+            if (finding.recommendation() != null
+                    && finding.recommendation().length() > MAX_RECOMMENDATION_LENGTH) {
+                throw invalid("finding.recommendation 길이 초과");
+            }
         }
         return result;
+    }
+
+    private void validateDocClaim(String confirmedText, FindingPayload.DocClaimPayload docClaim) {
+        if (docClaim == null || docClaim.excerpt() == null || docClaim.excerpt().isBlank()) {
+            throw invalid("finding 에 docClaim.excerpt 가 없음");
+        }
+        String excerpt = docClaim.excerpt();
+        if (excerpt.codePointCount(0, excerpt.length()) > MAX_DOC_CLAIM_CODE_POINTS) {
+            throw invalid("finding.docClaim.excerpt 길이 초과");
+        }
+        if (confirmedText == null) {
+            throw invalid("요청의 confirmedText 가 없음");
+        }
+        int first = confirmedText.indexOf(excerpt);
+        if (first < 0 || confirmedText.indexOf(excerpt, first + 1) >= 0) {
+            throw invalid("confirmedText 에 exact docClaim excerpt 범위가 없거나 둘 이상임");
+        }
+    }
+
+    private void requireNonBlank(String value, String fieldName, int maximumLength) {
+        if (value == null || value.isBlank()) {
+            throw invalid(fieldName + " 이 비어 있음");
+        }
+        if (value.length() > maximumLength) {
+            throw invalid(fieldName + " 길이 초과");
+        }
     }
 
     private ProviderException invalid(String detail) {

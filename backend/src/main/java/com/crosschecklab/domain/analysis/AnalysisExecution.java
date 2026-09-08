@@ -118,12 +118,15 @@ public class AnalysisExecution {
     }
 
     public void succeed(
-            int providerRiskScore,
+            Integer providerRiskScore,
             String modelVersion,
             String promptVersion,
             OffsetDateTime finishedAt
     ) {
         requireRunning();
+        if (providerRiskScore != null && (providerRiskScore < 0 || providerRiskScore > 100)) {
+            throw new IllegalArgumentException("providerRiskScore must be between 0 and 100");
+        }
         requireNonBlank(modelVersion, "modelVersion", 50);
         requireNonBlank(promptVersion, "promptVersion", 50);
         requireValidFinishedAt(finishedAt);

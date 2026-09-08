@@ -1,12 +1,11 @@
 <script setup>
-import { onMounted, ref, reactive, computed, watch } from 'vue'
+import { onBeforeUnmount, ref, reactive, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { PhArrowUpRight, PhPlus, PhFolders, PhMagnifyingGlass, PhX } from '@phosphor-icons/vue'
 import { api } from '@/api'
 import { useToastStore } from '@/stores/toast'
 import { useJobsStore } from '@/stores/jobs'
 import { PRODUCT_TYPE_LABEL, formatDateTime, productStatusKey } from '@/lib/format'
-import { matchesQuery } from '@/lib/hangul'
 import GButton from '@/components/ui/GButton.vue'
 import GStatusPill from '@/components/ui/GStatusPill.vue'
 import GEmptyState from '@/components/ui/GEmptyState.vue'
@@ -30,6 +29,9 @@ const q = ref('')
 const typeFilter = ref('')
 const statusFilter = ref('')
 const page = ref(0)
+const totalElements = ref(0)
+const debouncedQuery = ref('')
+const queryPending = ref(false)
 const showCreate = ref(false)
 const submitting = ref(false)
 const form = reactive({ name: '', productType: 'INVESTMENT', description: '' })
@@ -46,20 +48,64 @@ const typeOptions = [
   { value: 'SAVINGS', label: '예금 · SAVINGS' },
 ]
 
-const filtered = computed(() => {
-  const term = q.value.trim().toLowerCase()
-  return items.value.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).filter((p) => {
-    if (typeFilter.value && p.productType !== typeFilter.value) return false
-    if (statusFilter.value && productStatusKey(p) !== statusFilter.value) return false
-    if (!term) return true
-    return matchesQuery(p.name, q.value) || String(p.productId).toLowerCase().includes(term)
-  })
-})
-const shown = computed(() => filtered.value.slice(page.value * PAGE, page.value * PAGE + PAGE))
-watch([q, typeFilter, statusFilter], () => { page.value = 0 })
+const hasActiveFilters = computed(() => Boolean(q.value.trim() || typeFilter.value || statusFilter.value))
+const requestKey = computed(() => JSON.stringify({
+  page: page.value,
+  q: debouncedQuery.value,
+  productType: typeFilter.value,
+  status: statusFilter.value,
+}))
+let queryTimer
+let requestIdentity = 0
 
-onMounted(load)
-async function load() { loading.value = true; try { items.value = (await api.listProducts()).items } catch (e) { toast.fromError(e) } finally { loading.value = false } }
+watch(q, (value) => {
+  queryPending.value = true
+  requestIdentity += 1
+  loading.value = true
+  page.value = 0
+  clearTimeout(queryTimer)
+  queryTimer = setTimeout(() => {
+    const nextQuery = value.trim()
+    queryPending.value = false
+    if (debouncedQuery.value === nextQuery) {
+      load()
+      return
+    }
+    debouncedQuery.value = nextQuery
+  }, 250)
+}, { flush: 'sync' })
+watch([typeFilter, statusFilter], () => { page.value = 0 }, { flush: 'sync' })
+watch(requestKey, () => { requestIdentity += 1 }, { flush: 'sync' })
+watch(requestKey, load, { immediate: true })
+onBeforeUnmount(() => {
+  clearTimeout(queryTimer)
+  requestIdentity += 1
+})
+
+async function load() {
+  if (queryPending.value) return
+  const identity = requestIdentity
+  loading.value = true
+  try {
+    const response = await api.listProducts({
+      page: page.value,
+      size: PAGE,
+      q: debouncedQuery.value,
+      productType: typeFilter.value,
+      status: statusFilter.value,
+    })
+    if (identity !== requestIdentity) return
+    items.value = Array.isArray(response.items) ? response.items : []
+    totalElements.value = Number.isFinite(response.totalElements) ? response.totalElements : 0
+  } catch (e) {
+    if (identity !== requestIdentity) return
+    items.value = []
+    totalElements.value = 0
+    toast.fromError(e)
+  } finally {
+    if (identity === requestIdentity) loading.value = false
+  }
+}
 function openCreate() { form.name = ''; form.productType = 'INVESTMENT'; form.description = ''; fieldErrors.value = {}; showCreate.value = true }
 async function submit() {
   if (form.name.length > PRODUCT_NAME_MAXIMUM_COUNT) {
@@ -111,25 +157,23 @@ async function submit() {
       </div>
     </div>
 
-    <p v-if="!loading" class="resline mono mute">
-      총 {{ filtered.length }}개<template v-if="q || typeFilter"> · 전체 {{ items.length }}</template>
-    </p>
+    <p v-if="!loading" class="resline mono mute">총 {{ totalElements }}개</p>
 
     <div v-if="loading" class="list">
       <div v-for="i in 6" :key="i" class="sk"><GSkeleton h="20px" w="35%" /><GSkeleton h="13px" w="22%" /></div>
     </div>
-    <GEmptyState v-else-if="!items.length" title="등록된 상품이 없습니다" description="첫 상품을 등록해 분석 흐름을 시작하세요.">
+    <GEmptyState v-else-if="!items.length && !hasActiveFilters" title="등록된 상품이 없습니다" description="첫 상품을 등록해 분석 흐름을 시작하세요.">
       <template #icon><PhFolders :size="20" /></template>
       <template #action><GButton variant="primary" @click="openCreate"><template #icon><PhPlus :size="16" /></template>상품 등록</GButton></template>
     </GEmptyState>
-    <GEmptyState v-else-if="!filtered.length" title="검색 결과가 없습니다" :description="`'${q}'에 해당하는 상품이 없습니다.`">
+    <GEmptyState v-else-if="!items.length" title="검색 결과가 없습니다" description="선택한 검색 및 필터 조건에 해당하는 상품이 없습니다.">
       <template #icon><PhMagnifyingGlass :size="20" /></template>
       <template #action><GButton variant="secondary" @click="q = ''; typeFilter = ''; statusFilter = ''">필터 초기화</GButton></template>
     </GEmptyState>
 
     <template v-else>
       <ul class="list">
-        <li v-for="p in shown" :key="p.productId" class="row" tabindex="0" @click="router.push(`/products/${p.productId}`)" @keyup.enter="router.push(`/products/${p.productId}`)">
+        <li v-for="p in items" :key="p.productId" class="row" tabindex="0" @click="router.push(`/products/${p.productId}`)" @keyup.enter="router.push(`/products/${p.productId}`)">
           <div class="l">
             <div class="l-title"><span class="fw-semibold name">{{ p.name }}</span><span class="tag mono">{{ PRODUCT_TYPE_LABEL[p.productType] }}</span><span v-if="jobs.unreadForProduct(p.productId)" class="new-mark" title="새 알림">!</span></div>
             <span class="mono meta">{{ p.productId }} · {{ formatDateTime(p.createdAt) }}</span>
@@ -140,7 +184,7 @@ async function submit() {
           </div>
         </li>
       </ul>
-      <GPagination v-model="page" :total="filtered.length" :size="PAGE" class="pager" />
+      <GPagination v-model="page" :total="totalElements" :size="PAGE" class="pager" />
     </template>
 
     <GModal v-if="showCreate" title="상품 등록" @close="showCreate = false">

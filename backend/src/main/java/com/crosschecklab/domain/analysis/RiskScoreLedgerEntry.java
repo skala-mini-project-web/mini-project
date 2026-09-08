@@ -124,7 +124,10 @@ public class RiskScoreLedgerEntry {
 
     boolean hasSameHarmEvent(FindingEvidenceAnchor anchor, String candidatePolicyRuleId) {
         return anchor != null
-                && Objects.equals(documentClaimAnchor.getId(), anchor.getId())
+                && anchor.getSourceRole() == FindingEvidenceAnchor.SourceRole.DOCUMENT_CLAIM
+                && Objects.equals(
+                        documentClaimAnchor.documentClaimIdentity(),
+                        anchor.documentClaimIdentity())
                 && Objects.equals(policyRuleId, candidatePolicyRuleId);
     }
 

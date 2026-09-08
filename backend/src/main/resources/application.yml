@@ -56,6 +56,12 @@ ocr:
     minimum: 0
     maximum: 100
 
+document-batch:
+  # Default 5m total wall-clock budget for one document extraction lifecycle, not a per-page timeout
+  # or a guarantee that an arbitrary number of pages will finish. It must exceed the OCR
+  # request timeout and may not exceed the 10m lease minus the worker's 30s cleanup margin.
+  extraction-timeout: ${DOCUMENT_BATCH_EXTRACTION_TIMEOUT:5m}
+
 rag:
   ollama:
     base-url: http://localhost:11434

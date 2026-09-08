@@ -138,6 +138,35 @@ public class FindingEvidenceAnchor {
         return anchor;
     }
 
+    /**
+     * Returns the stable source-span identity used to recognize the same document claim
+     * across findings. Finding and anchor metadata intentionally do not participate.
+     */
+    public DocumentClaimIdentity documentClaimIdentity() {
+        if (sourceRole != SourceRole.DOCUMENT_CLAIM) {
+            throw new IllegalStateException("document claim identity requires a DOCUMENT_CLAIM anchor");
+        }
+        return new DocumentClaimIdentity(
+                sourceDocumentId,
+                sourceRevisionId,
+                sourceHash,
+                pageNumber,
+                utf8StartOffset,
+                utf8EndOffset,
+                excerptHash);
+    }
+
+    public record DocumentClaimIdentity(
+            Long sourceDocumentId,
+            Long sourceRevisionId,
+            String sourceHash,
+            int pageNumber,
+            long utf8StartOffset,
+            long utf8EndOffset,
+            String excerptHash
+    ) {
+    }
+
     private static FindingEvidenceAnchor base(
             Finding finding,
             SourceRole sourceRole,

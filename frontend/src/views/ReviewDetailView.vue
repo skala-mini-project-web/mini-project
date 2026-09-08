@@ -81,9 +81,14 @@ async function decide(status) {
   deciding.value = status
   try {
     const res = await api.decideReview(props.reviewId, { status, comment: comment.value, selectedFindingIds: status === 'APPROVED' ? selected.value : [] })
-    if (status === 'APPROVED') toast.success('승인 완료', `선택한 Finding ${res.riskPatternIds.length}건이 Risk Pattern으로 승격되었습니다. Risk Library 상세에서 GuardFit 초안을 생성하세요.`)
-    else toast.success('반려 완료', '담당자 대시보드에 수정 필요로 표시됩니다')
-    router.push(status === 'APPROVED' ? '/risk-library' : '/reviews')
+    if (status === 'APPROVED' && !result.value.findings.length) {
+      toast.success('검토 완료', '현재 분석 범위에서 지원되는 Finding 없이 검토가 완료되었습니다.')
+      router.push(`/analyses/${review.value.analysisId}`)
+    } else {
+      if (status === 'APPROVED') toast.success('승인 완료', `선택한 Finding ${res.riskPatternIds.length}건이 Risk Pattern으로 승격되었습니다. Risk Library 상세에서 GuardFit 초안을 생성하세요.`)
+      else toast.success('반려 완료', '담당자 대시보드에 수정 필요로 표시됩니다')
+      router.push(status === 'APPROVED' ? '/risk-library' : '/reviews')
+    }
   } catch (e) { toast.fromError(e) } finally { deciding.value = null }
 }
 const idx = (i) => 'F.' + String(i + 1).padStart(2, '0')

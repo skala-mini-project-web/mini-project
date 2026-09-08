@@ -6,6 +6,9 @@
     {
       "statement": "긴 문장과 전문용어가 집중되어 상품 위험을 이해하기 어렵습니다.",
       "severity": "LOW",
+      "docClaim": {
+        "excerpt": "이 상품은 스텝다운 ELS 구조입니다."
+      },
       "affectedPersonaCodes": [
         "SENIOR"
       ],

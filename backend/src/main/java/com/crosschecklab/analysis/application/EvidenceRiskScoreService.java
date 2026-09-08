@@ -115,7 +115,7 @@ public class EvidenceRiskScoreService {
                         "analysis execution does not exist: " + review.getAnalysisExecutionId()));
         requireSuccessfulExecution(execution);
         if (!Objects.equals(analysis.getCurrentSuccessfulExecutionId(), execution.getId())) {
-            return createNotScored(execution, review, List.of(), List.of(), REASON_FINDING_NOT_CURRENT);
+            return createNotScored(execution, review, List.of(), REASON_FINDING_NOT_CURRENT);
         }
 
         List<FindingReviewDecision> allDecisions = new ArrayList<>();
@@ -128,7 +128,7 @@ public class EvidenceRiskScoreService {
         allDecisions.sort(Comparator.comparing(FindingReviewDecision::getFindingRevisionId));
 
         if (review.getStatus() == ReviewStatus.REJECTED) {
-            return createNotScored(execution, review, allDecisions, List.of(), REASON_REVIEW_REJECTED);
+            return createNotScored(execution, review, allDecisions, REASON_REVIEW_REJECTED);
         }
         if (review.getStatus() != ReviewStatus.APPROVED) {
             throw new IllegalStateException("review must have a terminal decision before scoring");
@@ -138,17 +138,19 @@ public class EvidenceRiskScoreService {
                 .filter(decision -> decision.getDecision() == ReviewStatus.APPROVED)
                 .toList();
         if (approvals.isEmpty()) {
-            return createNotScored(execution, review, allDecisions, List.of(), REASON_NO_APPROVED_FINDING);
+            return createNotScored(execution, review, allDecisions, REASON_NO_APPROVED_FINDING);
         }
 
         List<Long> approvedFindingIds = approvals.stream()
                 .map(FindingReviewDecision::getFindingRevisionId)
                 .toList();
+        List<Finding> allFindings =
+                findingRepository.findAllByAnalysisExecutionIdOrderByIdAsc(execution.getId());
         List<Finding> findings = findingRepository
                 .findAllByAnalysisExecutionIdAndIdInOrderByIdAsc(execution.getId(), approvedFindingIds);
         if (findings.size() != approvals.size()) {
             return createNotScored(
-                    execution, review, allDecisions, findings, REASON_APPROVED_FINDING_MISSING);
+                    execution, review, allDecisions, REASON_APPROVED_FINDING_MISSING);
         }
 
         Map<Long, FindingReviewDecision> approvalsByFindingId = new LinkedHashMap<>();
@@ -156,8 +158,9 @@ public class EvidenceRiskScoreService {
             approvalsByFindingId.put(approval.getFindingRevisionId(), approval);
         }
         Map<Long, List<FindingEvidenceAnchor>> anchorsByFindingId = new LinkedHashMap<>();
-        for (FindingEvidenceAnchor anchor : findingEvidenceAnchorRepository
-                .findAllByFindingAnalysisExecutionIdOrderByFindingIdAscIdAsc(execution.getId())) {
+        List<FindingEvidenceAnchor> allAnchors = findingEvidenceAnchorRepository
+                .findAllByFindingAnalysisExecutionIdOrderByFindingIdAscIdAsc(execution.getId());
+        for (FindingEvidenceAnchor anchor : allAnchors) {
             anchorsByFindingId.computeIfAbsent(anchor.getFinding().getId(), ignored -> new ArrayList<>())
                     .add(anchor);
         }
@@ -165,15 +168,20 @@ public class EvidenceRiskScoreService {
         List<EligibleFinding> eligibleFindings = new ArrayList<>();
         String failureReason = null;
         for (Finding finding : findings) {
+            boolean eligible = true;
             if (hasSuccessor(finding)) {
-                failureReason = REASON_FINDING_NOT_CURRENT;
-                break;
+                if (failureReason == null) {
+                    failureReason = REASON_FINDING_NOT_CURRENT;
+                }
+                eligible = false;
             }
             EvidenceRiskScorePolicyV1.Components components =
                     EvidenceRiskScorePolicyV1.components(finding.getPolicyRuleCode());
             if (components == null) {
-                failureReason = REASON_POLICY_RULE_MISSING;
-                break;
+                if (failureReason == null) {
+                    failureReason = REASON_POLICY_RULE_MISSING;
+                }
+                eligible = false;
             }
             List<FindingEvidenceAnchor> anchors = anchorsByFindingId.getOrDefault(finding.getId(), List.of());
             List<FindingEvidenceAnchor> documentClaims = anchors.stream()
@@ -184,33 +192,65 @@ public class EvidenceRiskScoreService {
                     .filter(anchor -> anchor.getSourceRole()
                             == FindingEvidenceAnchor.SourceRole.POLICY_REQUIREMENT)
                     .toList();
-            if (documentClaims.size() != 1 || policyRequirements.isEmpty()) {
-                failureReason = REASON_ANCHOR_CARDINALITY;
-                break;
+            Map<FindingEvidenceAnchor.DocumentClaimIdentity, List<FindingEvidenceAnchor>>
+                    documentClaimsByIdentity = new LinkedHashMap<>();
+            for (FindingEvidenceAnchor documentClaim : documentClaims) {
+                documentClaimsByIdentity
+                        .computeIfAbsent(documentClaim.documentClaimIdentity(), ignored -> new ArrayList<>())
+                        .add(documentClaim);
             }
+            if (documentClaimsByIdentity.size() != 1 || policyRequirements.isEmpty()) {
+                if (failureReason == null) {
+                    failureReason = REASON_ANCHOR_CARDINALITY;
+                }
+                eligible = false;
+            }
+            if (!eligible) {
+                continue;
+            }
+            List<FindingEvidenceAnchor> equivalentDocumentClaims =
+                    documentClaimsByIdentity.values().iterator().next();
+            FindingEvidenceAnchor canonicalDocumentClaim = equivalentDocumentClaims.stream()
+                    .min(Comparator.comparing(FindingEvidenceAnchor::getId))
+                    .orElseThrow();
             FindingEvidenceAnchor canonicalPolicyRequirement = policyRequirements.stream()
                     .min(Comparator.comparing(FindingEvidenceAnchor::getId))
                     .orElseThrow();
             eligibleFindings.add(new EligibleFinding(
                     finding,
                     approvalsByFindingId.get(finding.getId()),
-                    documentClaims.getFirst(),
-                    policyRequirements,
+                    canonicalDocumentClaim,
                     canonicalPolicyRequirement,
                     components));
         }
 
         if (failureReason != null) {
-            return createNotScored(execution, review, allDecisions, findings, failureReason);
+            return createNotScored(execution, review, allDecisions, failureReason);
         }
 
-        String inputFingerprint = scoreFingerprint(execution, review, eligibleFindings);
+        String inputFingerprint = scoreFingerprint(
+                execution, review, allDecisions, allFindings, allAnchors);
         RiskScoreRun existing = findExisting(execution, inputFingerprint);
         if (existing != null) {
             return existing;
         }
 
-        List<Integer> contributions = eligibleFindings.stream()
+        Map<HarmEventKey, EligibleFinding> representatives = new LinkedHashMap<>();
+        for (EligibleFinding eligible : eligibleFindings) {
+            HarmEventKey key = new HarmEventKey(
+                    eligible.documentClaim().documentClaimIdentity(),
+                    eligible.finding().getPolicyRuleCode().name());
+            representatives.merge(
+                    key,
+                    eligible,
+                    (current, candidate) -> current.finding().getId() <= candidate.finding().getId()
+                            ? current
+                            : candidate);
+        }
+        List<EligibleFinding> distinctHarmEvents = representatives.values().stream()
+                .sorted(Comparator.comparing(eligible -> eligible.finding().getId()))
+                .toList();
+        List<Integer> contributions = distinctHarmEvents.stream()
                 .map(eligible -> eligible.components().contributionBasisPoints())
                 .toList();
         int score = EvidenceRiskScorePolicyV1.aggregate(contributions);
@@ -222,7 +262,7 @@ public class EvidenceRiskScoreService {
                 score,
                 now,
                 now);
-        for (EligibleFinding eligible : eligibleFindings) {
+        for (EligibleFinding eligible : distinctHarmEvents) {
             EvidenceRiskScorePolicyV1.Components components = eligible.components();
             run.addLedgerEntry(
                     eligible.finding(),
@@ -244,28 +284,20 @@ public class EvidenceRiskScoreService {
             AnalysisExecution execution,
             Review review,
             List<FindingReviewDecision> decisions,
-            List<Finding> findings,
             String reason
     ) {
         List<String> inputs = new ArrayList<>();
         inputs.add("NOT_SCORED");
         inputs.add(EvidenceRiskScorePolicyV1.VERSION);
-        inputs.add(execution.getId().toString());
-        inputs.add(review.getId().toString());
-        inputs.add(review.getStatus().name());
         inputs.add(reason);
-        decisions.forEach(decision -> {
-            inputs.add(decision.getId().toString());
-            inputs.add(decision.getFindingRevisionId().toString());
-            inputs.add(decision.getDecision().name());
-        });
-        findings.forEach(finding -> {
-            inputs.add(finding.getId().toString());
-            inputs.add(finding.getPolicyRuleCode() == null ? "<missing>" : finding.getPolicyRuleCode().name());
-        });
-        findingEvidenceAnchorRepository
-                .findAllByFindingAnalysisExecutionIdOrderByFindingIdAscIdAsc(execution.getId())
-                .forEach(anchor -> addAnchorFingerprint(inputs, anchor));
+        addFullInputProvenance(
+                inputs,
+                execution,
+                review,
+                decisions,
+                findingRepository.findAllByAnalysisExecutionIdOrderByIdAsc(execution.getId()),
+                findingEvidenceAnchorRepository
+                        .findAllByFindingAnalysisExecutionIdOrderByFindingIdAscIdAsc(execution.getId()));
         String inputFingerprint = fingerprint(inputs);
         RiskScoreRun existing = findExisting(execution, inputFingerprint);
         if (existing != null) {
@@ -286,33 +318,96 @@ public class EvidenceRiskScoreService {
     private String scoreFingerprint(
             AnalysisExecution execution,
             Review review,
-            List<EligibleFinding> eligibleFindings
+            List<FindingReviewDecision> decisions,
+            List<Finding> findings,
+            List<FindingEvidenceAnchor> anchors
     ) {
         List<String> inputs = new ArrayList<>();
         inputs.add("SCORED");
         inputs.add(EvidenceRiskScorePolicyV1.VERSION);
-        inputs.add(execution.getId().toString());
-        inputs.add(review.getId().toString());
-        for (EligibleFinding eligible : eligibleFindings) {
-            inputs.add(eligible.finding().getId().toString());
-            inputs.add(eligible.approval().getId().toString());
-            inputs.add(eligible.finding().getPolicyRuleCode().name());
-            addAnchorFingerprint(inputs, eligible.documentClaim());
-            eligible.policyRequirements().stream()
-                    .sorted(Comparator.comparing(FindingEvidenceAnchor::getId))
-                    .forEach(anchor -> addAnchorFingerprint(inputs, anchor));
-        }
+        addFullInputProvenance(inputs, execution, review, decisions, findings, anchors);
         return fingerprint(inputs);
+    }
+
+    private void addFullInputProvenance(
+            List<String> inputs,
+            AnalysisExecution execution,
+            Review review,
+            List<FindingReviewDecision> decisions,
+            List<Finding> findings,
+            List<FindingEvidenceAnchor> anchors
+    ) {
+        inputs.add("EXECUTION");
+        inputs.add(execution.getId().toString());
+        inputs.add(nullable(execution.getProviderRiskScore()));
+        inputs.add(nullable(execution.getModelVersion()));
+        inputs.add(nullable(execution.getPromptVersion()));
+        inputs.add(execution.getRetrievalVersion());
+        inputs.add("REVIEW");
+        inputs.add(review.getId().toString());
+        inputs.add(review.getStatus().name());
+        inputs.add(nullable(review.getReviewerId()));
+        inputs.add(nullable(review.getSubmissionComment()));
+        inputs.add(nullable(review.getComment()));
+        // Durable review and decision IDs already bind their timestamp metadata. Hashing raw
+        // OffsetDateTime strings makes managed and PostgreSQL-reloaded representations diverge.
+        inputs.add("SELECTED_FINDINGS");
+        inputs.add(Integer.toString(review.getSelectedFindingIds().size()));
+        review.getSelectedFindingIds().stream()
+                .sorted()
+                .forEach(findingId -> inputs.add(findingId.toString()));
+        inputs.add("DECISIONS");
+        inputs.add(Integer.toString(decisions.size()));
+        for (FindingReviewDecision decision : decisions) {
+            inputs.add(decision.getId().toString());
+            inputs.add(decision.getFindingRevisionId().toString());
+            inputs.add(decision.getDecision().name());
+            inputs.add(decision.getReviewerId().toString());
+            inputs.add(nullable(decision.getComment()));
+        }
+        inputs.add("FINDINGS");
+        inputs.add(Integer.toString(findings.size()));
+        for (Finding finding : findings) {
+            inputs.add(finding.getId().toString());
+            inputs.add(finding.getLineageId());
+            inputs.add(finding.getRevisionNumber().toString());
+            inputs.add(finding.getSupersedesFinding() == null
+                    ? "<none>"
+                    : finding.getSupersedesFinding().getId().toString());
+            inputs.add(finding.getStatement());
+            inputs.add(finding.getSeverity().name());
+            inputs.add(finding.getPolicyRuleCode() == null
+                    ? "<missing>"
+                    : finding.getPolicyRuleCode().name());
+            inputs.add(nullable(finding.getRecommendation()));
+            inputs.add(Integer.toString(finding.getAffectedPersonaTemplateIds().size()));
+            finding.getAffectedPersonaTemplateIds().stream()
+                    .sorted()
+                    .forEach(personaId -> inputs.add(personaId.toString()));
+        }
+        inputs.add("ANCHORS");
+        inputs.add(Integer.toString(anchors.size()));
+        anchors.forEach(anchor -> addAnchorFingerprint(inputs, anchor));
     }
 
     private void addAnchorFingerprint(List<String> inputs, FindingEvidenceAnchor anchor) {
         inputs.add(anchor.getId().toString());
+        inputs.add(anchor.getFinding().getId().toString());
         inputs.add(anchor.getSourceRole().name());
+        inputs.add(nullable(anchor.getSourceDocumentId()));
+        inputs.add(nullable(anchor.getSourceRevisionId()));
+        inputs.add(nullable(anchor.getEvidenceDocumentId()));
+        inputs.add(nullable(anchor.getRetrievedChunkId()));
         inputs.add(anchor.getSourceHash());
         inputs.add(Integer.toString(anchor.getPageNumber()));
         inputs.add(Long.toString(anchor.getUtf8StartOffset()));
         inputs.add(Long.toString(anchor.getUtf8EndOffset()));
         inputs.add(anchor.getExcerptHash());
+        inputs.add(anchor.getExactExcerpt());
+    }
+
+    private static String nullable(Object value) {
+        return value == null ? "<null>" : value.toString();
     }
 
     private boolean hasSuccessor(Finding finding) {
@@ -365,9 +460,14 @@ public class EvidenceRiskScoreService {
             Finding finding,
             FindingReviewDecision approval,
             FindingEvidenceAnchor documentClaim,
-            List<FindingEvidenceAnchor> policyRequirements,
             FindingEvidenceAnchor canonicalPolicyRequirement,
             EvidenceRiskScorePolicyV1.Components components
+    ) {
+    }
+
+    private record HarmEventKey(
+            FindingEvidenceAnchor.DocumentClaimIdentity documentClaimIdentity,
+            String policyRuleId
     ) {
     }
 }

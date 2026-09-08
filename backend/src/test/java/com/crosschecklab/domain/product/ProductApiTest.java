@@ -6,21 +6,29 @@ import static org.hamcrest.Matchers.nullValue;
 
 import static com.crosschecklab.global.security.DemoAuthenticationFilter.ROLE_HEADER;
 import static com.crosschecklab.global.security.DemoAuthenticationFilter.USER_ID_HEADER;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.crosschecklab.global.common.enums.ProductLifecycleStatus;
 import com.crosschecklab.support.IntegrationTestSupport;
 import com.fasterxml.jackson.databind.JsonNode;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -33,19 +41,22 @@ class ProductApiTest extends IntegrationTestSupport {
 
     private static final String PM_ID = "1";
     private static final String REVIEWER_ID = "2";
+    private static final String OTHER_PM_USERNAME = "product_list_test_other_pm";
 
     @Autowired
     private JdbcTemplate jdbc;
 
     // 컨테이너는 JVM 당 하나라 여기서 만든 상품이 다른 테스트로 새어 나간다.
     // 테스트마다 앞뒤로 비워 개수를 단언할 수 있게 하고 잔여 데이터도 남기지 않는다.
-    // 참조 순서대로 지운다 (analyses → product_documents → products).
+    // 실행 경계에 묶인 Review는 append-only이므로 FK 전체를 함께 초기화한 뒤 참조 순서대로 지운다.
     @BeforeEach
     @AfterEach
     void clearProducts() {
+        jdbc.execute("TRUNCATE TABLE analysis_executions CASCADE");
         jdbc.update("DELETE FROM analyses");
         jdbc.update("DELETE FROM product_documents");
         jdbc.update("DELETE FROM products");
+        jdbc.update("DELETE FROM users WHERE username = ?", OTHER_PM_USERNAME);
     }
 
     // 분석은 문서에 달리므로 latestAnalysis 를 만들려면 문서가 먼저 있어야 한다.
@@ -66,6 +77,42 @@ class ProductApiTest extends IntegrationTestSupport {
                     (product_document_id, red_team_pack_id, status, progress, input_hash, created_at, updated_at)
                 VALUES (?, 1, ?, 0, ?, NOW(), NOW())
                 RETURNING id""", Long.class, documentId, status, inputHash);
+    }
+
+    private void insertReview(long analysisId, String reviewStatus) {
+        Long executionId = jdbc.queryForObject("""
+                INSERT INTO analysis_executions
+                    (analysis_id, attempt_no, execution_token, status, retryable, retrieval_version,
+                     provider_risk_score, model_version, prompt_version, started_at, finished_at, created_at)
+                VALUES (?, 1, ?, 'SUCCEEDED', FALSE, 'product-api-test',
+                        82, 'product-api-test', 'product-api-test', NOW(), NOW(), NOW())
+                RETURNING id
+                """, Long.class, analysisId, java.util.UUID.randomUUID().toString());
+        jdbc.update("UPDATE analyses SET current_successful_execution_id = ? WHERE id = ?", executionId, analysisId);
+        jdbc.update("""
+                INSERT INTO reviews (analysis_id, analysis_execution_id, reviewer_id, status, created_at, updated_at)
+                VALUES (?, ?, 2, ?, NOW(), NOW())
+                """, analysisId, executionId, reviewStatus);
+    }
+
+    private long insertProduct(long ownerId, String name, String productType) {
+        return jdbc.queryForObject("""
+                INSERT INTO products (owner_id, name, product_type, created_at, updated_at)
+                VALUES (?, ?, ?, NOW(), NOW())
+                RETURNING id
+                """, Long.class, ownerId, name, productType);
+    }
+
+    private JsonNode listProducts(MockHttpServletRequestBuilder request) throws Exception {
+        return objectMapper.readTree(mockMvc.perform(request)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private List<Long> productIds(JsonNode response) {
+        List<Long> ids = new ArrayList<>();
+        response.path("items").forEach(item -> ids.add(item.path("productId").asLong()));
+        return ids;
     }
 
     private MockHttpServletRequestBuilder asPm(MockHttpServletRequestBuilder builder) {
@@ -282,6 +329,7 @@ class ProductApiTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.items[0].productId").value(second))
                     .andExpect(jsonPath("$.items[0].name").value("두 번째 상품"))
                     .andExpect(jsonPath("$.items[0].ownerName").value("박서준 대리"))
+                    .andExpect(jsonPath("$.items[0].status").value("DRAFT"))
                     .andExpect(jsonPath("$.page").value(0))
                     .andExpect(jsonPath("$.size").value(20))
                     .andExpect(jsonPath("$.totalElements").value(2));
@@ -300,9 +348,11 @@ class ProductApiTest extends IntegrationTestSupport {
                     .andExpect(jsonPath("$.items[0].productId").value(untouched))
                     .andExpect(jsonPath("$.items[0]").value(hasKey("latestAnalysis")))
                     .andExpect(jsonPath("$.items[0].latestAnalysis").value(nullValue()))
+                    .andExpect(jsonPath("$.items[0].status").value("DRAFT"))
                     .andExpect(jsonPath("$.items[1].productId").value(analyzed))
                     .andExpect(jsonPath("$.items[1].latestAnalysis.analysisId").value(latest))
-                    .andExpect(jsonPath("$.items[1].latestAnalysis.status").value("IN_REVIEW"));
+                    .andExpect(jsonPath("$.items[1].latestAnalysis.status").value("IN_REVIEW"))
+                    .andExpect(jsonPath("$.items[1].status").value("IN_REVIEW"));
         }
 
         @Test
@@ -333,8 +383,223 @@ class ProductApiTest extends IntegrationTestSupport {
         }
 
         @Test
+        @DisplayName("전체 DB 를 필터링한 뒤 12개씩 순회해도 누락·중복 없이 정확한 합계를 반환한다")
+        void filtersBeforePagingAcrossMoreThanTwentyProducts() throws Exception {
+            List<Long> matching = new ArrayList<>();
+            for (int i = 0; i < 25; i++) {
+                matching.add(insertProduct(1, "Target 상품 " + i, "SAVINGS"));
+            }
+            for (int i = 0; i < 26; i++) {
+                insertProduct(1, "검색 불일치 " + i, "SAVINGS");
+                insertProduct(1, "Target 유형 불일치 " + i, "LOAN");
+            }
+            long analyzed = insertProduct(1, "Target 상태 불일치", "SAVINGS");
+            insertAnalysis(insertDocument(analyzed), "COMPLETED", "filtered-analyzed");
+
+            List<Long> traversed = new ArrayList<>();
+            for (int page = 0; page < 4; page++) {
+                JsonNode response = listProducts(asPm(get("/api/products")
+                        .param("page", Integer.toString(page)).param("size", "12")
+                        .param("q", "  tArGeT  ").param("productType", "SAVINGS").param("status", "DRAFT")));
+                assertThat(response.path("totalElements").asLong()).isEqualTo(25);
+                assertThat(response.path("totalPages").asInt()).isEqualTo(3);
+                assertThat(response.path("page").asInt()).isEqualTo(page);
+                assertThat(response.path("size").asInt()).isEqualTo(12);
+                assertThat(response.path("items").size()).isEqualTo(page < 2 ? 12 : page == 2 ? 1 : 0);
+                traversed.addAll(productIds(response));
+            }
+            assertThat(traversed).containsExactlyElementsOf(matching.reversed()).doesNotHaveDuplicates();
+        }
+
+        @Test
+        @DisplayName("검색은 이름의 대소문자 무시 부분문자열 또는 상품 ID 부분문자열이다")
+        void searchesPlainNamesAndIds() throws Exception {
+            long matching = createProduct("프리미엄 Alpha 적금");
+            createProduct("다른 예금");
+            assertThat(productIds(listProducts(asPm(get("/api/products").param("q", "  aLPHa  ")))))
+                    .containsExactly(matching);
+            assertThat(productIds(listProducts(asPm(get("/api/products").param("q", "미엄")))))
+                    .containsExactly(matching);
+            String fragment = Long.toString(matching);
+            fragment = fragment.substring(fragment.length() - 1);
+            List<Long> expected = jdbc.queryForList("""
+                    SELECT id FROM products WHERE strpos(CAST(id AS text), ?) > 0 ORDER BY id DESC
+                    """, Long.class, fragment);
+            assertThat(productIds(listProducts(asPm(get("/api/products").param("q", " " + fragment + " ")))))
+                    .containsExactlyElementsOf(expected);
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"%", "_", "\\", ".*", "[", "ㄱ.*", "' OR 1=1 --"})
+        @DisplayName("LIKE 와 정규식 특수문자도 검색어에서는 리터럴이다")
+        void treatsWildcardsAndRegexAsLiteralSubstrings(String query) throws Exception {
+            long matching = createProduct("리터럴 " + query + " 상품");
+            createProduct("일반 가나다 상품");
+            JsonNode response = listProducts(asPm(get("/api/products").param("q", query)));
+            assertThat(productIds(response)).containsExactly(matching);
+            assertThat(response.path("totalElements").asLong()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("초성 검색만 ECMAScript 공백을 제거하고 일반 검색은 내부 공백을 보존한다")
+        void matchesChoseongWithExactJavascriptWhitespace() throws Exception {
+            String whitespace = "\t\n\u000B\f\r \u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005"
+                    + "\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF";
+            long matching = createProduct("스" + whitespace + "마" + whitespace + "트 인컴");
+            long jamo = createProduct("ㅅㅁㅌ");
+            createProduct("스\u0085마트");
+            createProduct("스\u200B마트");
+            createProduct("스\u180E마트");
+            createProduct("스머프");
+
+            JsonNode response = listProducts(asPm(get("/api/products")
+                    .param("q", whitespace + "ㅅ" + whitespace + "ㅁㅌ" + whitespace)));
+            assertThat(response.path("totalElements").asLong()).isEqualTo(2);
+            assertThat(productIds(response)).containsExactly(jamo, matching);
+            assertThat(productIds(listProducts(asPm(get("/api/products").param("q", "스 마 트"))))).isEmpty();
+            assertThat(listProducts(asPm(get("/api/products").param("q", whitespace)))
+                    .path("totalElements").asLong()).isEqualTo(6);
+            for (String notJsWhitespace : List.of("\u0085", "\u200B", "\u180E")) {
+                assertThat(productIds(listProducts(asPm(get("/api/products")
+                        .param("q", "ㅅ" + notJsWhitespace + "ㅁㅌ"))))).isEmpty();
+            }
+        }
+
+        @Test
+        @DisplayName("ECMAScript 공백이 아닌 마지막 NEL 앞 공백은 trim 으로 지우지 않는다")
+        void preservesWhitespaceBeforeTrailingNonJavascriptLineTerminator() throws Exception {
+            long matching = createProduct("Alpha \u0085");
+            createProduct("Alpha\u0085");
+            assertThat(productIds(listProducts(asPm(get("/api/products").param("q", "Alpha \u0085")))))
+                    .containsExactly(matching);
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+                "ㄱ, 가, 깋", "ㄲ, 까, 낗", "ㄴ, 나, 닣", "ㄷ, 다, 딯", "ㄸ, 따, 띻",
+                "ㄹ, 라, 맇", "ㅁ, 마, 밓", "ㅂ, 바, 빟", "ㅃ, 빠, 삫", "ㅅ, 사, 싷",
+                "ㅆ, 싸, 앃", "ㅇ, 아, 잏", "ㅈ, 자, 짛", "ㅉ, 짜, 찧", "ㅊ, 차, 칳",
+                "ㅋ, 카, 킿", "ㅌ, 타, 팋", "ㅍ, 파, 핗", "ㅎ, 하, 힣"
+        })
+        @DisplayName("19개 초성 각각의 첫·마지막 음절과 초성 자체만 매칭한다")
+        void matchesAllChoseongRangeBoundaries(String consonant, String first, String last) throws Exception {
+            long matching = createProduct(first + last);
+            long literal = createProduct(consonant);
+            createProduct(Character.toString((char) (first.charAt(0) - 1)));
+            createProduct(Character.toString((char) (last.charAt(0) + 1)));
+            JsonNode response = listProducts(asPm(get("/api/products").param("q", consonant)));
+            assertThat(productIds(response)).containsExactly(literal, matching);
+            assertThat(response.path("totalElements").asLong()).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("내용과 count 에 소유권을 적용하며 ownerId 요청 파라미터는 권한을 바꾸지 않는다")
+        void isolatesOwnersForCombinedFiltersAndCounts() throws Exception {
+            long otherPm = jdbc.queryForObject("""
+                    INSERT INTO users (username, name, role, active, created_at, updated_at)
+                    VALUES (?, '다른 담당자', 'PRODUCT_MANAGER', TRUE, NOW(), NOW())
+                    RETURNING id
+                    """, Long.class, OTHER_PM_USERNAME);
+            long own = insertProduct(1, "공통 상품 본인", "LOAN");
+            List<Long> foreign = new ArrayList<>();
+            for (int i = 0; i < 25; i++) {
+                foreign.add(insertProduct(otherPm, "공통 상품 타인 " + i, "LOAN"));
+            }
+            JsonNode manager = listProducts(asPm(get("/api/products")
+                    .param("q", "ㄱㅌ").param("productType", "LOAN").param("status", "DRAFT")
+                    .param("size", "1").param("ownerId", Long.toString(otherPm))));
+            assertThat(productIds(manager)).containsExactly(own);
+            assertThat(manager.path("totalElements").asLong()).isEqualTo(1);
+            assertThat(manager.path("totalPages").asInt()).isEqualTo(1);
+
+            JsonNode reviewer = listProducts(asReviewer(get("/api/products")
+                    .param("q", "ㄱㅌ").param("productType", "LOAN").param("status", "DRAFT")
+                    .param("size", "12").param("ownerId", PM_ID)));
+            assertThat(productIds(reviewer)).containsExactlyElementsOf(foreign.reversed().subList(0, 12));
+            assertThat(reviewer.path("totalElements").asLong()).isEqualTo(26);
+            assertThat(reviewer.path("totalPages").asInt()).isEqualTo(3);
+
+            mockMvc.perform(asPm(get("/api/products").param("q", "타인")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.items").isEmpty())
+                    .andExpect(jsonPath("$.totalElements").value(0));
+        }
+
+        @ParameterizedTest
+        @CsvSource({
+                "CREATED,,RUNNING", "CREATED,APPROVED,RUNNING",
+                "RUNNING,,RUNNING", "RUNNING,REJECTED,RUNNING", "RUNNING,PENDING,RUNNING",
+                "COMPLETED,,ANALYZED", "IN_REVIEW,,IN_REVIEW", "FAILED,,NEEDS_FIX",
+                "COMPLETED,APPROVED,APPROVED", "IN_REVIEW,APPROVED,APPROVED", "FAILED,APPROVED,APPROVED",
+                "COMPLETED,REJECTED,NEEDS_FIX", "IN_REVIEW,REJECTED,NEEDS_FIX",
+                "COMPLETED,PENDING,IN_REVIEW", "FAILED,PENDING,IN_REVIEW"
+        })
+        @DisplayName("최신 분석과 그 검토 상태의 우선순위를 응답 및 모든 상태 필터에 동일하게 적용한다")
+        void derivesLifecycleAndFilters(String analysisStatus, String reviewStatus, String lifecycle) throws Exception {
+            long product = createProduct("상태 판정 상품");
+            long analysis = insertAnalysis(insertDocument(product), analysisStatus, "lifecycle");
+            if (reviewStatus != null) {
+                insertReview(analysis, reviewStatus);
+            }
+            for (ProductLifecycleStatus filter : ProductLifecycleStatus.values()) {
+                JsonNode response = listProducts(asPm(get("/api/products").param("status", filter.name())
+                        .param("size", "1")));
+                boolean matches = filter.name().equals(lifecycle);
+                assertThat(response.path("totalElements").asLong()).isEqualTo(matches ? 1 : 0);
+                assertThat(response.path("totalPages").asInt()).isEqualTo(matches ? 1 : 0);
+                if (matches) {
+                    assertThat(productIds(response)).containsExactly(product);
+                    assertThat(response.at("/items/0/status").asText()).isEqualTo(lifecycle);
+                    assertThat(response.at("/items/0/latestAnalysis/analysisId").asLong()).isEqualTo(analysis);
+                    assertThat(response.at("/items/0/latestAnalysis/status").asText()).isEqualTo(analysisStatus);
+                } else {
+                    assertThat(productIds(response)).isEmpty();
+                }
+            }
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"APPROVED", "REJECTED", "PENDING"})
+        @DisplayName("새 분석은 이전 검토를 상속하지 않고 최신 문서와 무관하게 가장 큰 분석 ID 를 쓴다")
+        void ignoresOlderReviewsAndSelectsLatestAnalysisAcrossAllDocuments(String olderReview) throws Exception {
+            long product = createProduct("분석 재실행 상품");
+            long olderDocument = insertDocument(product);
+            long newerDocument = insertDocument(product);
+            long oldAnalysis = insertAnalysis(newerDocument, "IN_REVIEW", "old-reviewed");
+            insertReview(oldAnalysis, olderReview);
+            long newestAnalysis = insertAnalysis(olderDocument, "COMPLETED", "newest-on-older-document");
+            // 최신의 기준은 created_at 이 아니라 ID 다.
+            jdbc.update("UPDATE analyses SET created_at = TIMESTAMPTZ '2000-01-01 00:00:00+00' WHERE id = ?",
+                    newestAnalysis);
+            jdbc.update("UPDATE products SET created_at = TIMESTAMPTZ '2026-09-08 10:14:15.123456+09' WHERE id = ?",
+                    product);
+
+            JsonNode response = listProducts(asPm(get("/api/products").param("status", "ANALYZED")));
+            assertThat(productIds(response)).containsExactly(product);
+            assertThat(response.at("/items/0/latestDocument/documentId").asLong()).isEqualTo(newerDocument);
+            assertThat(response.at("/items/0/latestAnalysis/analysisId").asLong()).isEqualTo(newestAnalysis);
+            assertThat(response.at("/items/0/status").asText()).isEqualTo("ANALYZED");
+            assertThat(OffsetDateTime.parse(response.at("/items/0/createdAt").asText()).toInstant())
+                    .isEqualTo(OffsetDateTime.parse("2026-09-08T10:14:15.123456+09:00").toInstant());
+        }
+
+        @ParameterizedTest
+        @CsvSource({"productType, INSURANCE", "productType, savings", "status, COMPLETED", "status, approved"})
+        @DisplayName("알 수 없는 필터 enum 은 400 VALIDATION_ERROR")
+        void rejectsInvalidFilters(String parameter, String value) throws Exception {
+            mockMvc.perform(asPm(get("/api/products").param(parameter, value)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"))
+                    .andExpect(jsonPath("$.fieldErrors[0].field").value(parameter));
+        }
+
+        @Test
         @DisplayName("size 가 100 을 넘거나 page 가 음수면 400")
         void rejectsOutOfRangePaging() throws Exception {
+            mockMvc.perform(asPm(get("/api/products").param("size", "0")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+
             mockMvc.perform(asPm(get("/api/products").param("size", "101")))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));

@@ -1,10 +1,12 @@
 package com.crosschecklab.domain.document;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.crosschecklab.domain.document.extraction.PdfBoxTextExtractor;
 import com.crosschecklab.domain.document.extraction.PptxTextExtractor;
 import com.crosschecklab.domain.document.extraction.RealDocumentTextExtractor;
+import com.crosschecklab.domain.document.extraction.TextExtractionException;
 import com.crosschecklab.domain.document.extraction.TextExtractionService;
 import com.crosschecklab.domain.document.storage.DurableLocalFileStorage;
 import com.crosschecklab.domain.document.storage.FileStorage;
@@ -16,6 +18,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.UUID;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -96,6 +99,7 @@ class RealExtractionProfileTest extends IntegrationTestSupport {
         MockMultipartFile upload =
                 new MockMultipartFile("file", "born-digital.pdf", "application/pdf", pdf);
         StoredFile stored = fileStorage.store(upload, "born-digital-provenance");
+        String requestToken = UUID.randomUUID().toString();
         Long productId = jdbcTemplate.queryForObject("""
                 INSERT INTO products (owner_id, name, product_type, created_at, updated_at)
                 VALUES (1, 'OCR provenance regression', 'INVESTMENT', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -105,11 +109,13 @@ class RealExtractionProfileTest extends IntegrationTestSupport {
                 INSERT INTO product_documents (
                     product_id, file_name, media_type, file_size, checksum, storage_key,
                     extract_status, extracted_text, extracted_text_hash,
+                    extraction_token, extraction_lease_until,
                     confirmed, confirmed_by, confirmed_at, confirmed_text_hash,
                     created_at, updated_at
                 ) VALUES (
                     ?, 'born-digital.pdf', 'application/pdf', ?, ?, ?,
                     'UPLOADED', 'previous confirmed text', ?,
+                    ?, clock_timestamp() + interval '5 minutes',
                     TRUE, 1, CURRENT_TIMESTAMP, ?,
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
@@ -121,9 +127,10 @@ class RealExtractionProfileTest extends IntegrationTestSupport {
                 stored.checksum(),
                 stored.storageKey(),
                 stored.checksum(),
+                requestToken,
                 stored.checksum());
 
-        documentExtractionRunner.run(documentId);
+        documentExtractionRunner.run(documentId, requestToken);
 
         Map<String, Object> persisted = jdbcTemplate.queryForMap("""
                 SELECT d.extract_status,
@@ -156,6 +163,28 @@ class RealExtractionProfileTest extends IntegrationTestSupport {
         assertThat(persisted.get("confirmed_at")).isNull();
         assertThat(persisted.get("confirmed_extraction_run_id")).isNull();
         assertThat(persisted.get("confirmed_text_hash")).isNull();
+    }
+
+    @Test
+    @DisplayName("OCR이 필요한 거대 PDF 페이지는 이미지 할당 전에 거부한다")
+    void rejectsHugeOcrPageBeforeRendering() throws Exception {
+        PdfBoxTextExtractor extractor =
+                applicationContext.getBean(PdfBoxTextExtractor.class);
+
+        assertThatThrownBy(() -> extractor.extractResult(hugeBlankPdf()))
+                .isInstanceOf(TextExtractionException.class)
+                .hasMessageContaining("안전하게 렌더할 수 없습니다")
+                .hasMessageContaining("최대 렌더 픽셀 수");
+    }
+
+    private static byte[] hugeBlankPdf() throws Exception {
+        try (PDDocument document = new PDDocument();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            document.addPage(new PDPage(new org.apache.pdfbox.pdmodel.common.PDRectangle(
+                    10_000, 10_000)));
+            document.save(output);
+            return output.toByteArray();
+        }
     }
 
     private static byte[] bornDigitalPdf() throws Exception {

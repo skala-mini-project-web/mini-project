@@ -3,6 +3,7 @@ package com.crosschecklab.domain.document;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
@@ -29,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -94,7 +96,8 @@ class DocumentExtractionRunnerTest {
                 .thenReturn(true);
 
         DocumentBatchWorker worker = new DocumentBatchWorker(
-                claims, transitions, extractionService, Runnable::run, clock);
+                claims, transitions, extractionService, Runnable::run, clock,
+                Duration.ofMinutes(5), Duration.ofSeconds(45));
 
         worker.wakeUp();
 
@@ -148,7 +151,8 @@ class DocumentExtractionRunnerTest {
                 .thenReturn(true);
 
         DocumentBatchWorker worker = new DocumentBatchWorker(
-                claims, transitions, extractionService, Runnable::run, clock);
+                claims, transitions, extractionService, Runnable::run, clock,
+                Duration.ofMinutes(5), Duration.ofSeconds(45));
 
         worker.wakeUp();
 
@@ -228,7 +232,8 @@ class DocumentExtractionRunnerTest {
                 .thenReturn(true);
 
         new DocumentBatchWorker(
-                claims, transitions, extractionService, Runnable::run, clock).wakeUp();
+                claims, transitions, extractionService, Runnable::run, clock,
+                Duration.ofMinutes(5), Duration.ofSeconds(45)).wakeUp();
 
         verify(transitions, timeout(1_000)).failBatchExtraction(
                 eq(21L), anyString(), eq(7L), any(), any(), eq(false),
@@ -276,7 +281,8 @@ class DocumentExtractionRunnerTest {
                 .thenReturn(true);
 
         DocumentBatchWorker worker = new DocumentBatchWorker(
-                claims, transitions, extractionService, Runnable::run, clock);
+                claims, transitions, extractionService, Runnable::run, clock,
+                Duration.ofMinutes(5), Duration.ofSeconds(45));
 
         worker.wakeUp();
 
@@ -291,6 +297,84 @@ class DocumentExtractionRunnerTest {
                 eq("문서 추출 중 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."),
                 eq("Document extraction failed permanently or exhausted its attempts."),
                 eq(IllegalStateException.class.getName()));
+    }
+
+    @Test
+    void runtimeTimeoutConfigurationRejectsInvalidBudgets() {
+        DocumentBatchClaimRepository claims = mock(DocumentBatchClaimRepository.class);
+        DocumentExtractionTransitions transitions = mock(DocumentExtractionTransitions.class);
+        TextExtractionService extractionService = mock(TextExtractionService.class);
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+
+        assertThatThrownBy(() -> new DocumentBatchWorker(
+                claims, transitions, extractionService, Runnable::run, clock,
+                Duration.ofMinutes(5), Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("ocr.request-timeout must be positive");
+        assertThatThrownBy(() -> new DocumentBatchWorker(
+                claims, transitions, extractionService, Runnable::run, clock,
+                Duration.ofSeconds(45), Duration.ofSeconds(45)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("ocr.request-timeout must be shorter than "
+                        + "document-batch.extraction-timeout");
+        assertThatThrownBy(() -> new DocumentBatchWorker(
+                claims, transitions, extractionService, Runnable::run, clock,
+                Duration.ofMinutes(9).plusSeconds(31), Duration.ofSeconds(45)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("document-batch.extraction-timeout must not exceed "
+                        + "the lease duration minus the 30s cleanup margin");
+    }
+
+    @Test
+    void multiplePageWorkCompletesInsideTheTotalExtractionBudget() {
+        DocumentBatchClaimRepository claims = mock(DocumentBatchClaimRepository.class);
+        DocumentExtractionTransitions transitions = mock(DocumentExtractionTransitions.class);
+        TextExtractionService extractionService = mock(TextExtractionService.class);
+        DocumentBatchItem item = mock(DocumentBatchItem.class, RETURNS_DEEP_STUBS);
+        ExtractionTarget target =
+                new ExtractionTarget(46L, "three-pages.pdf", "application/pdf", "sha256://three");
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        ExecutorService extractionExecutor = Executors.newSingleThreadExecutor();
+        DocumentExtractionResult result = DocumentExtractionResult.ofPages(
+                "a".repeat(64),
+                List.of(
+                        PageExtractionResult.pdfBox(1, "page one", sha256("page one")),
+                        PageExtractionResult.pdfBox(2, "page two", sha256("page two")),
+                        PageExtractionResult.pdfBox(3, "page three", sha256("page three"))));
+
+        when(item.getId()).thenReturn(22L);
+        when(item.getLeaseFence()).thenReturn(8L);
+        when(item.getAttemptCount()).thenReturn(1);
+        when(claims.claimDue(anyString(), any(), any(), eq(1)))
+                .thenReturn(List.of(item))
+                .thenReturn(List.of());
+        when(transitions.beginBatchExtraction(eq(22L), anyString(), eq(8L), any()))
+                .thenReturn(Optional.of(target));
+        when(extractionService.extractResult(target)).thenReturn(result);
+        when(transitions.completeBatchExtraction(
+                eq(22L), anyString(), eq(8L), any(), eq(result)))
+                .thenReturn(true);
+
+        DocumentBatchWorker worker = new DocumentBatchWorker(
+                claims,
+                transitions,
+                extractionService,
+                Runnable::run,
+                clock,
+                extractionExecutor,
+                Duration.ofSeconds(1));
+
+        try {
+            worker.wakeUp();
+
+            verify(transitions).completeBatchExtraction(
+                    eq(22L), anyString(), eq(8L), any(), eq(result));
+            verify(transitions, never()).failBatchExtraction(
+                    eq(22L), anyString(), eq(8L), any(), any(), anyBoolean(),
+                    anyString(), anyString(), anyString(), anyString());
+        } finally {
+            extractionExecutor.shutdownNow();
+        }
     }
 
     @Test
@@ -342,7 +426,7 @@ class DocumentExtractionRunnerTest {
                 Runnable::run,
                 clock,
                 extractionExecutor,
-                java.time.Duration.ofMillis(250));
+                Duration.ofMillis(250));
 
         try {
             worker.wakeUp();
@@ -429,7 +513,7 @@ class DocumentExtractionRunnerTest {
                 Runnable::run,
                 clock,
                 extractionExecutor,
-                java.time.Duration.ofMillis(250));
+                Duration.ofMillis(250));
 
         try {
             worker.wakeUp();

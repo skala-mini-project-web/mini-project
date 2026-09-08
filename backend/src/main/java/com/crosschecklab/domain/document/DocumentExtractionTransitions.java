@@ -10,6 +10,7 @@ import com.crosschecklab.domain.document.extraction.PageExtractionResult;
 import com.crosschecklab.domain.document.extraction.TextExtractionException;
 import com.crosschecklab.global.common.enums.ExtractStatus;
 import jakarta.persistence.EntityManager;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.Optional;
@@ -29,56 +30,193 @@ public class DocumentExtractionTransitions {
     private static final String FAILURE_LOCK_TIMEOUT = "2s";
     private static final String FAILURE_STATEMENT_TIMEOUT = "5s";
     private static final String EXTRACTION_CONFIG_VERSION = "pdfbox-ocr-v1";
+    private static final Duration EXTRACTION_LEASE = Duration.ofMinutes(10);
+    private static final Duration EXTRACTION_LEASE_CLEANUP_MARGIN = Duration.ofSeconds(30);
+    private static final String TEMPORARY_FAILURE_CODE =
+            "DOCUMENT_EXTRACTION_TEMPORARY_FAILURE";
+    private static final String TEMPORARY_FAILURE_MESSAGE =
+            "문서 추출 중 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
 
     private final ProductDocumentRepository productDocumentRepository;
     private final DocumentBatchClaimRepository batchClaimRepository;
     private final EntityManager entityManager;
 
-    // 문서가 이미 지워졌을 수 있으므로 Optional 로 돌려준다.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public Optional<ExtractionTarget> beginExtraction(Long documentId) {
-        return productDocumentRepository.findByIdForUpdate(documentId)
-                .filter(document -> document.getExtractStatus() == ExtractStatus.UPLOADED
-                        || document.getExtractStatus() == ExtractStatus.EXTRACTING)
-                .map(document -> {
-                    document.markExtracting();
-                    return ExtractionTarget.from(document);
-                });
+    public Optional<ExtractionClaim> claimExtraction(
+            Long documentId,
+            String expectedRequestToken,
+            Duration processingBudget
+    ) {
+        requirePositiveBudget(processingBudget);
+        long claimStarted = System.nanoTime();
+        setLocalTimeouts();
+        Optional<ProductDocument> locked = productDocumentRepository.findByIdForUpdate(documentId);
+        if (locked.isEmpty() || productDocumentRepository.hasBatchMembership(documentId)) {
+            return Optional.empty();
+        }
+        ProductDocument document = locked.get();
+        OffsetDateTime now = databaseNow();
+        Duration remainingBudget = processingBudget.minus(Duration.ofNanos(
+                Math.max(0L, System.nanoTime() - claimStarted)));
+        if (!document.ownsExtraction(expectedRequestToken, now)
+                || remainingBudget.isZero()
+                || remainingBudget.isNegative()) {
+            return Optional.empty();
+        }
+        document.markExtracting();
+        String workerToken = document.reserveExtraction(now.plus(EXTRACTION_LEASE));
+        return Optional.of(new ExtractionClaim(
+                ExtractionTarget.from(document),
+                workerToken,
+                now.plus(remainingBudget)));
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void completeExtraction(
+    public boolean completeExtraction(
             Long documentId,
+            String expectedWorkerToken,
+            OffsetDateTime processingDeadline,
             String extractedText,
             boolean legacyMockExtraction
     ) {
-        productDocumentRepository.findByIdForUpdate(documentId)
-                .filter(document -> document.getExtractStatus() == ExtractStatus.EXTRACTING)
-                .ifPresent(document -> {
-                    if (!legacyMockExtraction && isPdf(document)) {
-                        throw new TextExtractionException(
-                                "PDF extraction cannot complete without page provenance.");
-                    }
-                    document.markReady(extractedText);
-                });
+        setLocalTimeouts();
+        Optional<ProductDocument> locked = productDocumentRepository.findByIdForUpdate(documentId);
+        if (locked.isEmpty() || productDocumentRepository.hasBatchMembership(documentId)) {
+            return false;
+        }
+        ProductDocument document = locked.get();
+        OffsetDateTime now = databaseNow();
+        if (!ownsLiveWorkerClaim(document, expectedWorkerToken, now)) {
+            return false;
+        }
+        if (!now.isBefore(processingDeadline)) {
+            document.markFailed(
+                    TEMPORARY_FAILURE_CODE, TEMPORARY_FAILURE_MESSAGE, true);
+            return false;
+        }
+        if (!legacyMockExtraction && isPdf(document)) {
+            throw new TextExtractionException(
+                    "PDF extraction cannot complete without page provenance.");
+        }
+        document.markReady(extractedText);
+        return true;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void completeExtraction(
+    public boolean completeExtraction(
             Long documentId,
+            String expectedWorkerToken,
+            OffsetDateTime processingDeadline,
             DocumentExtractionResult result,
             boolean legacyMockExtraction
     ) {
-        productDocumentRepository.findByIdForUpdate(documentId)
-                .filter(document -> document.getExtractStatus() == ExtractStatus.EXTRACTING)
-                .ifPresent(document -> persistResult(document, result, legacyMockExtraction));
+        setLocalTimeouts();
+        Optional<ProductDocument> locked = productDocumentRepository.findByIdForUpdate(documentId);
+        if (locked.isEmpty() || productDocumentRepository.hasBatchMembership(documentId)) {
+            return false;
+        }
+        ProductDocument document = locked.get();
+        OffsetDateTime now = databaseNow();
+        if (!ownsLiveWorkerClaim(document, expectedWorkerToken, now)) {
+            return false;
+        }
+        if (!now.isBefore(processingDeadline)) {
+            document.markFailed(
+                    TEMPORARY_FAILURE_CODE, TEMPORARY_FAILURE_MESSAGE, true);
+            return false;
+        }
+        persistResult(document, result, legacyMockExtraction);
+        return true;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void failExtraction(Long documentId, String errorCode, String publicMessage, boolean retryable) {
-        productDocumentRepository.findByIdForUpdate(documentId)
-                .filter(document -> document.getExtractStatus() == ExtractStatus.EXTRACTING)
-                .ifPresent(document -> document.markFailed(errorCode, publicMessage, retryable));
+    public boolean failExtraction(
+            Long documentId,
+            String expectedWorkerToken,
+            String errorCode,
+            String publicMessage,
+            boolean retryable
+    ) {
+        setLocalTimeouts();
+        Optional<ProductDocument> locked = productDocumentRepository.findByIdForUpdate(documentId);
+        if (locked.isEmpty() || productDocumentRepository.hasBatchMembership(documentId)) {
+            return false;
+        }
+        ProductDocument document = locked.get();
+        OffsetDateTime now = databaseNow();
+        if (!ownsLiveWorkerClaim(document, expectedWorkerToken, now)) {
+            return false;
+        }
+        document.markFailed(errorCode, publicMessage, retryable);
+        return true;
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean recoverExpiredExtraction(Long documentId, String expectedToken) {
+        setLocalTimeouts();
+        Optional<ProductDocument> locked = productDocumentRepository.findByIdForUpdate(documentId);
+        if (locked.isEmpty() || productDocumentRepository.hasBatchMembership(documentId)) {
+            return false;
+        }
+        ProductDocument document = locked.get();
+        OffsetDateTime now = databaseNow();
+        if ((document.getExtractStatus() != ExtractStatus.UPLOADED
+                && document.getExtractStatus() != ExtractStatus.EXTRACTING)
+                || expectedToken == null
+                || !expectedToken.equals(document.getExtractionToken())
+                || document.getExtractionLeaseUntil() == null
+                || document.getExtractionLeaseUntil().isAfter(now)) {
+            return false;
+        }
+        document.markFailed(TEMPORARY_FAILURE_CODE, TEMPORARY_FAILURE_MESSAGE, true);
+        return true;
+    }
+
+    private static boolean ownsLiveWorkerClaim(
+            ProductDocument document,
+            String expectedWorkerToken,
+            OffsetDateTime now
+    ) {
+        return document.getExtractStatus() == ExtractStatus.EXTRACTING
+                && document.ownsExtraction(expectedWorkerToken, now);
+    }
+
+    private static void requirePositiveBudget(Duration processingBudget) {
+        if (processingBudget == null
+                || processingBudget.isZero()
+                || processingBudget.isNegative()) {
+            throw new IllegalArgumentException("processingBudget must be positive");
+        }
+        if (processingBudget.compareTo(
+                EXTRACTION_LEASE.minus(EXTRACTION_LEASE_CLEANUP_MARGIN)) > 0) {
+            throw new IllegalArgumentException(
+                    "processingBudget must not exceed the extraction lease "
+                            + "minus the 30s cleanup margin");
+        }
+    }
+
+    private void setLocalTimeouts() {
+        entityManager.createNativeQuery(
+                        "select set_config('lock_timeout', :timeout, true)")
+                .setParameter("timeout", FAILURE_LOCK_TIMEOUT)
+                .getSingleResult();
+        entityManager.createNativeQuery(
+                        "select set_config('statement_timeout', :timeout, true)")
+                .setParameter("timeout", FAILURE_STATEMENT_TIMEOUT)
+                .getSingleResult();
+    }
+
+    private OffsetDateTime databaseNow() {
+        return (OffsetDateTime) entityManager
+                .createNativeQuery("select clock_timestamp()", OffsetDateTime.class)
+                .getSingleResult();
+    }
+
+    record ExtractionClaim(
+            ExtractionTarget target,
+            String workerToken,
+            OffsetDateTime processingDeadline
+    ) {
     }
 
     private void persistResult(

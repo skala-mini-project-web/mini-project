@@ -110,7 +110,7 @@ class RiskAnalysisRequest(ApiModel):
         min_length=1,
         max_length=MAX_CONFIRMED_TEXT_LENGTH,
     )
-    persona_codes: list[PersonaCode] = Field(min_length=1)
+    persona_codes: list[PersonaCode] = Field(min_length=1, max_length=12)
     red_team_pack_code: RedTeamPackCode
     rule_codes: list[RedTeamRuleCode] = Field(
         min_length=1,
@@ -131,10 +131,9 @@ class RiskAnalysisRequest(ApiModel):
     @field_validator("confirmed_text")
     @classmethod
     def confirmed_text_must_not_be_blank(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
+        if not value.strip():
             raise ValueError("confirmedText must not be blank")
-        return stripped
+        return value
 
     @field_validator("persona_codes", "rule_codes")
     @classmethod
@@ -231,15 +230,42 @@ class EvidenceSpan(ApiModel):
         return value
 
 
+class DocumentClaim(ApiModel):
+    excerpt: str = Field(min_length=1, max_length=400)
+
+    @field_validator("excerpt")
+    @classmethod
+    def excerpt_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("document claim excerpt must not be blank")
+        return value
+
+
 class FindingPayload(ApiModel):
     statement: str = Field(min_length=1, max_length=1000)
     severity: Severity
     policy_rule_code: RedTeamRuleCode
-    affected_persona_codes: list[PersonaCode] = Field(min_length=1)
-    retrieved_context_chunk_ids: list[int] = Field(min_length=1)
-    evidence_spans: list[EvidenceSpan] = Field(min_length=1)
-    known_fact_ids: list[int] = Field(default_factory=list)
+    doc_claim: DocumentClaim
+    affected_persona_codes: list[PersonaCode] = Field(
+        min_length=1, max_length=12
+    )
+    retrieved_context_chunk_ids: list[int] = Field(
+        min_length=1, max_length=MAX_RETRIEVED_CONTEXTS
+    )
+    evidence_spans: list[EvidenceSpan] = Field(
+        min_length=1, max_length=60
+    )
+    known_fact_ids: list[int] = Field(
+        default_factory=list, max_length=MAX_KNOWN_FACTS
+    )
     recommendation: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("statement")
+    @classmethod
+    def statement_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("finding statement must not be blank")
+        return value
 
     @field_validator("affected_persona_codes")
     @classmethod
@@ -266,6 +292,8 @@ class FindingPayload(ApiModel):
     @field_validator("known_fact_ids")
     @classmethod
     def known_fact_ids_must_be_unique(cls, value: list[int]) -> list[int]:
+        if any(identifier <= 0 for identifier in value):
+            raise ValueError("known fact ids must be positive")
         if len(value) != len(set(value)):
             raise ValueError("duplicate known fact ids are not allowed")
         return value
@@ -282,21 +310,56 @@ class FindingPayload(ApiModel):
 
 
 class RiskAnalysisResponse(ApiModel):
-    risk_score: int = Field(ge=0, le=100)
-    model_version: str = Field(min_length=1, max_length=100)
-    prompt_version: str = Field(min_length=1, max_length=100)
-    findings: list[FindingPayload] = Field(min_length=1)
+    risk_score: int | None = Field(default=None, ge=0, le=100)
+    model_version: str = Field(min_length=1, max_length=50)
+    prompt_version: str = Field(min_length=1, max_length=50)
+    findings: list[FindingPayload] = Field(max_length=20)
+
+    @field_validator("model_version", "prompt_version")
+    @classmethod
+    def versions_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("model and prompt versions must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def clean_result_must_not_have_numeric_score(
+        self,
+    ) -> "RiskAnalysisResponse":
+        if not self.findings and self.risk_score is not None:
+            raise ValueError("a clean result must have a null risk score")
+        return self
 
 
 class OllamaFindingPayload(ApiModel):
     statement: str = Field(min_length=1, max_length=1000)
     severity: Severity
     policy_rule_code: RedTeamRuleCode
-    affected_persona_codes: list[PersonaCode] = Field(min_length=1)
-    retrieved_context_chunk_ids: list[int] = Field(min_length=1)
-    evidence_span_option_ids: list[str] = Field(min_length=1)
-    known_fact_ids: list[int] = Field(default_factory=list)
+    doc_claim_option_id: str = Field(min_length=1)
+    affected_persona_codes: list[PersonaCode] = Field(
+        min_length=1, max_length=12
+    )
+    evidence_span_option_ids: list[str] = Field(
+        min_length=1, max_length=60
+    )
+    known_fact_ids: list[int] = Field(
+        default_factory=list, max_length=MAX_KNOWN_FACTS
+    )
     recommendation: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("statement")
+    @classmethod
+    def statement_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("finding statement must not be blank")
+        return value
+
+    @field_validator("doc_claim_option_id")
+    @classmethod
+    def doc_claim_option_id_must_be_nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("document claim option id must not be blank")
+        return value
 
     @field_validator("affected_persona_codes")
     @classmethod
@@ -307,19 +370,6 @@ class OllamaFindingPayload(ApiModel):
             raise ValueError("duplicate affected persona codes are not allowed")
         return value
 
-    @field_validator("retrieved_context_chunk_ids")
-    @classmethod
-    def retrieved_context_chunk_ids_must_be_valid(
-        cls, value: list[int]
-    ) -> list[int]:
-        if any(identifier <= 0 for identifier in value):
-            raise ValueError("retrieved context chunk ids must be positive")
-        if len(value) != len(set(value)):
-            raise ValueError(
-                "duplicate retrieved context chunk ids are not allowed"
-            )
-        return value
-
     @field_validator("evidence_span_option_ids")
     @classmethod
     def evidence_span_option_ids_must_be_nonblank(
@@ -327,21 +377,40 @@ class OllamaFindingPayload(ApiModel):
     ) -> list[str]:
         if any(not identifier.strip() for identifier in value):
             raise ValueError("evidence span option ids must not be blank")
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate evidence span option ids are not allowed")
         return value
 
     @field_validator("known_fact_ids")
     @classmethod
     def known_fact_ids_must_be_unique(cls, value: list[int]) -> list[int]:
+        if any(identifier <= 0 for identifier in value):
+            raise ValueError("known fact ids must be positive")
         if len(value) != len(set(value)):
             raise ValueError("duplicate known fact ids are not allowed")
         return value
 
 
 class OllamaRiskAnalysisResponse(ApiModel):
-    risk_score: int = Field(ge=0, le=100)
-    model_version: str = Field(min_length=1, max_length=100)
-    prompt_version: str = Field(min_length=1, max_length=100)
-    findings: list[OllamaFindingPayload] = Field(min_length=1)
+    risk_score: int | None = Field(default=None, ge=0, le=100)
+    model_version: str = Field(min_length=1, max_length=50)
+    prompt_version: str = Field(min_length=1, max_length=50)
+    findings: list[OllamaFindingPayload] = Field(max_length=20)
+
+    @field_validator("model_version", "prompt_version")
+    @classmethod
+    def versions_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("model and prompt versions must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def clean_result_must_not_have_numeric_score(
+        self,
+    ) -> "OllamaRiskAnalysisResponse":
+        if not self.findings and self.risk_score is not None:
+            raise ValueError("a clean result must have a null risk score")
+        return self
 
 
 class HealthResponse(ApiModel):

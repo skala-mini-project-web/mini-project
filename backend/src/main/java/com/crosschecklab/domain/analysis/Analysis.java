@@ -121,10 +121,10 @@ public class Analysis extends BaseTimeEntity {
         this.retryable = false;
     }
 
-    public void complete(int riskScore, String modelVersion, String promptVersion, OffsetDateTime completedAt) {
+    public void complete(String modelVersion, String promptVersion, OffsetDateTime completedAt) {
         this.status = AnalysisStatus.COMPLETED;
         this.progress = 100;
-        this.riskScore = riskScore;
+        this.riskScore = null;
         this.modelVersion = modelVersion;
         this.promptVersion = promptVersion;
         this.completedAt = completedAt;

@@ -6,6 +6,9 @@
     {
       "statement": "안정성 표현이 원금보장으로 오인될 가능성이 있습니다.",
       "severity": "HIGH",
+      "docClaim": {
+        "excerpt": "최근 안정적인 수익률을 기록한 투자상품입니다."
+      },
       "affectedPersonaCodes": [
         "FINANCIAL_BEGINNER",
         "SENIOR"

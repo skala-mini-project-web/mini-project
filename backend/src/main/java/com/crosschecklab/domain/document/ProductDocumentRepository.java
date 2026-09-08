@@ -4,6 +4,7 @@ import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -24,6 +25,29 @@ public interface ProductDocumentRepository extends JpaRepository<ProductDocument
     @Query("select d from ProductDocument d where d.id = :id")
     Optional<ProductDocument> findByIdForUpdate(@Param("id") Long id);
 
+    @Query(value = """
+            select d.id as id, d.extraction_token as "extractionToken"
+            from product_documents d
+            where d.extract_status in ('UPLOADED', 'EXTRACTING')
+              and d.extraction_token is not null
+              and d.extraction_lease_until is not null
+              and d.extraction_lease_until <= clock_timestamp()
+              and not exists (
+                  select 1
+                  from document_batch_items i
+                  where i.product_document_id = d.id
+              )
+            order by d.extraction_lease_until, d.id
+            """, nativeQuery = true)
+    List<ExpiredExtractionCandidate> findExpiredExtractionCandidates(Pageable pageable);
+
+    @Query("""
+            select count(i) > 0
+            from DocumentBatchItem i
+            where i.productDocument.id = :documentId
+            """)
+    boolean hasBatchMembership(@Param("documentId") Long documentId);
+
     // 문서 상세. 소유권 검증에 product.owner 까지 필요하므로 함께 읽는다.
     @Query("select d from ProductDocument d join fetch d.product p join fetch p.owner where d.id = :id")
     Optional<ProductDocument> findWithProductOwnerById(@Param("id") Long id);
@@ -35,4 +59,10 @@ public interface ProductDocumentRepository extends JpaRepository<ProductDocument
               and d.id = (select max(d2.id) from ProductDocument d2 where d2.product.id = d.product.id)
             """)
     List<ProductDocument> findLatestByProductIds(@Param("productIds") Collection<Long> productIds);
+
+    interface ExpiredExtractionCandidate {
+        Long getId();
+
+        String getExtractionToken();
+    }
 }

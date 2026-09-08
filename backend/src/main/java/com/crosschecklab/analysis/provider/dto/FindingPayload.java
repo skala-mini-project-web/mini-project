@@ -13,49 +13,13 @@ public record FindingPayload(
         List<Long> retrievedContextChunkIds,
         List<EvidenceSpanPayload> evidenceSpans,
         List<Long> knownFactIds,
+        DocClaimPayload docClaim,
         String recommendation
 ) {
 
-    public FindingPayload {
-        knownFactIds = knownFactIds == null ? List.of() : knownFactIds;
-    }
-
-    public FindingPayload(
-            String statement,
-            Severity severity,
-            List<PersonaCode> affectedPersonaCodes,
-            List<Long> retrievedContextChunkIds,
-            List<EvidenceSpanPayload> evidenceSpans,
-            List<Long> knownFactIds,
-            String recommendation
-    ) {
-        this(statement, severity, null, affectedPersonaCodes, retrievedContextChunkIds, evidenceSpans,
-                knownFactIds, recommendation);
-    }
-
-    public FindingPayload(
-            String statement,
-            Severity severity,
-            List<PersonaCode> affectedPersonaCodes,
-            List<Long> retrievedContextChunkIds,
-            List<Long> knownFactIds,
-            String recommendation
-    ) {
-        this(statement, severity, null, affectedPersonaCodes, retrievedContextChunkIds, List.of(),
-                knownFactIds, recommendation);
-    }
-
-    public FindingPayload(
-            String statement,
-            Severity severity,
-            List<PersonaCode> affectedPersonaCodes,
-            List<Long> retrievedContextChunkIds,
-            String recommendation
-    ) {
-        this(statement, severity, null, affectedPersonaCodes, retrievedContextChunkIds, List.of(),
-                List.of(), recommendation);
-    }
-
     public record EvidenceSpanPayload(Long chunkId, String excerpt) {
+    }
+
+    public record DocClaimPayload(String excerpt) {
     }
 }
